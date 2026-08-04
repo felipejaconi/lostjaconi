@@ -1,0 +1,208 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Yellowtail&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-cursive: "Yellowtail", cursive;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Lost Wind Brand Colors - Based on the image */
+  --color-primary: #e31e24; /* Red from logo */
+  --color-secondary: #f9e100; /* Yellow from logo */
+  --color-dark: #050505; /* Deep black background */
+  --color-dark-surface: rgba(255, 255, 255, 0.03); /* Glass surface */
+  --color-dark-border: rgba(
+    255,
+    255,
+    255,
+    0.08
+  ); /* Subtle border for dark theme */
+
+  /* Overriding default blue utilities with brand red for consistency */
+  --color-blue-50: #fef2f2;
+  --color-blue-100: #fee2e2;
+  --color-blue-200: #fecaca;
+  --color-blue-300: #fca5a5;
+  --color-blue-400: #f87171;
+  --color-blue-500: #ef4444;
+  --color-blue-600: #e31e24;
+  --color-blue-700: #b91c1c;
+  --color-blue-800: #991b1b;
+  --color-blue-900: #7f1d1d;
+
+  @keyframes scan {
+    0%,
+    100% {
+      transform: translateY(0);
+      opacity: 0.2;
+    }
+    50% {
+      transform: translateY(300px);
+      opacity: 0.8;
+    }
+  }
+}
+
+@layer base {
+  html,
+  body {
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none; /* Prevent bounce loading on mobile/POS */
+  }
+
+  #root {
+    height: 100dvh;
+    width: 100vw;
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-dark text-slate-100 antialiased font-sans selection:bg-primary/30 selection:text-white;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-display tracking-tight;
+  }
+}
+
+@layer utilities {
+  .leaflet-container {
+    background-color: #0a0a0a !important;
+    font-family: var(--font-sans) !important;
+  }
+
+  .custom-popup .leaflet-popup-content-wrapper {
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: white;
+    backdrop-filter: blur(8px);
+    border-radius: 8px;
+    padding: 2px;
+  }
+
+  .custom-popup .leaflet-popup-tip {
+    background: rgba(0, 0, 0, 0.85);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .custom-popup .leaflet-popup-content {
+    margin: 8px 12px;
+  }
+
+  .custom-popup .leaflet-popup-content div {
+    color: #f8fafc !important;
+  }
+
+  .leaflet-control-zoom a {
+    background-color: rgba(10, 10, 10, 0.8) !important;
+    color: #fff !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    backdrop-filter: blur(8px);
+  }
+
+  .leaflet-control-zoom a:hover {
+    background-color: rgba(30, 30, 30, 0.9) !important;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .glass-card {
+    @apply bg-zinc-900/40 md:bg-white/[0.03] border border-yellow-500/30 shadow-[0_8px_32px_rgba(0,0,0,0.4)] transition-all duration-300 md:hover:border-yellow-500/60 md:hover:bg-white/[0.05];
+  }
+
+  .glass-panel {
+    @apply bg-black/80 border-b border-yellow-500/30 shadow-2xl;
+  }
+
+  .glass-card-store {
+    @apply bg-zinc-900/60 md:bg-gradient-to-br from-yellow-600/20 to-black/40 border border-black shadow-[0_8px_32px_rgba(0,0,0,0.4)] transition-all duration-300 md:hover:border-black md:hover:from-yellow-600/30 md:hover:to-black/60;
+  }
+
+  .glass-panel-store {
+    @apply bg-zinc-900/90 md:bg-gradient-to-br from-yellow-600/20 to-black/80 border-b border-black shadow-2xl;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-to-r from-primary via-red-500 to-primary bg-[length:200%_auto] text-white font-bold shadow-[0_0_20px_rgba(227,30,36,0.4)] hover:shadow-[0_0_30px_rgba(227,30,36,0.6)] hover:bg-[position:right_center] hover:-translate-y-1 transition-all duration-500;
+  }
+
+  .btn-secondary {
+    @apply bg-gradient-to-r from-white/5 to-white/10 text-white font-bold border border-white/10 hover:border-white/30 hover:bg-white/20 hover:-translate-y-1 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)] transition-all duration-500;
+  }
+
+  /* Hide number input spinners */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  .custom-scrollbar {
+    -webkit-overflow-scrolling: touch;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+  }
+
+  .animate-swing {
+    animation: swing 1s ease-in-out infinite;
+  }
+  @keyframes swing {
+    0%,
+    100% {
+      transform: rotate(-10deg);
+    }
+    50% {
+      transform: rotate(10deg);
+    }
+  }
+}
+
+@media (min-width: 1024px) {
+  div#root:nth-of-type(1)
+    > div:nth-of-type(2)
+    > div:nth-of-type(1)
+    > div:nth-of-type(1)
+    > div:nth-of-type(1)
+    > div:nth-of-type(1)
+    > div:nth-of-type(1) {
+    padding-top: 0px !important;
+    margin-left: 40px !important;
+    margin-right: 0px !important;
+  }
+}
+
+@media (max-width: 1023px) {
+  div#root:nth-of-type(1)
+    > div:nth-of-type(2)
+    > div:nth-of-type(1)
+    > div:nth-of-type(1)
+    > div:nth-of-type(1)
+    > div:nth-of-type(1)
+    > div:nth-of-type(1) {
+    padding-top: 8px !important;
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "name": "LOST WIND LDA",
+  "description": "Sistema de gestão de armazém e (franquias).",
+  "requestFramePermissions": ["camera"]
+}
