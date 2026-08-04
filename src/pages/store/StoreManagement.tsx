@@ -86,7 +86,7 @@ export default function StoreManagement() {
 
   let totalSpent = 0;
   filteredCompletedOrders.forEach(o => {
-    totalSpent += Number(o.total) || 0;
+    totalSpent += getPedidoTotalComIva(o) || 0;
   });
   
   const avgOrderValue = filteredCompletedOrders.length > 0 ? totalSpent / filteredCompletedOrders.length : 0;
@@ -110,7 +110,7 @@ export default function StoreManagement() {
     const d = new Date(o.created_at);
     const day = d.getDate().toString();
     
-    const orderTotalComIva = Number(o.total) || 0;
+    const orderTotalComIva = getPedidoTotalComIva(o) || 0;
 
     if (dailyDataMap[day]) {
       dailyDataMap[day].value += orderTotalComIva;
