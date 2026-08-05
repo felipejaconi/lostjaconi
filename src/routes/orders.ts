@@ -18,11 +18,6 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
     if (!Array.isArray(itens)) return res.status(400).json({ message: "Itens inválidos" });
     const userId = (req.user.role === "admin" && loja_id) ? loja_id : req.user.id;
     try {
-      const { data: user } = await supabase.from("users").select("order_start_time, order_end_time, role").eq("id", userId).maybeSingle();
-      if (user && user.role === "loja" && user.order_start_time && user.order_end_time) {
-         // handle schedule logic if needed
-      }
-
       const { data: order, error: orderErr } = await supabase.from("pedidos").insert([{
         user_id: userId, total, observacoes, status: "pendente"
       }]).select().single();
@@ -39,6 +34,38 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
          if (itemErr) throw itemErr;
       }
       res.json(order);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/pedidos/:id/merge", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
+    const { itens, total_adicional } = req.body;
+    if (!Array.isArray(itens)) return res.status(400).json({ message: "Itens inválidos" });
+    try {
+      const orderId = req.params.id;
+      
+      // Update order total
+      const { data: orderData, error: fetchErr } = await supabase.from("pedidos").select("total").eq("id", orderId).single();
+      if (fetchErr) throw fetchErr;
+      
+      const novoTotal = Number(orderData.total) + Number(total_adicional);
+      
+      const { error: updateErr } = await supabase.from("pedidos").update({ total: novoTotal }).eq("id", orderId);
+      if (updateErr) throw updateErr;
+
+      const itemsToInsert = itens.map(i => ({
+         pedido_id: orderId,
+         produto_id: i.produto_id,
+         quantidade: i.quantidade,
+         preco_unitario: i.preco
+      }));
+      
+      if (itemsToInsert.length > 0) {
+         const { error: itemErr } = await supabase.from("pedido_itens").insert(itemsToInsert);
+         if (itemErr) throw itemErr;
+      }
+      res.json({ success: true, novoTotal });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

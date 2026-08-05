@@ -165,8 +165,9 @@ export default function StoreOrder({ cart, setCart }: { cart: any[]; setCart: an
   const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
 
   const [mostOrderedIds, setMostOrderedIds] = useState<number[]>([]);
-  const [completedOrder, setCompletedOrder] = useState<{ cart: any[], observacoes: string, total: number } | null>(null);
+  const [completedOrder, setCompletedOrder] = useState<{ cart: any[], observacoes: string, total: number, isMerge?: boolean } | null>(null);
   const [isConfirmingCheckout, setIsConfirmingCheckout] = useState(false);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
 
   const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -296,7 +297,8 @@ export default function StoreOrder({ cart, setCart }: { cart: any[]; setCart: an
   };
 
   const confirmCheckout = async () => {
-    setIsConfirmingCheckout(false);
+    if (isCheckingOut) return;
+    setIsCheckingOut(true);
     const total = cart.reduce((acc, item) => acc + item.preco * item.quantity, 0);
     try {
       if (addToOrderId) {
@@ -312,15 +314,16 @@ export default function StoreOrder({ cart, setCart }: { cart: any[]; setCart: an
          });
       }
       fetchProductsData();
+      setIsConfirmingCheckout(false);
+      setCompletedOrder({ cart: [...cart], observacoes: observation, total, isMerge: !!addToOrderId } as any);
+      setCart([]);
+      setObservation("");
     } catch (error: any) {
-      console.error("API error, but proceeding with UI checkout", error);
+      console.error("API error during checkout", error);
       Swal.fire("Erro", error.response?.data?.message || "Ocorreu um erro.", "error");
-      return;
+    } finally {
+      setIsCheckingOut(false);
     }
-    
-    setCompletedOrder({ cart: [...cart], observacoes: observation, total, isMerge: !!addToOrderId } as any);
-    setCart([]);
-    setObservation("");
   };
 
   const filteredProducts = React.useMemo(() => {
@@ -582,7 +585,7 @@ export default function StoreOrder({ cart, setCart }: { cart: any[]; setCart: an
 
       {isConfirmingCheckout && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 " onClick={() => setIsConfirmingCheckout(false)} />
+          <div className="absolute inset-0 bg-black/80 " onClick={() => !isCheckingOut && setIsConfirmingCheckout(false)} />
           <div className="relative w-full max-w-sm bg-[#111] rounded-3xl overflow-hidden shadow-2xl border border-white/10 p-6 flex flex-col items-center text-center">
             <div className="w-16 h-16 bg-yellow-500/10 text-yellow-500 rounded-full flex items-center justify-center mb-4">
               <CheckSquare size={32} />
@@ -593,15 +596,17 @@ export default function StoreOrder({ cart, setCart }: { cart: any[]; setCart: an
             <div className="flex w-full gap-3">
               <button 
                 onClick={() => setIsConfirmingCheckout(false)}
-                className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl transition-all"
+                disabled={isCheckingOut}
+                className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancelar
               </button>
               <button 
                 onClick={confirmCheckout}
-                className="flex-1 py-3 bg-yellow-500 hover:bg-yellow-400 text-black font-black uppercase rounded-xl transition-all shadow-[0_0_15px_rgba(234,179,8,0.2)]"
+                disabled={isCheckingOut}
+                className="flex-1 py-3 bg-yellow-500 hover:bg-yellow-400 text-black font-black uppercase rounded-xl transition-all shadow-[0_0_15px_rgba(234,179,8,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                CONFIRMAR
+                {isCheckingOut ? 'A PROCESSAR...' : 'CONFIRMAR'}
               </button>
             </div>
           </div>
