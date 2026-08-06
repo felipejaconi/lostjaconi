@@ -393,7 +393,19 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
          pedidos.forEach(p => {
              if (['pronto', 'entregue', 'concluido'].includes(p.status?.toLowerCase())) {
                  const uid = String(p.user_id);
-                 if (lojaStats[uid]) lojaStats[uid].consumo += Number(p.total || 0);
+                 let total = Number(p.total || 0);
+                 
+                 let sumIva = 0;
+                 (p.pedido_itens || []).forEach((item: any) => {
+                     const qty = Number(item.quantidade) || 0;
+                     const preco = Number(item.preco_unitario || 0);
+                     const liq = qty * preco;
+                     const ivaPerc = Number(item.produto?.iva || 0);
+                     sumIva += liq * (ivaPerc / 100);
+                 });
+                 total += sumIva;
+                 
+                 if (lojaStats[uid]) lojaStats[uid].consumo += total;
              }
          });
          

@@ -317,8 +317,14 @@ export default function AdminFinancial() {
      });
 
      pedidos.forEach(p => {
-        if (['pronto', 'entregue'].includes(p.status?.toLowerCase())) {
+        const isUnpaid = ['pronto', 'entregue'].includes(p.status?.toLowerCase());
+        const isValidOrder = ['pronto', 'entregue', 'concluido'].includes(p.status?.toLowerCase());
+        
+        if (isUnpaid) {
            totalReceber = totalReceber.add(new Decimal(getPedidoTotalComIva(p) || 0));
+        }
+        
+        if (isValidOrder) {
            const pDate = p.created_at ? new Date(p.created_at) : new Date();
            if (pDate.getMonth() === today.getMonth() && pDate.getFullYear() === today.getFullYear()) {
               totalIvaDebito = totalIvaDebito.add(new Decimal(getPedidoTotalIva(p) || 0));

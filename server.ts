@@ -55,6 +55,7 @@ async function startServer() {
   
   app.use(cors());
   app.use(express.json());
+  app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
   // Cache uploads forever since they have unique names usually
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads"), { maxAge: "1d" }));
 

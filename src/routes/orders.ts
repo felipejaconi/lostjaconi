@@ -167,7 +167,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
           
         const { data: orders, error } = await supabase
           .from("pedidos")
-          .select("*, user:users(name)")
+          .select("*, user:users(name), pedido_itens(*, produto:produtos(iva))")
           .order("created_at", { ascending: false });
         if (error) throw error;
 
@@ -220,7 +220,17 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
           const originalDate = new Date(order.created_at);
           
           const orderDate = new Date(originalDate);
-          const total = Number(order.total);
+          
+          let total = Number(order.total);
+          let sumIva = 0;
+          (order.pedido_itens || []).forEach((item: any) => {
+              const qty = Number(item.quantidade) || 0;
+              const preco = Number(item.preco_unitario || 0);
+              const liq = qty * preco;
+              const ivaPerc = Number(item.produto?.iva || 0);
+              sumIva += liq * (ivaPerc / 100);
+          });
+          total += sumIva;
 
           if (!consumption[storeId]) {
             consumption[storeId] = {
