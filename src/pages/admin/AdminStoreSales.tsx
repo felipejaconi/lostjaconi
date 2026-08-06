@@ -136,23 +136,26 @@ export default function AdminStoreSales() {
               <TableRow className="hover:bg-transparent border-none">
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Loja</TableHead>
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Consumo (Mês)</TableHead>
+                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Despesas (Mês)</TableHead>
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Vendas (Mês)</TableHead>
-                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">% Custo (Food Cost)</TableHead>
+                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">% Custo (Food Cost + Desp.)</TableHead>
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Margem Bruta</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {consumoData.length === 0 && !loading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-12 text-zinc-500">Nenhum dado de consumo encontrado para este mês.</TableCell>
+                  <TableCell colSpan={6} className="text-center py-12 text-zinc-500">Nenhum dado de consumo encontrado para este mês.</TableCell>
                 </TableRow>
               ) : (
                 consumoData.map(loja => {
                   const consumo = Number(loja.mensal || 0);
+                  const despesas = Number(loja.despesasMensal || 0);
                   const venda = vendas[loja.id] || 0;
-                  const cmv = venda > 0 ? (consumo / venda) * 100 : 0;
-                  const isHighCost = cmv > 35 && venda > 0;
-                  const isWarning = cmv > 30 && cmv <= 35 && venda > 0;
+                  const custoTotal = consumo + despesas;
+                  const cmv = venda > 0 ? (custoTotal / venda) * 100 : 0;
+                  const isHighCost = cmv > 50 && venda > 0;
+                  const isWarning = cmv > 40 && cmv <= 50 && venda > 0;
                   
                   return (
                     <TableRow key={loja.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
@@ -167,8 +170,11 @@ export default function AdminStoreSales() {
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="font-medium text-red-400">
+                      <TableCell className="font-medium text-orange-400">
                         €{formatCurrency(consumo)}
+                      </TableCell>
+                      <TableCell className="font-medium text-red-400">
+                        €{formatCurrency(despesas)}
                       </TableCell>
                       <TableCell>
                         <div className="relative w-32 group-focus-within:w-40 transition-all duration-300">
@@ -203,9 +209,9 @@ export default function AdminStoreSales() {
                       </TableCell>
                       <TableCell>
                         {venda > 0 ? (
-                          <div className="flex items-center gap-2 text-emerald-400 font-medium">
-                            <TrendingUp size={14} />
-                            €{formatCurrency(venda - consumo)}
+                          <div className={`flex items-center gap-2 font-medium ${venda - custoTotal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            <TrendingUp size={14} className={venda - custoTotal < 0 ? 'rotate-180' : ''} />
+                            €{formatCurrency(venda - custoTotal)}
                           </div>
                         ) : (
                           <span className="text-zinc-600">-</span>

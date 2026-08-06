@@ -160,6 +160,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
   app.get("/api/admin/analytics/consumo", authenticateToken, async (req: any, res: any) => {
       if (!["admin", "armazem"].includes(req.user.role)) return res.sendStatus(403);
       try {
+        const { data: stores } = await supabase
+          .from("users")
+          .select("id, name")
+          .eq("role", "loja");
+          
         const { data: orders, error } = await supabase
           .from("pedidos")
           .select("*, user:users(name)")
@@ -184,10 +189,30 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
            endOfMonth = new Date(Number(req.query.year), Number(req.query.month) + 1, 1);
         }
 
+        const { data: faturas } = await supabase
+          .from("faturas")
+          .select("*")
+          .gte("data_emissao", startOfMonth.toISOString().split("T")[0])
+          .lt("data_emissao", endOfMonth.toISOString().split("T")[0]);
+
         if (startOfWeek < startOfMonth) startOfWeek.setTime(startOfMonth.getTime());
         const startOfPreviousMonth = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
 
         const consumption: any = {};
+        
+        (stores || []).forEach((store: any) => {
+           consumption[store.id] = {
+              id: store.id,
+              name: store.name || "Loja Desconhecida",
+              diario: 0,
+              semanal: 0,
+              mensal: 0,
+              despesasMensal: 0,
+              mesAnterior: 0,
+              totalHistorico: 0,
+              numPedidos: 0,
+           };
+        });
 
         (orders || []).forEach((order: any) => {
           const storeId = order.user_id;
@@ -204,6 +229,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
               diario: 0,
               semanal: 0,
               mensal: 0,
+              despesasMensal: 0,
               mesAnterior: 0,
               totalHistorico: 0,
               numPedidos: 0,
@@ -224,6 +250,20 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
           if (orderDate >= startOfPreviousMonth && orderDate < new Date(agora.getFullYear(), agora.getMonth(), 1)) {
               consumption[storeId].mesAnterior += total;
+          }
+        });
+        
+        (faturas || []).forEach((f: any) => {
+          if (f.tipo && f.tipo.startsWith("despesa_") && f.descrição) {
+            try {
+              const desc = JSON.parse(f.descrição);
+              if (desc.loja_id) {
+                const storeId = desc.loja_id;
+                if (consumption[storeId]) {
+                   consumption[storeId].despesasMensal += Number(f.valor_total || 0);
+                }
+              }
+            } catch (e) {}
           }
         });
 
