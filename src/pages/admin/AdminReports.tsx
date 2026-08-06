@@ -291,10 +291,17 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         let fetchedData = Array.isArray(res.data) ? res.data : [];
            
         fetchedData = fetchedData.filter(p => {
-             const isValidState = ['pronto', 'entregue'].includes(p.status?.toLowerCase());
+             const isValidState = ['pronto', 'entregue', 'concluido'].includes(p.status?.toLowerCase());
              const periodMatch = filterByPeriod(p.created_at, period);
              const lojaMatch = entity === "todos" || String(p.user_id) === entity;
-             return isValidState && periodMatch && lojaMatch;
+             
+             let statusMatch = true;
+             if (status !== "todos") {
+                if (status === "pago") statusMatch = p.status?.toLowerCase() === "concluido";
+                if (status === "nao_pago") statusMatch = ['pronto', 'entregue'].includes(p.status?.toLowerCase());
+             }
+             
+             return isValidState && periodMatch && lojaMatch && statusMatch;
         });
 
         headers = ["Data Pedido", "ID Pedido", "Loja", "Débito IVA (€)", "Status"];
@@ -646,7 +653,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                 </div>
                 )}
 
-                {!["iva_credito", "debito_iva", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar"].includes(reportType) && (
+                {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar"].includes(reportType) && (
                 <div>
                     <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
                         <Filter size={14}/> Status de Pagamento
