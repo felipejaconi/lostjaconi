@@ -135,9 +135,9 @@ export default function AdminStoreSales() {
             <TableHeader className="bg-black/40 border-b border-white/5">
               <TableRow className="hover:bg-transparent border-none">
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Loja</TableHead>
-                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Consumo (Mês)</TableHead>
-                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Despesas (Mês)</TableHead>
-                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Vendas (Mês)</TableHead>
+                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Consumo c/ IVA</TableHead>
+                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Despesas</TableHead>
+                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Vendas c/ IVA</TableHead>
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">% Custo (Food Cost + Desp.)</TableHead>
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Margem Bruta</TableHead>
               </TableRow>

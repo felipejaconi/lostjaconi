@@ -215,6 +215,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
         });
 
         (orders || []).forEach((order: any) => {
+          if (!['pronto', 'entregue', 'concluido'].includes(order.status?.toLowerCase())) return;
           const storeId = order.user_id;
           const storeName = order.user?.name || "Loja Desconhecida";
           const originalDate = new Date(order.created_at);
