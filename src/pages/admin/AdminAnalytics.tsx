@@ -104,7 +104,7 @@ export default function AdminAnalytics() {
   return (
     <ContentViewport>
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
-        <BrandTitle title="Consumo c/ IVA" titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0 !mb-0" hideUnderline />
+        <BrandTitle title="Consumo" titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0 !mb-0" hideUnderline />
         <button
           onClick={() => navigate('/admin/vendas-lojas')}
           className="bg-emerald-500 hover:bg-emerald-600 text-emerald-950 font-bold px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
@@ -116,7 +116,7 @@ export default function AdminAnalytics() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {[
           { 
-            title: "Consumo Total c/ IVA", 
+            title: "Consumo Total (Mês)", 
             value: `€${formatCurrency(globals.totalGasto)}`, 
             icon: DollarSign,
             color: "text-emerald-500",

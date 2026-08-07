@@ -4,6 +4,7 @@ import Swal from "sweetalert2";
 import api from "../../lib/api";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { BrandTitle } from "../../components/BrandTitle";
+import { monthNames } from "../../lib/utils";
 import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
 
 export default function AdminSuppliers() {
@@ -37,6 +38,10 @@ export default function AdminSuppliers() {
   const [selectedReportSupplierId, setSelectedReportSupplierId] = useState<string>("");
   const [productSuppliersReport, setProductSuppliersReport] = useState<any[]>([]);
   const [isReportLoading, setIsReportLoading] = useState(false);
+
+  const [reportPeriod, setReportPeriod] = useState<"mes" | "todos">("mes");
+  const [reportMonth, setReportMonth] = useState<number>(new Date().getMonth());
+  const [reportYear, setReportYear] = useState<number>(new Date().getFullYear());
 
   const [selectedSupplierForProducts, setSelectedSupplierForProducts] = useState<any>(null);
   const [supplierProducts, setSupplierProducts] = useState<any[]>([]);
@@ -128,11 +133,11 @@ export default function AdminSuppliers() {
     }
   };
 
-  const fetchSupplierProductsList = async (fornecedorId: string) => {
+  const fetchSupplierProductsList = async (fornecedorId: string, p = reportPeriod, m = reportMonth, y = reportYear) => {
     setIsSupplierProductsLoading(true);
     setSupplierProducts([]);
     try {
-      const res = await api.get(`/admin/fornecedores/${fornecedorId}/produtos`);
+      const res = await api.get(`/admin/fornecedores/${fornecedorId}/produtos?period=${p}&month=${m}&year=${y}`);
       setSupplierProducts(res.data || []);
     } catch (err: any) {
       console.error("Erro ao carregar produtos:", err);
@@ -147,14 +152,14 @@ export default function AdminSuppliers() {
     await fetchSupplierProductsList(fornecedor.id);
   };
 
-  const fetchProductReport = async (productId: string) => {
+  const fetchProductReport = async (productId: string, p = reportPeriod, m = reportMonth, y = reportYear) => {
     if (!productId) {
        setProductSuppliersReport([]);
        return;
     }
     setIsReportLoading(true);
     try {
-      const res = await api.get(`/admin/produtos/${productId}/fornecedores`);
+      const res = await api.get(`/admin/produtos/${productId}/fornecedores?period=${p}&month=${m}&year=${y}`);
       setProductSuppliersReport(res.data);
     } catch (err: any) {
       console.error(err);
@@ -166,11 +171,11 @@ export default function AdminSuppliers() {
 
   useEffect(() => {
     if (selectedReportProductId) {
-       fetchProductReport(selectedReportProductId);
+       fetchProductReport(selectedReportProductId, reportPeriod, reportMonth, reportYear);
     } else {
        setProductSuppliersReport([]);
     }
-  }, [selectedReportProductId]);
+  }, [selectedReportProductId, reportPeriod, reportMonth, reportYear]);
 
   const exportToCSV = (data: any[], filename: string) => {
     if(!data || data.length === 0) {
@@ -603,6 +608,45 @@ export default function AdminSuppliers() {
                 </button>
              </div>
              
+             <div className="p-4 sm:px-6 sm:py-4 border-b border-white/10 bg-black/40 flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2 bg-white/5 rounded-xl p-1 border border-white/10">
+                   <button
+                     onClick={() => { setReportPeriod("mes"); if (reportsTab === 'fornecedores' && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'mes', reportMonth, reportYear); }}
+                     className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${reportPeriod === 'mes' ? 'bg-blue-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                   >
+                     Mês Específico
+                   </button>
+                   <button
+                     onClick={() => { setReportPeriod("todos"); if (reportsTab === 'fornecedores' && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'todos', reportMonth, reportYear); }}
+                     className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${reportPeriod === 'todos' ? 'bg-blue-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                   >
+                     Todo o Período
+                   </button>
+                </div>
+                {reportPeriod === "mes" && (
+                   <div className="flex items-center gap-2">
+                      <select
+                         value={reportMonth}
+                         onChange={(e) => { const val = Number(e.target.value); setReportMonth(val); if (reportsTab === 'fornecedores' && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'mes', val, reportYear); }}
+                         className="bg-[#111] border border-white/10 rounded-xl px-3 py-1.5 text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-blue-500 transition-colors"
+                      >
+                         {monthNames.map((m, i) => (
+                            <option key={i} value={i}>{m}</option>
+                         ))}
+                      </select>
+                      <select
+                         value={reportYear}
+                         onChange={(e) => { const val = Number(e.target.value); setReportYear(val); if (reportsTab === 'fornecedores' && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'mes', reportMonth, val); }}
+                         className="bg-[#111] border border-white/10 rounded-xl px-3 py-1.5 text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-blue-500 transition-colors"
+                      >
+                         {[2024, 2025, 2026, 2027].map(y => (
+                            <option key={y} value={y}>{y}</option>
+                         ))}
+                      </select>
+                   </div>
+                )}
+             </div>
+
              <div className="flex border-b border-white/10 shrink-0 overflow-x-auto custom-scrollbar">
                <button 
                   onClick={() => setReportsTab('produtos')}

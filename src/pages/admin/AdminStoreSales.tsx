@@ -135,9 +135,9 @@ export default function AdminStoreSales() {
             <TableHeader className="bg-black/40 border-b border-white/5">
               <TableRow className="hover:bg-transparent border-none">
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Loja</TableHead>
-                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Consumo c/ IVA</TableHead>
-                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Despesas</TableHead>
-                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Vendas c/ IVA</TableHead>
+                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Consumo (Mês)</TableHead>
+                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Despesas (Mês)</TableHead>
+                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Vendas (Mês)</TableHead>
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">% Custo (Food Cost + Desp.)</TableHead>
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Margem Bruta</TableHead>
               </TableRow>
@@ -220,6 +220,52 @@ export default function AdminStoreSales() {
                     </TableRow>
                   );
                 })
+              )}
+              {consumoData.length > 0 && !loading && (
+                <TableRow className="bg-black/20 hover:bg-black/30 border-t-2 border-white/10">
+                  <TableCell className="text-right font-bold text-zinc-100 uppercase tracking-widest text-xs pr-6">
+                    Total
+                  </TableCell>
+                  <TableCell className="font-bold text-orange-400">
+                    €{formatCurrency(consumoData.reduce((acc, l) => acc + Number(l.mensal || 0), 0))}
+                  </TableCell>
+                  <TableCell className="font-bold text-red-400">
+                    €{formatCurrency(consumoData.reduce((acc, l) => acc + Number(l.despesasMensal || 0), 0))}
+                  </TableCell>
+                  <TableCell className="font-bold text-emerald-400">
+                    €{formatCurrency(consumoData.reduce((acc, l) => acc + (vendas[l.id] || 0), 0))}
+                  </TableCell>
+                  <TableCell>
+                    {(() => {
+                      const tConsumo = consumoData.reduce((acc, l) => acc + Number(l.mensal || 0), 0);
+                      const tDespesas = consumoData.reduce((acc, l) => acc + Number(l.despesasMensal || 0), 0);
+                      const tVendas = consumoData.reduce((acc, l) => acc + (vendas[l.id] || 0), 0);
+                      const tCusto = tConsumo + tDespesas;
+                      const tCmv = tVendas > 0 ? (tCusto / tVendas) * 100 : 0;
+                      return (
+                        <div className="flex items-center gap-2 font-bold">
+                          <span className={`${tCmv > 50 ? 'text-rose-500' : tCmv > 40 ? 'text-amber-500' : 'text-emerald-500'}`}>
+                            {tCmv > 0 ? `${tCmv.toFixed(1)}%` : '-'}
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </TableCell>
+                  <TableCell>
+                    {(() => {
+                      const tConsumo = consumoData.reduce((acc, l) => acc + Number(l.mensal || 0), 0);
+                      const tDespesas = consumoData.reduce((acc, l) => acc + Number(l.despesasMensal || 0), 0);
+                      const tVendas = consumoData.reduce((acc, l) => acc + (vendas[l.id] || 0), 0);
+                      const tCusto = tConsumo + tDespesas;
+                      const mg = tVendas - tCusto;
+                      return (
+                        <div className={`font-bold ${mg >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          €{formatCurrency(mg)}
+                        </div>
+                      );
+                    })()}
+                  </TableCell>
+                </TableRow>
               )}
             </TableBody>
           </Table>

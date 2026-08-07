@@ -74,7 +74,8 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
   app.get("/api/admin/fornecedores/:id/produtos", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     try {
-      const { data, error } = await supabase
+      const { period, month, year } = req.query;
+      let query = supabase
         .from('fatura_itens')
         .select(`
           produto_id,
@@ -87,6 +88,16 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
           )
         `)
         .eq('faturas.fornecedor_id', req.params.id);
+
+      if (period !== 'todos') {
+         const m = month ? Number(month) : new Date().getMonth();
+         const y = year ? Number(year) : new Date().getFullYear();
+         const startDate = new Date(y, m, 1).toISOString();
+         const endDate = new Date(y, m + 1, 0, 23, 59, 59).toISOString();
+         query = query.gte("faturas.data_emissao", startDate).lte("faturas.data_emissao", endDate);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
 
@@ -126,7 +137,8 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
   app.get("/api/admin/produtos/:id/fornecedores", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     try {
-      const { data, error } = await supabase
+      const { period, month, year } = req.query;
+      let query = supabase
         .from('fatura_itens')
         .select(`
           preco_custo,
@@ -138,6 +150,16 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
           )
         `)
         .eq('produto_id', req.params.id);
+
+      if (period !== 'todos') {
+         const m = month ? Number(month) : new Date().getMonth();
+         const y = year ? Number(year) : new Date().getFullYear();
+         const startDate = new Date(y, m, 1).toISOString();
+         const endDate = new Date(y, m + 1, 0, 23, 59, 59).toISOString();
+         query = query.gte("faturas.data_emissao", startDate).lte("faturas.data_emissao", endDate);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
 
