@@ -88,7 +88,7 @@ export default function AdminStoreSales() {
     <ContentViewport>
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
         <div>
-          <BrandTitle title="Vendas das Lojas" hideUnderline titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0 !mb-1" />
+          <BrandTitle title="Consumos" hideUnderline titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0 !mb-1" />
           <p className="text-zinc-400 text-sm">Controle avançado: cruze as vendas registadas com os pedidos (consumo) das lojas.</p>
         </div>
         

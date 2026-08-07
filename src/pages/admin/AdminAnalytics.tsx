@@ -111,7 +111,7 @@ export default function AdminAnalytics() {
             className="bg-emerald-500 hover:bg-emerald-600 text-emerald-950 font-bold px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
           >
             <Activity size={18} />
-            Vendas das lojas
+            Consumos
           </button>
           <button
             onClick={() => navigate('/admin/fechos')}

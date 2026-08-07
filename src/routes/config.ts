@@ -127,12 +127,14 @@ export function setupConfigRoutes({ app, supabase, authenticateToken }: any) {
 
   app.post("/api/admin/fechos", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin") return res.sendStatus(403);
-    const { data, loja_id, sys_mb, sys_dinheiro, sys_mesa, real_mb, real_dinheiro, real_mesa, despesas } = req.body;
+    const { data, loja_id, sys_mb, sys_dinheiro, sys_mesa,
+      sys_uber, real_mb, real_dinheiro, real_mesa,
+      real_uber, despesas } = req.body;
     
     if (!data || !loja_id) return res.status(400).json({ error: "Data e Loja são obrigatórios." });
     
-    const sys_total = (sys_mb || 0) + (sys_dinheiro || 0) + (sys_mesa || 0);
-    const real_total = (real_mb || 0) + (real_dinheiro || 0) + (real_mesa || 0);
+    const sys_total = (sys_mb || 0) + (sys_dinheiro || 0) + (sys_mesa || 0) + (sys_uber || 0);
+    const real_total = (real_mb || 0) + (real_dinheiro || 0) + (real_mesa || 0) + (real_uber || 0);
     const dif_sis_apre = (real_total + (despesas || 0)) - sys_total;
     
     const payload = {
@@ -141,10 +143,12 @@ export function setupConfigRoutes({ app, supabase, authenticateToken }: any) {
       sys_mb,
       sys_dinheiro,
       sys_mesa,
+      sys_uber,
       sys_total,
       real_mb,
       real_dinheiro,
       real_mesa,
+      real_uber,
       real_total,
       despesas,
       dif_sis_apre,
