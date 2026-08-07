@@ -93,4 +93,82 @@ export function setupConfigRoutes({ app, supabase, authenticateToken }: any) {
       return res.status(500).json({ error: e.message });
     }
   });
+
+  // --- FECHOS DE CAIXA ---
+  app.get("/api/admin/fechos", authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    const month = parseInt(req.query.month as string);
+    const year = parseInt(req.query.year as string);
+    
+    if (isNaN(month) || isNaN(year)) return res.status(400).json({ error: "Invalid month/year" });
+    
+    const startDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
+    const endDate = new Date(year, month, 0).toISOString().split('T')[0];
+    
+    try {
+      const { data, error } = await supabase
+        .from('fechos_caixa')
+        .select('*')
+        .gte('data', startDate)
+        .lte('data', endDate);
+        
+      if (error) {
+         if (error.code === '42P01') {
+            return res.status(400).json({ error: "Tabela fechos_caixa não existe no Supabase. Execute o script SQL fornecido." });
+         }
+         throw error;
+      }
+      res.json(data);
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/admin/fechos", authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    const { data, loja_id, sys_mb, sys_dinheiro, sys_mesa, real_mb, real_dinheiro, real_mesa, despesas } = req.body;
+    
+    if (!data || !loja_id) return res.status(400).json({ error: "Data e Loja são obrigatórios." });
+    
+    const sys_total = (sys_mb || 0) + (sys_dinheiro || 0) + (sys_mesa || 0);
+    const real_total = (real_mb || 0) + (real_dinheiro || 0) + (real_mesa || 0);
+    const dif_sis_apre = (real_total + (despesas || 0)) - sys_total;
+    
+    const payload = {
+      loja_id,
+      data,
+      sys_mb,
+      sys_dinheiro,
+      sys_mesa,
+      sys_total,
+      real_mb,
+      real_dinheiro,
+      real_mesa,
+      real_total,
+      despesas,
+      dif_sis_apre,
+      created_by: req.user.id
+    };
+    
+    try {
+       // Upsert (update if data and loja_id matches)
+       const { data: result, error } = await supabase
+         .from('fechos_caixa')
+         .upsert(payload, { onConflict: 'loja_id, data' })
+         .select()
+         .single();
+         
+       if (error) {
+         if (error.code === '42P01') {
+            return res.status(400).json({ error: "Tabela fechos_caixa não existe no Supabase. Execute o script SQL fornecido." });
+         }
+         throw error;
+       }
+       res.json(result);
+    } catch(e: any) {
+       console.error(e);
+       res.status(500).json({ error: e.message });
+    }
+  });
 }

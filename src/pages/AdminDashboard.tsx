@@ -10,6 +10,7 @@ const AdminStores = React.lazy(() => import("./admin/AdminStores"));
 const AdminGiro = React.lazy(() => import("./admin/AdminGiro"));
 const AdminUsers = React.lazy(() => import("./admin/AdminUsers"));
 const AdminStoreSales = React.lazy(() => import("./admin/AdminStoreSales"));
+const AdminFechos = React.lazy(() => import("./admin/AdminFechos"));
 const AdminAnalytics = React.lazy(() => import("./admin/AdminAnalytics"));
 const AdminNotifications = React.lazy(() => import("./admin/AdminNotifications"));
 const AdminStockEntries = React.lazy(() => import("./admin/AdminStockEntries")); // Faturas de Mercadoria (Armazém)
@@ -595,6 +596,7 @@ export default function AdminDashboard() {
                   <>
                     <Route path="/consumo" element={<AdminAnalytics />} />
                     <Route path="/vendas-lojas" element={<AdminStoreSales />} />
+                    <Route path="/fechos" element={<AdminFechos />} />
                     <Route path="/utilizadores" element={<AdminUsers />} />
                     <Route path="/financeiro" element={<AdminFinancial />} />
                     <Route path="/fornecedores" element={<AdminSuppliers />} />
