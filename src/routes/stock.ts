@@ -115,7 +115,7 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
            const baseItem = {
              fatura_id,
              produto_id: item.produto_id,
-             quantidade: q_item,
+             quantidade: Math.round(q_item), // Database uses integer for quantidade in fatura_itens
              iva: iva_percent,
              valor_liquido: vLiquido_item,
              valor_iva: vIva_item,
@@ -144,7 +144,7 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
               const { error: fError3 } = await supabase.from('fatura_itens').insert([{
                  fatura_id,
                  produto_id: item.produto_id,
-                 quantidade: q_item, 
+                 quantidade: Math.round(q_item), 
                  preco_custo: c_unitario
               }]);
               
@@ -154,7 +154,7 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
                  const { error: fError4 } = await supabase.from('fatura_itens').insert([{
                     fatura_id,
                     produto_id: item.produto_id,
-                    quantidade: q_item, 
+                    quantidade: Math.round(q_item), 
                     preco_unitario: c_unitario
                  }]);
                  

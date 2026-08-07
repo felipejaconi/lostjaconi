@@ -1,39 +1,12 @@
-import sys
+import re
 
-with open('src/pages/admin/AdminFinancial.tsx', 'r') as f:
-    code = f.read()
+with open('src/pages/admin/AdminSuppliers.tsx', 'r') as f:
+    content = f.read()
 
-old_block = """                              <div className="w-full flex flex-col gap-2 mt-6">
-                                 <button 
-                                    onClick={() => { setSelectedStore(store); setIsStoreModalOpen(true); }}
-                                    className="w-full py-2.5 px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 border border-zinc-700/50"
-                                 >
-                                    <Receipt size={14} /> Ver todas as faturas
-                                 </button>
-                              </div>"""
+def repl(m):
+    return 'if (reportsTab === "fornecedores" && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, ' + m.group(1) + '); if (reportsTab === "produtos" && selectedReportProductId) fetchProductReport(selectedReportProductId, ' + m.group(1) + ');'
 
-new_block = """                              <div className="w-full flex flex-col gap-2 mt-6">
-                                 <button 
-                                    onClick={() => { setSelectedStore(store); setIsStoreModalOpen(true); }}
-                                    className="w-full py-2.5 px-4 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 border border-amber-500/20"
-                                 >
-                                    <Plus size={14} /> Registrar Novas Despesas
-                                 </button>
-                                 <button 
-                                    onClick={() => { 
-                                       setActiveTab("fornecedores");
-                                       setFilterDataAReceber({...filterDataAReceber, loja: String(store.id)});
-                                    }}
-                                    className="w-full py-2.5 px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 border border-zinc-700/50"
-                                 >
-                                    <Receipt size={14} /> Ver Todas as Faturas
-                                 </button>
-                              </div>"""
+content = re.sub(r'if \(reportsTab === \'fornecedores\' && selectedReportSupplierId\) fetchSupplierProductsList\(selectedReportSupplierId, (.*?)\);', repl, content)
 
-if old_block in code:
-    code = code.replace(old_block, new_block)
-    with open('src/pages/admin/AdminFinancial.tsx', 'w') as f:
-        f.write(code)
-    print("Success")
-else:
-    print("Not found exactly")
+with open('src/pages/admin/AdminSuppliers.tsx', 'w') as f:
+    f.write(content)

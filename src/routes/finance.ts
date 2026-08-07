@@ -104,12 +104,12 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       // Group by produto_id to get aggregated stats (e.g. latest price, total quantity bought)
       const productsMap = new Map();
       for (const item of (data || [])) {
-         if (!item.produto_id || !item.produtos) continue;
+         if (!item.produto_id) continue;
          const pid = item.produto_id;
          if (!productsMap.has(pid)) {
             productsMap.set(pid, {
                produto_id: pid,
-               nome: item.produtos.nome || "Produto Desconhecido",
+               nome: item.produtos?.nome || "Produto Desconhecido",
                quantidade_total: 0,
                ultimo_preco: item.preco_custo,
                ultima_compra: Array.isArray(item.faturas) ? item.faturas[0]?.data_emissao : item.faturas?.data_emissao

@@ -1111,9 +1111,9 @@ export default function AdminFinancial() {
                   </div>
                </div>
 
-               {selectedFatura.tipo?.toLowerCase() === 'compra' && selectedFatura.fatura_itens && selectedFatura.fatura_itens.length > 0 && (
+               {selectedFatura.fatura_itens && selectedFatura.fatura_itens.length > 0 && (
                   <div>
-                     <h3 className="text-sm font-semibold text-zinc-200 mb-3 border-b border-zinc-800 pb-2">Conteúdo da Fatura (Stock)</h3>
+                     <h3 className="text-sm font-semibold text-zinc-200 mb-3 border-b border-zinc-800 pb-2">Conteúdo da Fatura</h3>
                      <div className="bg-zinc-900/30 border border-zinc-800/80 rounded-xl overflow-x-auto">
                         <table className="w-full text-left">
                            <thead>

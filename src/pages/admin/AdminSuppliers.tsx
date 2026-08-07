@@ -39,7 +39,7 @@ export default function AdminSuppliers() {
   const [productSuppliersReport, setProductSuppliersReport] = useState<any[]>([]);
   const [isReportLoading, setIsReportLoading] = useState(false);
 
-  const [reportPeriod, setReportPeriod] = useState<"mes" | "todos">("mes");
+  const [reportPeriod, setReportPeriod] = useState<"mes" | "todos">("todos");
   const [reportMonth, setReportMonth] = useState<number>(new Date().getMonth());
   const [reportYear, setReportYear] = useState<number>(new Date().getFullYear());
 
@@ -611,13 +611,13 @@ export default function AdminSuppliers() {
              <div className="p-4 sm:px-6 sm:py-4 border-b border-white/10 bg-black/40 flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-2 bg-white/5 rounded-xl p-1 border border-white/10">
                    <button
-                     onClick={() => { setReportPeriod("mes"); if (reportsTab === 'fornecedores' && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'mes', reportMonth, reportYear); }}
+                     onClick={() => { setReportPeriod("mes"); if (reportsTab === "fornecedores" && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'mes', reportMonth, reportYear); if (reportsTab === "produtos" && selectedReportProductId) fetchProductReport(selectedReportProductId, 'mes', reportMonth, reportYear); }}
                      className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${reportPeriod === 'mes' ? 'bg-blue-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
                    >
                      Mês Específico
                    </button>
                    <button
-                     onClick={() => { setReportPeriod("todos"); if (reportsTab === 'fornecedores' && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'todos', reportMonth, reportYear); }}
+                     onClick={() => { setReportPeriod("todos"); if (reportsTab === "fornecedores" && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'todos', reportMonth, reportYear); if (reportsTab === "produtos" && selectedReportProductId) fetchProductReport(selectedReportProductId, 'todos', reportMonth, reportYear); }}
                      className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${reportPeriod === 'todos' ? 'bg-blue-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
                    >
                      Todo o Período
@@ -627,7 +627,7 @@ export default function AdminSuppliers() {
                    <div className="flex items-center gap-2">
                       <select
                          value={reportMonth}
-                         onChange={(e) => { const val = Number(e.target.value); setReportMonth(val); if (reportsTab === 'fornecedores' && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'mes', val, reportYear); }}
+                         onChange={(e) => { const val = Number(e.target.value); setReportMonth(val); if (reportsTab === "fornecedores" && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'mes', val, reportYear); if (reportsTab === "produtos" && selectedReportProductId) fetchProductReport(selectedReportProductId, 'mes', val, reportYear); }}
                          className="bg-[#111] border border-white/10 rounded-xl px-3 py-1.5 text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-blue-500 transition-colors"
                       >
                          {monthNames.map((m, i) => (
@@ -636,7 +636,7 @@ export default function AdminSuppliers() {
                       </select>
                       <select
                          value={reportYear}
-                         onChange={(e) => { const val = Number(e.target.value); setReportYear(val); if (reportsTab === 'fornecedores' && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'mes', reportMonth, val); }}
+                         onChange={(e) => { const val = Number(e.target.value); setReportYear(val); if (reportsTab === "fornecedores" && selectedReportSupplierId) fetchSupplierProductsList(selectedReportSupplierId, 'mes', reportMonth, val); if (reportsTab === "produtos" && selectedReportProductId) fetchProductReport(selectedReportProductId, 'mes', reportMonth, val); }}
                          className="bg-[#111] border border-white/10 rounded-xl px-3 py-1.5 text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-blue-500 transition-colors"
                       >
                          {[2024, 2025, 2026, 2027].map(y => (
