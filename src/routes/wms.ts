@@ -168,7 +168,7 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
           .map((i: any) => i.id);
           
         if (idsToDelete.length > 0) {
-          await supabase.from("pedido_itens").delete().in("id", idsToDelete);
+          await supabase.from("pedido_itens").update({ quantidade: 0 }).in("id", idsToDelete);
         }
       }
 

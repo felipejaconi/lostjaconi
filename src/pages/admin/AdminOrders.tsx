@@ -192,7 +192,7 @@ export default function AdminOrders() {
         const conf = conferidos[i.produto_id];
         const newQty = Number(conf?.quantidade) || 0;
         return { ...i, quantidade: newQty };
-      }).filter((i: any) => i.quantidade > 0);
+      });
 
       const newTotal = newItems.reduce((acc: number, item: any) => acc + (item.quantidade * Number(item.preco_unitario)), 0);
 
@@ -256,6 +256,7 @@ export default function AdminOrders() {
       items.forEach((item: any) => {
         if (isCompleted) {
           const qty = item.quantidade;
+          if (qty <= 0) return;
           const un = item.unidade || item.produto?.unidade_medida || 'un';
           const price = Number(item.preco_unitario || 0);
           const total = qty * price;
@@ -348,6 +349,7 @@ export default function AdminOrders() {
       items.forEach((item: any) => {
         if (isCompleted) {
           const qty = item.quantidade;
+          if (qty <= 0) return;
           const un = item.unidade || item.produto?.unidade_medida || 'un';
           const price = Number(item.preco_unitario || 0);
           const total = qty * price;
