@@ -307,10 +307,16 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
 
       <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-4 -mt-2 md:-mt-4 mb-10 w-full flex flex-col sm:flex-row sm:items-center justify-between gap-4 max-w-full">
         <BrandTitle title="Registro de Faturas" titleClassName="-mt-7 pl-0 pt-0 ml-0" hideUnderline />
-        <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 -mt-6 sm:mt-0 shadow-sm">
-           <Receipt size={16} />
-           Registrar Despesa
-        </button>
+        <div className="flex items-center gap-3 -mt-6 sm:mt-0">
+          <button className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm border border-zinc-700">
+             <Receipt size={16} />
+             Faturas
+          </button>
+          <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
+             <Receipt size={16} />
+             Registrar Despesa
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 relative z-10 w-full">
