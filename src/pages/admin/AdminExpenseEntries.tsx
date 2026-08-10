@@ -25,6 +25,7 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
   
   const [categoriaDespesa, setCategoriaDespesa] = useState("");
   const [valorTotal, setValorTotal] = useState("");
+  const [novaCategoria, setNovaCategoria] = useState("");
 
   const CATEGORIAS_DESPESA = [
     { id: "luz", nome: "Luz / Eletricidade" },
@@ -60,9 +61,12 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
       if (!useNovaEntidade && !fornecedorExistente) throw new Error("Selecione um fornecedor ou crie um novo");
       if (useNovaEntidade && !fornecedorNovo) throw new Error("Nome do novo fornecedor é obrigatório");
       if (!categoriaDespesa) throw new Error("Categoria de despesa é obrigatória");
+      if (categoriaDespesa === "novo_tipo" && !novaCategoria.trim()) throw new Error("Nome da nova categoria é obrigatório");
       if (!valorTotal || isNaN(Number(valorTotal)) || Number(valorTotal) <= 0) throw new Error("Valor total inválido");
 
       setIsProcessing(true);
+
+      const finalCategoria = categoriaDespesa === "novo_tipo" ? novaCategoria.trim() : categoriaDespesa;
 
       const payload = {
         fornecedor_id: useNovaEntidade ? null : fornecedorExistente,
@@ -70,7 +74,7 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
         numero_fatura: numeroFatura,
         data_fatura: dataFatura,
         data_vencimento: dataVencimento || dataFatura,
-        categoria_despesa: categoriaDespesa,
+        categoria_despesa: finalCategoria,
         valor_total: Number(valorTotal),
         loja_id: lojaId || (selectedLoja ? selectedLoja : null)
       };
@@ -89,6 +93,8 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
       // Reset
       setNumeroFatura("");
       setValorTotal("");
+      setNovaCategoria("");
+      setCategoriaDespesa("");
       if (onSuccess) onSuccess();
 
     } catch (error: any) {
@@ -186,8 +192,22 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
                 {CATEGORIAS_DESPESA.map((cat) => (
                   <option key={cat.id} value={cat.id}>{cat.nome}</option>
                 ))}
+                <option value="novo_tipo" className="text-rose-400 font-bold">+ Criar Novo Tipo...</option>
               </select>
             </div>
+            
+            {categoriaDespesa === "novo_tipo" && (
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block mb-2">Nome do Novo Tipo *</label>
+                <input
+                  type="text"
+                  value={novaCategoria}
+                  onChange={(e) => setNovaCategoria(e.target.value)}
+                  placeholder="Ex: Combustível, Materiais..."
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-rose-500/50 outline-none transition-all"
+                />
+              </div>
+            )}
 
             <div>
               <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block mb-2">Data da Emissão *</label>

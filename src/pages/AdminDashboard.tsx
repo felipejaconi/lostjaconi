@@ -598,13 +598,13 @@ export default function AdminDashboard() {
                     <Route path="/vendas-lojas" element={<AdminStoreSales />} />
                     <Route path="/fechos" element={<AdminFechos />} />
                     <Route path="/utilizadores" element={<AdminUsers />} />
-                    <Route path="/financeiro" element={<AdminFinancial />} />
                     <Route path="/fornecedores" element={<AdminSuppliers />} />
                     <Route path="/precos" element={<AdminProductsPricing />} />
                     <Route path="/giro" element={<AdminGiro />} />
                     <Route path="/config-armazem" element={<AdminWarehouseConfig />} />
                   </>
                 )}
+                <Route path="/financeiro" element={<AdminFinancial />} />
                 <Route path="/produtos" element={<AdminProducts />} />
                 <Route path="/mapa" element={<AdminWarehouseMap />} />
                 <Route path="/pedidos" element={<AdminOrders />} />
