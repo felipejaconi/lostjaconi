@@ -48,8 +48,8 @@ export function printGuiaTransporte({
   }
 
 // Group items by category (secao)
-  const groupedItems: Record<string, GuiaItem[]> = {};
-  const missingItems: GuiaItem[] = [];
+  const groupedItems = {};
+  const missingItems = [];
 
   order.items.forEach(item => {
     const qty = item.qty_real != null ? Number(item.qty_real) : Number(item.quantidade);
