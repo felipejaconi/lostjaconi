@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Plus, Trash2, Save, FileText, Calendar, X, Receipt, Image as ImageIcon } from "lucide-react";
 import Swal from "sweetalert2";
 import api from "../../lib/api";
@@ -14,6 +15,7 @@ import AdminExpenseEntries from "./AdminExpenseEntries";
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
 export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => void }) {
+  const navigate = useNavigate();
   const [products, setProducts] = useState<any[]>([]);
   const [fornecedores, setFornecedores] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
@@ -308,7 +310,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
       <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-4 -mt-2 md:-mt-4 mb-10 w-full flex flex-col sm:flex-row sm:items-center justify-between gap-4 max-w-full">
         <BrandTitle title="Registro de Faturas" titleClassName="-mt-7 pl-0 pt-0 ml-0" hideUnderline />
         <div className="flex items-center gap-3 -mt-6 sm:mt-0">
-          <button className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm border border-zinc-700">
+          <button onClick={() => navigate("/admin/financeiro?tab=faturas")} className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm border border-zinc-700">
              <Receipt size={16} />
              Faturas
           </button>

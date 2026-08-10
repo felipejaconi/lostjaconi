@@ -18,7 +18,8 @@ import {
   AlertTriangle,
   Receipt,
   Users,
-  ShoppingCart
+  ShoppingCart,
+  Eye
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { motion } from "motion/react";
@@ -125,7 +126,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     fetchGlobalMetrics();
   }, []);
 
-  const handleExport = async () => {
+  const handleExport = async (isView: boolean = false) => {
     setLoading(true);
     try {
       let data: any[][] = [];
@@ -449,7 +450,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
           headers,
           data,
           docNumber: `FIN-${new Date().getFullYear()}-${reportType.toUpperCase()}`,
-          footerNotes: "Relatório Financeiro gerado pelo sistema ERP Lost Wind."
+          footerNotes: "Relatório Financeiro gerado pelo sistema ERP Lost Wind.",
+          autoPrint: !isView
         });
       } else {
         const csvContent = [
@@ -489,12 +491,12 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   };
 
   const reportOptions = [
-      { id: "pagar", title: "A Pagar", icon: TrendingDown, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500" },
+      { id: "pagar", title: "A Pagar (compras)", icon: TrendingDown, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500" },
       { id: "faturas_pagas", title: "Faturas Pagas", icon: AlertTriangle, color: "text-red-500", bg: "bg-red-500/10", border: "border-red-500" },
       { id: "iva_credito", title: "Crédito IVA", icon: FileSpreadsheet, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500" },
-      { id: "debito_iva", title: "Débito IVA", icon: FileSpreadsheet, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500" },
-      { id: "receber", title: "A Receber", icon: TrendingUp, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500" },
-      { id: "consumo_lojas", title: "Totais Lojas", icon: Store, color: "text-blue-500", bg: "bg-blue-500/10", border: "border-blue-500" },
+      { id: "debito_iva", title: "Débito IVA (lojas)", icon: FileSpreadsheet, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500" },
+      { id: "receber", title: "A Receber (lojas)", icon: TrendingUp, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500" },
+      { id: "consumo_lojas", title: "Compras Totais (Lojas)", icon: Store, color: "text-blue-500", bg: "bg-blue-500/10", border: "border-blue-500" },
       { id: "fornecedores", title: "Fornecedores", icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10", border: "border-cyan-500" }
   ];
 
@@ -593,15 +595,26 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                     </div>
                 </div>
                 
-                <div className="pt-6 border-t border-zinc-800/50 mt-auto flex flex-col justify-end">
+
+                <div className="pt-6 border-t border-zinc-800/50 mt-auto flex flex-row gap-2 justify-end">
+                    {format === "pdf" && (
+                       <button
+                          onClick={() => handleExport(true)}
+                          disabled={loading}
+                          className="flex-1 px-4 py-2.5 bg-zinc-800 text-white font-bold text-sm rounded-xl hover:bg-zinc-700 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                       >
+                          {loading ? <span className="animate-pulse">A Processar...</span> : <><Eye size={16} /> Ver</>}
+                       </button>
+                    )}
                     <button
-                       onClick={handleExport}
+                       onClick={() => handleExport(false)}
                        disabled={loading}
-                       className="w-full px-6 py-3.5 bg-blue-500 text-white font-bold text-sm rounded-xl hover:bg-blue-600 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shadow-lg shadow-blue-500/20"
+                       className="flex-1 px-4 py-2.5 bg-blue-500 text-white font-bold text-sm rounded-xl hover:bg-blue-600 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shadow-lg shadow-blue-500/20"
                     >
-                       {loading ? <span className="animate-pulse">A Processar...</span> : <><Download size={18} /> Baixar Relatório</>}
+                       {loading ? <span className="animate-pulse">A Processar...</span> : <><Download size={16} /> Baixar</>}
                     </button>
                 </div>
+
             </div>
             <div className="space-y-6">
                 <div>

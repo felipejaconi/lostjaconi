@@ -11,6 +11,8 @@ import { Modal } from "../../components/ui/Modal";
 import { BrandTitle } from "../../components/BrandTitle";
 import AdminReports from "./AdminReports";
 import AdminExpenseEntries from "./AdminExpenseEntries";
+import { useAuth } from "../../context/AuthContext";
+import { useSearchParams } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
 import Decimal from "decimal.js";
 
@@ -49,11 +51,18 @@ function getPedidoTotalIva(pedido: any): number {
 
 
 export default function AdminFinancial() {
+  const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const isArmazem = user?.role === "armazem";
   const [faturas, setFaturas] = useState<any[]>([]);
   const [fornecedores, setFornecedores] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
-  const [activeTab, setActiveTab] = useState<"dashboard" | "faturas" | "fornecedores" | "despesas" | "relatorios">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "faturas" | "fornecedores" | "despesas" | "relatorios">(() => {
+    if (searchParams.get("tab") === "faturas") return "faturas";
+    if (user?.role === "armazem") return "faturas";
+    return "dashboard";
+  });
   const [search, setSearch] = useState("");
   const [filterTipo, setFilterTipo] = useState("todos");
   
@@ -123,6 +132,13 @@ export default function AdminFinancial() {
   useEffect(() => {
     fetchDados();
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get("tab") === "faturas") {
+      setActiveTab("faturas");
+    }
+  }, [searchParams]);
+
 
   const fetchDados = async () => {
     try {
@@ -462,7 +478,8 @@ export default function AdminFinancial() {
       <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-2 -mt-2 md:-mt-4 mb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
         <BrandTitle title="Financeiro" titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0" hideUnderline />
            
-                <div className="flex bg-[#0a0a0a] p-1.5 rounded-2xl border border-white/5 w-full sm:w-auto overflow-x-auto no-scrollbar gap-1 shadow-inner">
+                {!isArmazem && (
+              <div className="flex bg-[#0a0a0a] p-1.5 rounded-2xl border border-white/5 w-full sm:w-auto overflow-x-auto no-scrollbar gap-1 shadow-inner">
               <button 
                  onClick={() => setActiveTab("dashboard")}
                  className={`shrink-0 sm:flex-none px-4 sm:px-5 py-2.5 text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap ${
@@ -500,12 +517,21 @@ export default function AdminFinancial() {
                  Relatórios
               </button>
            </div>
+           )}
         <div className="flex items-center gap-3">
         </div>
       </div>
 
+
       {/* Content */}
       <div className="flex-1 overflow-y-auto no-scrollbar pb-10">
+         {isLoading ? (
+            <div className="flex items-center justify-center h-64 w-full">
+               <img src={`${import.meta.env.VITE_SUPABASE_URL || "https://ybaoaskddcmwoincsnwm.supabase.co"}/storage/v1/object/public/uploads/icon.png`} alt="Carregando..." className="w-8 h-8 animate-spin opacity-80" />
+            </div>
+         ) : (
+            <>
+
          {activeTab === "relatorios" && (
             <div className="mt-6"><AdminReports embedded={true} /></div>
          )}
@@ -933,6 +959,8 @@ export default function AdminFinancial() {
                   </div>
                )}
             </div>
+         )}
+            </>
          )}
       </div>
 

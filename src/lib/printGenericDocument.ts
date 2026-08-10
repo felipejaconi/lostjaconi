@@ -11,6 +11,7 @@ export interface PrintGenericOptions {
   totalValue?: number;
   footerNotes?: string;
   date?: string;
+  autoPrint?: boolean;
 }
 
 export function printGenericDocument({
@@ -25,7 +26,8 @@ export function printGenericDocument({
   data,
   totalValue,
   footerNotes = "Processado internamente. Documento de controlo interno.",
-  date
+  date,
+  autoPrint = true
 }: PrintGenericOptions) {
   const newWin = window.open("", "_blank");
   if (!newWin) {
@@ -209,13 +211,13 @@ export function printGenericDocument({
         
       </div>
 
-      <script>
+      ${autoPrint ? `<script>
         window.onload = function() {
             setTimeout(function() {
                 window.print();
             }, 500);
         }
-      </script>
+      </script>` : ""}
     </body>
     </html>
   `;
