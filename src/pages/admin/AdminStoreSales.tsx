@@ -4,14 +4,13 @@ import { BrandTitle } from "../../components/BrandTitle";
 import { ContentViewport } from "../../components/layout/ContentViewport";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/Table";
 import api from "../../lib/api";
-import { Save, Store, TrendingUp, AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
+import { Store, TrendingUp, AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 import Swal from "sweetalert2";
 
 export default function AdminStoreSales() {
   const [consumoData, setConsumoData] = useState<any[]>([]);
   const [vendas, setVendas] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   
   const [selectedDate, setSelectedDate] = useState(() => {
     const d = new Date();
@@ -43,27 +42,7 @@ export default function AdminStoreSales() {
     fetchData();
   }, [selectedDate]);
 
-  const handleVendaChange = (storeId: string, val: string) => {
-    setVendas(prev => ({
-      ...prev,
-      [storeId]: Number(val) || 0
-    }));
-  };
 
-  const handleSave = async () => {
-    try {
-      setSaving(true);
-      const month = selectedDate.getMonth();
-      const year = selectedDate.getFullYear();
-      await api.put(`/admin/vendas_lojas?month=${month}&year=${year}`, vendas);
-      Swal.fire({ icon: 'success', title: 'Salvo com sucesso!', toast: true, position: 'top-end', showConfirmButton: false, timer: 3000 });
-    } catch (err) {
-      console.error(err);
-      Swal.fire("Erro", "Falha ao salvar", "error");
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const formatCurrency = (val: number) => {
     const num = Number(val) || 0;
@@ -93,33 +72,26 @@ export default function AdminStoreSales() {
         </div>
         
         <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
-          <div className="flex items-center bg-zinc-900 border border-white/10 rounded-lg p-1">
+          <div className="flex items-center bg-zinc-950/80 backdrop-blur-md border border-white/10 rounded-xl p-1 shadow-lg shadow-black/50">
             <button 
               onClick={() => changeMonth(-1)}
-              className="p-1.5 hover:bg-white/5 rounded-md text-zinc-400 transition-colors"
+              className="p-2 hover:bg-white/10 active:bg-white/5 rounded-lg text-zinc-400 hover:text-emerald-400 transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 group"
             >
-              <ChevronLeft size={18} />
+              <ChevronLeft size={18} className="transition-transform group-hover:-translate-x-0.5" />
             </button>
-            <div className="flex items-center gap-2 px-3 py-1 font-medium text-emerald-400 min-w-[140px] justify-center">
-              <Calendar size={16} />
+            <div className="flex items-center gap-2 px-4 py-1.5 font-bold text-zinc-100 min-w-[150px] justify-center">
+              <Calendar size={16} className="text-emerald-500" />
               {displayMonth}
             </div>
             <button 
               onClick={() => changeMonth(1)}
-              className="p-1.5 hover:bg-white/5 rounded-md text-zinc-400 transition-colors"
+              className="p-2 hover:bg-white/10 active:bg-white/5 rounded-lg text-zinc-400 hover:text-emerald-400 transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 group"
             >
-              <ChevronRight size={18} />
+              <ChevronRight size={18} className="transition-transform group-hover:translate-x-0.5" />
             </button>
           </div>
           
-          <button
-            onClick={handleSave}
-            disabled={saving || loading}
-            className="bg-emerald-500 hover:bg-emerald-600 text-emerald-950 font-bold px-6 py-2.5 rounded-lg transition-colors flex items-center gap-2 shadow-lg disabled:opacity-50 ml-auto md:ml-0"
-          >
-            {saving ? <RefreshCw className="animate-spin" size={18} /> : <Save size={18} />}
-            Guardar Vendas
-          </button>
+          
         </div>
       </div>
 
@@ -177,17 +149,8 @@ export default function AdminStoreSales() {
                         €{formatCurrency(despesas)}
                       </TableCell>
                       <TableCell>
-                        <div className="relative w-32 group-focus-within:w-40 transition-all duration-300">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500 font-bold">€</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={venda || ""}
-                            onChange={(e) => handleVendaChange(loja.id, e.target.value)}
-                            className="w-full bg-black/40 border border-white/10 rounded-lg py-2 pl-7 pr-3 text-sm text-emerald-400 font-bold outline-none placeholder:text-zinc-700 transition-all focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50"
-                            placeholder="0.00"
-                          />
+                        <div className="font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg inline-block min-w-[120px]">
+                          €{formatCurrency(venda)}
                         </div>
                       </TableCell>
                       <TableCell>

@@ -33,14 +33,19 @@ export function setupConfigRoutes({ app, supabase, authenticateToken }: any) {
   app.get("/api/admin/vendas_lojas", authenticateToken, async (req: any, res: any) => {
     try {
       if (req.query.month !== undefined && req.query.year !== undefined) {
+         const month = parseInt(req.query.month);
+         const year = parseInt(req.query.year);
+
+         const startDate = new Date(year, month, 1).toISOString().split('T')[0];
+         const endDate = new Date(year, month + 1, 0).toISOString().split('T')[0];
+
          const { data, error } = await supabase
-           .from("vendas_lojas")
-           .select("store_id, valor")
-           .eq("mes", req.query.month)
-           .eq("ano", req.query.year);
+           .from("fechos_caixa")
+           .select("loja_id, real_total")
+           .gte('data', startDate)
+           .lte('data', endDate);
            
          if (error && error.code === '42P01') {
-           // Table doesn't exist yet, return empty object
            return res.json({});
          } else if (error) {
            throw error;
@@ -48,8 +53,10 @@ export function setupConfigRoutes({ app, supabase, authenticateToken }: any) {
          
          const result: Record<string, number> = {};
          data?.forEach((row: any) => {
-           result[row.store_id] = Number(row.valor);
+           const val = Number(row.real_total || 0);
+           result[row.loja_id] = (result[row.loja_id] || 0) + val;
          });
+         
          return res.json(result);
       }
       return res.json({});
@@ -57,7 +64,6 @@ export function setupConfigRoutes({ app, supabase, authenticateToken }: any) {
       return res.status(500).json({ error: e.message });
     }
   });
-
   app.put("/api/admin/vendas_lojas", authenticateToken, async (req: any, res: any) => {
     try {
       if (req.user.role !== "admin" && req.user.role !== "armazem") {
