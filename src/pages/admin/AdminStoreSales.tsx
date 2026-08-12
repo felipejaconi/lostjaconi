@@ -1,13 +1,15 @@
 
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { BrandTitle } from "../../components/BrandTitle";
 import { ContentViewport } from "../../components/layout/ContentViewport";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/Table";
 import api from "../../lib/api";
-import { Store, TrendingUp, AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
+import { Store, TrendingUp, AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Calendar, ArrowLeft } from "lucide-react";
 import Swal from "sweetalert2";
 
 export default function AdminStoreSales() {
+  const navigate = useNavigate();
   const [consumoData, setConsumoData] = useState<any[]>([]);
   const [vendas, setVendas] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -66,9 +68,17 @@ export default function AdminStoreSales() {
   return (
     <ContentViewport>
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
-        <div>
-          <BrandTitle title="Consumos" hideUnderline titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0 !mb-1" />
-          <p className="text-zinc-400 text-sm">Controle avançado: cruze as vendas registadas com os pedidos (consumo) das lojas.</p>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate(-1)}
+            className="p-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors border border-white/5"
+            title="Voltar"
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <div>
+            <BrandTitle title="C.M.V." hideUnderline titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0 !mb-1" />
+          </div>
         </div>
         
         <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
@@ -110,7 +120,7 @@ export default function AdminStoreSales() {
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Consumo (Mês)</TableHead>
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Despesas (Mês)</TableHead>
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Vendas (Mês)</TableHead>
-                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">% Custo (Food Cost + Desp.)</TableHead>
+                <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">% Custo (Food Cost)</TableHead>
                 <TableHead className="text-zinc-500 font-bold uppercase tracking-wider text-xs">Margem Bruta</TableHead>
               </TableRow>
             </TableHeader>
@@ -125,7 +135,7 @@ export default function AdminStoreSales() {
                   const despesas = Number(loja.despesasMensal || 0);
                   const venda = vendas[loja.id] || 0;
                   const custoTotal = consumo + despesas;
-                  const cmv = venda > 0 ? (custoTotal / venda) * 100 : 0;
+                  const cmv = venda > 0 ? (consumo / venda) * 100 : 0;
                   const isHighCost = cmv > 50 && venda > 0;
                   const isWarning = cmv > 40 && cmv <= 50 && venda > 0;
                   
@@ -204,7 +214,7 @@ export default function AdminStoreSales() {
                       const tDespesas = consumoData.reduce((acc, l) => acc + Number(l.despesasMensal || 0), 0);
                       const tVendas = consumoData.reduce((acc, l) => acc + (vendas[l.id] || 0), 0);
                       const tCusto = tConsumo + tDespesas;
-                      const tCmv = tVendas > 0 ? (tCusto / tVendas) * 100 : 0;
+                      const tCmv = tVendas > 0 ? (tConsumo / tVendas) * 100 : 0;
                       return (
                         <div className="flex items-center gap-2 font-bold">
                           <span className={`${tCmv > 50 ? 'text-rose-500' : tCmv > 40 ? 'text-amber-500' : 'text-emerald-500'}`}>

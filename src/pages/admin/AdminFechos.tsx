@@ -1,14 +1,19 @@
 import React, { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Calendar, Plus, Trash2, Search, Save, History, DollarSign, Calculator, Store, ChevronDown } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ChevronLeft, ChevronRight, Calendar, Plus, Trash2, Search, Save, History, DollarSign, Calculator, Store, ChevronDown, ArrowLeft } from "lucide-react";
 import Swal from "sweetalert2";
 import api from "../../lib/api";
 import { ContentViewport } from "../../components/layout/ContentViewport";
+import { BarChart2 } from "lucide-react";
 import { BrandTitle } from "../../components/BrandTitle";
+import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, CartesianGrid, YAxis, Legend } from "recharts";
 
 export default function AdminFechos() {
+  const navigate = useNavigate();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [lojas, setLojas] = useState<any[]>([]);
   const [fechos, setFechos] = useState<any[]>([]);
+  const [prevFechos, setPrevFechos] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedLojaId, setSelectedLojaId] = useState<string>('all');
 
@@ -37,8 +42,16 @@ export default function AdminFechos() {
       try {
         const month = selectedDate.getMonth() + 1;
         const year = selectedDate.getFullYear();
-        const res = await api.get(`/admin/fechos?month=${month}&year=${year}`);
+        const pMonth = selectedDate.getMonth() === 0 ? 12 : selectedDate.getMonth();
+        const pYear = selectedDate.getMonth() === 0 ? year - 1 : year;
+        
+        const [res, resPrev] = await Promise.all([
+           api.get(`/admin/fechos?month=${month}&year=${year}`),
+           api.get(`/admin/fechos?month=${pMonth}&year=${pYear}`)
+        ]);
+        
         setFechos(res.data || []);
+        setPrevFechos(resPrev.data || []);
       } catch (err) {
         console.error("Erro ao carregar fechos:", err);
       } finally {
@@ -187,12 +200,36 @@ export default function AdminFechos() {
      });
   };
 
+  const chartData = lojas.map(loja => {
+      const cFechos = fechos.filter(f => f.loja_id === loja.id);
+      const pFechos = prevFechos.filter(f => f.loja_id === loja.id);
+      
+      const calcTotal = (arr: any[]) => arr.reduce((acc, f) => {
+         return acc + Number(f.sys_mb || 0) + Number(f.sys_dinheiro || 0) + Number(f.sys_mesa || 0) + Number(f.sys_uber || 0);
+      }, 0);
+      
+      return {
+         id: loja.id,
+         name: loja.name,
+         atual: calcTotal(cFechos),
+         anterior: calcTotal(pFechos)
+      };
+  });
+
   return (
     <ContentViewport>
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
-        <div>
-          <BrandTitle title="Fechos de Caixa" hideUnderline titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0 !mb-1" />
-          <p className="text-zinc-400 text-sm">Controle as diferenças entre o faturado no sistema e o valor real em caixa/banco.</p>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate(-1)}
+            className="p-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors border border-white/5"
+            title="Voltar"
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <div>
+            <BrandTitle title="Fechos de Caixa" hideUnderline titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0 !mb-1" />
+          </div>
         </div>
         
         <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
@@ -236,7 +273,43 @@ export default function AdminFechos() {
         </div>
       </div>
 
-      <div className="bg-[#111] border border-white/10 rounded-3xl shadow-lg overflow-hidden flex flex-col min-h-[600px] mb-8 relative">
+      <div className="bg-[#111] border border-white/10 rounded-3xl shadow-lg overflow-hidden flex flex-col min-h-[600px] mb-8 relative p-6">
+        {selectedLojaId === 'all' ? (
+           <div className="flex flex-col w-full h-[500px]">
+              <div className="mb-6">
+                 <h3 
+                    className="text-2xl md:text-3xl text-[#facc15] tracking-wider leading-tight flex items-center gap-2"
+                    style={{
+                       fontFamily: "'Yellowtail', cursive",
+                       textShadow: "1px 1px 3px rgba(0,0,0,0.5)"
+                    }}
+                 >
+                    <BarChart2 className="text-blue-500" size={24} />
+                    Faturação
+                 </h3>
+              </div>
+              <div className="flex-1 min-h-0">
+                 <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ left: -20, right: 0, top: 20, bottom: 80 }}>
+                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
+                       <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 11, angle: -45, textAnchor: 'end', dy: 15, dx: -5 }} height={80} interval={0} />
+                       <YAxis axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 12 }} tickFormatter={(val) => `€${val}`} />
+                       <Tooltip 
+                          cursor={{ fill: '#ffffff05' }}
+                          contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', color: '#fff', borderRadius: '8px' }}
+                          itemStyle={{ color: '#e4e4e7' }}
+                          formatter={(value) => [`€${Number(value).toFixed(2)}`, '']}
+                       />
+                       <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                       <Bar dataKey="atual" name="Mês Atual" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={60} onClick={(data: any) => data?.id && setSelectedLojaId(data.id)} cursor="pointer" />
+                       <Bar dataKey="anterior" name="Mês Anterior" fill="#64748b" radius={[4, 4, 0, 0]} maxBarSize={60} opacity={0.5} onClick={(data: any) => data?.id && setSelectedLojaId(data.id)} cursor="pointer" />
+                    </BarChart>
+                 </ResponsiveContainer>
+              </div>
+           </div>
+        ) : (
+           <div className="overflow-x-auto -mx-6 -my-6">
+              
         <div className="overflow-x-auto">
            {lojasToDisplay.map(loja => (
              <div key={loja.id} className="mb-12">
@@ -347,17 +420,105 @@ export default function AdminFechos() {
                             </tr>
                          );
                       })}
+                      {(() => {
+                         const totais = days.reduce((acc, day) => {
+                             const fecho = getFecho(day, loja.id);
+                             if (!fecho) return acc;
+                             
+                             const sysMb = Number(fecho.sys_mb || 0);
+                             const sysDin = Number(fecho.sys_dinheiro || 0);
+                             const sysMesa = Number(fecho.sys_mesa || 0);
+                             const sysUber = Number(fecho.sys_uber || 0);
+                             const tVenda = sysMb + sysDin + sysMesa + sysUber;
+                             
+                             const realMb = Number(fecho.real_mb || 0);
+                             const realDin = Number(fecho.real_dinheiro || 0);
+                             const realMesa = Number(fecho.real_mesa || 0);
+                             const realUber = Number(fecho.real_uber || 0);
+                             const tVendasApre = realMb + realDin + realMesa + realUber;
+                             
+                             return {
+                                sysMb: acc.sysMb + sysMb,
+                                sysDin: acc.sysDin + sysDin,
+                                sysMesa: acc.sysMesa + sysMesa,
+                                sysUber: acc.sysUber + sysUber,
+                                tVenda: acc.tVenda + tVenda,
+                                realMb: acc.realMb + realMb,
+                                realDin: acc.realDin + realDin,
+                                realMesa: acc.realMesa + realMesa,
+                                realUber: acc.realUber + realUber,
+                                tVendasApre: acc.tVendasApre + tVendasApre,
+                                dif: acc.dif + (tVendasApre - tVenda)
+                             };
+                         }, {
+                             sysMb: 0, sysDin: 0, sysMesa: 0, sysUber: 0, tVenda: 0,
+                             realMb: 0, realDin: 0, realMesa: 0, realUber: 0, tVendasApre: 0, dif: 0
+                         });
+
+                         const difColor = totais.dif > 0 ? "text-emerald-400" : totais.dif < 0 ? "text-rose-400" : "text-zinc-500";
+                         
+                         return (
+                            <tr className="border-t-2 border-white/20 bg-black/60 group">
+                               <td className="p-3 text-right text-zinc-300 font-bold uppercase tracking-widest sticky left-0 bg-[#111] z-10 shadow-[4px_0_12px_rgba(0,0,0,0.5)] border-t-2 border-white/10">
+                                  TOTAL
+                               </td>
+                               
+                               {/* SISTEMA */}
+                               <td className="p-3 text-right font-bold text-blue-400 border-l border-white/10 bg-blue-500/[0.05]">
+                                  {totais.sysMb > 0 ? `€${totais.sysMb.toFixed(2)}` : '-'}
+                               </td>
+                               <td className="p-3 text-right font-bold text-blue-400 bg-blue-500/[0.05]">
+                                  {totais.sysDin > 0 ? `€${totais.sysDin.toFixed(2)}` : '-'}
+                               </td>
+                               <td className="p-3 text-right font-bold text-blue-400 bg-blue-500/[0.05]">
+                                  {totais.sysMesa > 0 ? `€${totais.sysMesa.toFixed(2)}` : '-'}
+                               </td>
+                               <td className="p-3 text-right font-bold text-blue-400 bg-blue-500/[0.05]">
+                                  {totais.sysUber > 0 ? `€${totais.sysUber.toFixed(2)}` : '-'}
+                               </td>
+                               <td className="p-3 text-right font-black text-blue-500 bg-blue-500/[0.1]">
+                                  {totais.tVenda > 0 ? `€${totais.tVenda.toFixed(2)}` : '-'}
+                               </td>
+
+                               {/* APRESENTADO */}
+                               <td className="p-3 text-right font-bold text-emerald-400 border-l border-white/10 bg-emerald-500/[0.05]">
+                                  {totais.realMb > 0 ? `€${totais.realMb.toFixed(2)}` : '-'}
+                               </td>
+                               <td className="p-3 text-right font-bold text-emerald-400 bg-emerald-500/[0.05]">
+                                  {totais.realDin > 0 ? `€${totais.realDin.toFixed(2)}` : '-'}
+                               </td>
+                               <td className="p-3 text-right font-bold text-emerald-400 bg-emerald-500/[0.05]">
+                                  {totais.realMesa > 0 ? `€${totais.realMesa.toFixed(2)}` : '-'}
+                               </td>
+                               <td className="p-3 text-right font-bold text-emerald-400 bg-emerald-500/[0.05]">
+                                  {totais.realUber > 0 ? `€${totais.realUber.toFixed(2)}` : '-'}
+                               </td>
+                               <td className="p-3 text-right font-black text-emerald-500 bg-emerald-500/[0.1]">
+                                  {totais.tVendasApre > 0 ? `€${totais.tVendasApre.toFixed(2)}` : '-'}
+                               </td>
+                               
+                               {/* TOTALS */}
+                               <td className={`p-3 text-right font-black border-l border-white/10 bg-white/[0.05] ${difColor}`}>
+                                  {totais.dif > 0 ? `+€${totais.dif.toFixed(2)}` : totais.dif < 0 ? `-€${Math.abs(totais.dif).toFixed(2)}` : '€0.00'}
+                               </td>
+                               
+                               <td className="p-3 text-center bg-white/[0.02]">
+                               </td>
+                            </tr>
+                         );
+                      })()}
                    </tbody>
                 </table>
              </div>
            ))}
-           
            {lojasToDisplay.length === 0 && !isLoading && (
               <div className="p-12 text-center text-zinc-500">
                  Nenhuma loja encontrada.
               </div>
            )}
         </div>
+           </div>
+        )}
       </div>
     </ContentViewport>
   );

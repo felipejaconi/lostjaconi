@@ -111,14 +111,13 @@ export default function AdminAnalytics() {
             className="bg-emerald-500 hover:bg-emerald-600 text-emerald-950 font-bold px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
           >
             <Activity size={18} />
-            Consumos
+            C.M.V.
           </button>
           <button
             onClick={() => navigate('/admin/fechos')}
-            className="bg-blue-500 hover:bg-blue-600 text-blue-950 font-bold px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
+            className="bg-yellow-500 hover:bg-yellow-600 text-yellow-950 font-bold px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
           >
-            <DollarSign size={18} />
-            Fechos
+            FECHOS
           </button>
         </div>
       </div>
