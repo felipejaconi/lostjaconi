@@ -16,7 +16,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
   app.post("/api/pedidos", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     const { itens, total, observacoes, loja_id } = req.body;
     if (!Array.isArray(itens)) return res.status(400).json({ message: "Itens inválidos" });
-    const userId = (req.user.role === "admin" && loja_id) ? loja_id : req.user.id;
+    const userId = (["admin", "armazem"].includes(req.user.role) && loja_id) ? loja_id : req.user.id;
     try {
       const { data: order, error: orderErr } = await supabase.from("pedidos").insert([{
         user_id: userId, total, observacoes, status: "pendente"
