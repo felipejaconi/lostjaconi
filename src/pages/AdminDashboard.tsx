@@ -277,7 +277,7 @@ export default function AdminDashboard() {
         { to: "/admin/estoque-global", label: "Armazém", icon: <Layers size={18} /> },
         { to: "/admin/armazem/produtos", label: "Produtos", icon: <Package size={18} /> },
         { to: "/admin/mapa", label: "Mapa", icon: <Map size={18} /> },
-        ...(user?.role === "admin" ? [{ to: "/admin/fornecedores", label: "Fornecedores", icon: <Users size={18} /> }] : []),
+        ...(["admin", "armazem"].includes(user?.role) ? [{ to: "/admin/fornecedores", label: "Fornecedores", icon: <Users size={18} /> }] : []),
       ]
     },
     ...(user?.role === "admin" ? [

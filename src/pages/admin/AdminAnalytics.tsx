@@ -202,9 +202,9 @@ export default function AdminAnalytics() {
           </div>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sortedData.map(d => ({ ...d, mensal: parseFloat(d.mensal || 0), previsto: d.mesAnterior || 0 }))} margin={{ left: -20, right: 0, top: 0, bottom: 0 }}>
+              <BarChart data={sortedData.map(d => ({ ...d, name: d.name?.split(' ')[0], mensal: parseFloat(d.mensal || 0), previsto: d.mesAnterior || 0 }))} margin={{ left: -20, right: 0, top: 0, bottom: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 10 }} />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 10, angle: -45, textAnchor: 'end', dy: 15, dx: -5 }} height={60} interval={0} />
                 <YAxis axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 10 }} tickFormatter={(val) => `€${formatCurrency(val)}`} />
                 <Tooltip
                   cursor={{ fill: "rgba(255,255,255,0.02)" }}

@@ -85,18 +85,41 @@ export default function AdminFechos() {
   };
 
   const handleEdit = (day: number, loja: any) => {
+
      const dateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
      const existing = getFecho(day, loja.id);
      
+     const formulasKey = `fechos_formulas_${loja.id}_${dateStr}`;
+     let savedFormulas: any = {};
+     try {
+         savedFormulas = JSON.parse(localStorage.getItem(formulasKey) || '{}');
+     } catch(e) {}
+
+     const getVal = (val: number, field: string) => {
+         const formula = savedFormulas[field];
+         if (formula) {
+             try {
+                 const expr = formula.split('=')[0];
+                 const sanitized = expr.replace(/,/g, '.').replace(/[^0-9.+\-*/()]/g, '');
+                 const evaluated = parseFloat(new Function('return ' + sanitized)()) || 0;
+                 if (Math.abs(evaluated - val) < 0.01) {
+                     return formula;
+                 }
+             } catch (e) {}
+         }
+         return val;
+     };
+
      // default values
-     let sysMb = existing?.sys_mb || 0;
-     let sysDinheiro = existing?.sys_dinheiro || 0;
-     let sysMesa = existing?.sys_mesa || 0;
-     let sysUber = existing?.sys_uber || 0;
-     let realMb = existing?.real_mb || 0;
-     let realDinheiro = existing?.real_dinheiro || 0;
-     let realMesa = existing?.real_mesa || 0;
-     let realUber = existing?.real_uber || 0;
+     let sysMb = getVal(existing?.sys_mb || 0, 'sys_mb');
+     let sysDinheiro = getVal(existing?.sys_dinheiro || 0, 'sys_dinheiro');
+     let sysMesa = getVal(existing?.sys_mesa || 0, 'sys_mesa');
+     let sysUber = getVal(existing?.sys_uber || 0, 'sys_uber');
+     let realMb = getVal(existing?.real_mb || 0, 'real_mb');
+     let realDinheiro = getVal(existing?.real_dinheiro || 0, 'real_dinheiro');
+     let realMesa = getVal(existing?.real_mesa || 0, 'real_mesa');
+     let realUber = getVal(existing?.real_uber || 0, 'real_uber');
+
      let despesas = existing?.despesas || 0;
 
      Swal.fire({
@@ -152,30 +175,37 @@ export default function AdminFechos() {
         confirmButtonText: 'Guardar',
         cancelButtonText: 'Cancelar',
         preConfirm: () => {
-           const val = (id: string) => {
+           const formulasToSave: any = {};
+           const val = (id: string, field: string) => {
               const str = (document.getElementById(id) as HTMLInputElement).value;
               if (!str) return 0;
+              formulasToSave[field] = str;
               try {
-                 const sanitized = str.replace(/,/g, '.').replace(/[^0-9.+\-*/()]/g, '');
+                 const expr = str.split('=')[0];
+                 const sanitized = expr.replace(/,/g, '.').replace(/[^0-9.+\-*/()]/g, '');
                  if (!sanitized) return 0;
                  return parseFloat(new Function('return ' + sanitized)()) || 0;
               } catch (e) {
                  return 0;
               }
            };
-           return {
+           const payload = {
               data: dateStr,
               loja_id: loja.id,
-              sys_mb: val('swal-sys-mb'),
-              sys_dinheiro: val('swal-sys-dinheiro'),
-              sys_mesa: val('swal-sys-mesa'),
-              sys_uber: val('swal-sys-uber'),
-              real_mb: val('swal-real-mb'),
-              real_dinheiro: val('swal-real-dinheiro'),
-              real_mesa: val('swal-real-mesa'),
-              real_uber: val('swal-real-uber'),
+              sys_mb: val('swal-sys-mb', 'sys_mb'),
+              sys_dinheiro: val('swal-sys-dinheiro', 'sys_dinheiro'),
+              sys_mesa: val('swal-sys-mesa', 'sys_mesa'),
+              sys_uber: val('swal-sys-uber', 'sys_uber'),
+              real_mb: val('swal-real-mb', 'real_mb'),
+              real_dinheiro: val('swal-real-dinheiro', 'real_dinheiro'),
+              real_mesa: val('swal-real-mesa', 'real_mesa'),
+              real_uber: val('swal-real-uber', 'real_uber'),
               despesas: 0
            };
+           try {
+              localStorage.setItem(formulasKey, JSON.stringify(formulasToSave));
+           } catch(e) {}
+           return payload;
         }
      }).then(async (result) => {
         if (result.isConfirmed) {
@@ -210,7 +240,7 @@ export default function AdminFechos() {
       
       return {
          id: loja.id,
-         name: loja.name,
+         name: loja.name.split(' ')[0],
          atual: calcTotal(cFechos),
          anterior: calcTotal(pFechos)
       };
@@ -300,7 +330,7 @@ export default function AdminFechos() {
                           itemStyle={{ color: '#e4e4e7' }}
                           formatter={(value) => [`€${Number(value).toFixed(2)}`, '']}
                        />
-                       <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                       <Legend verticalAlign="top" align="right" wrapperStyle={{ paddingBottom: '20px' }} />
                        <Bar dataKey="atual" name="Mês Atual" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={60} onClick={(data: any) => data?.id && setSelectedLojaId(data.id)} cursor="pointer" />
                        <Bar dataKey="anterior" name="Mês Anterior" fill="#64748b" radius={[4, 4, 0, 0]} maxBarSize={60} opacity={0.5} onClick={(data: any) => data?.id && setSelectedLojaId(data.id)} cursor="pointer" />
                     </BarChart>
