@@ -17,6 +17,7 @@ export default function AdminFechos() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedLojaId, setSelectedLojaId] = useState<string>('all');
 
+  const formatVal = (v: number, hasData: boolean = true) => { if (!hasData) return "-"; return v < 0 ? `-€${Math.abs(v).toFixed(2)}` : `€${v.toFixed(2)}`; };
   const lojasToDisplay = selectedLojaId === 'all' ? lojas : lojas.filter(l => l.id === selectedLojaId);
 
   // Load lojas
@@ -95,14 +96,15 @@ export default function AdminFechos() {
          savedFormulas = JSON.parse(localStorage.getItem(formulasKey) || '{}');
      } catch(e) {}
 
-     const getVal = (val: number, field: string) => {
+     const getVal = (val: number | string, field: string) => {
          const formula = savedFormulas[field];
          if (formula) {
              try {
                  const expr = formula.split('=')[0];
                  const sanitized = expr.replace(/,/g, '.').replace(/[^0-9.+\-*/()]/g, '');
                  const evaluated = parseFloat(new Function('return ' + sanitized)()) || 0;
-                 if (Math.abs(evaluated - val) < 0.01) {
+                 const numericVal = typeof val === 'number' ? val : 0;
+                 if (Math.abs(evaluated - numericVal) < 0.01) {
                      return formula;
                  }
              } catch (e) {}
@@ -110,17 +112,17 @@ export default function AdminFechos() {
          return val;
      };
 
-     // default values
-     let sysMb = getVal(existing?.sys_mb || 0, 'sys_mb');
-     let sysDinheiro = getVal(existing?.sys_dinheiro || 0, 'sys_dinheiro');
-     let sysMesa = getVal(existing?.sys_mesa || 0, 'sys_mesa');
-     let sysUber = getVal(existing?.sys_uber || 0, 'sys_uber');
-     let realMb = getVal(existing?.real_mb || 0, 'real_mb');
-     let realDinheiro = getVal(existing?.real_dinheiro || 0, 'real_dinheiro');
-     let realMesa = getVal(existing?.real_mesa || 0, 'real_mesa');
-     let realUber = getVal(existing?.real_uber || 0, 'real_uber');
+     // default values - use ?? "" to make it empty by default instead of 0
+     let sysMb = getVal(existing?.sys_mb ?? "", 'sys_mb');
+     let sysDinheiro = getVal(existing?.sys_dinheiro ?? "", 'sys_dinheiro');
+     let sysMesa = getVal(existing?.sys_mesa ?? "", 'sys_mesa');
+     let sysUber = getVal(existing?.sys_uber ?? "", 'sys_uber');
+     let realMb = getVal(existing?.real_mb ?? "", 'real_mb');
+     let realDinheiro = getVal(existing?.real_dinheiro ?? "", 'real_dinheiro');
+     let realMesa = getVal(existing?.real_mesa ?? "", 'real_mesa');
+     let realUber = getVal(existing?.real_uber ?? "", 'real_uber');
 
-     let despesas = existing?.despesas || 0;
+     let despesas = existing?.despesas ?? "";
 
      Swal.fire({
         title: `Fecho de Caixa - ${day}/${String(selectedDate.getMonth()+1).padStart(2,'0')} - ${loja.name}`,
@@ -402,36 +404,36 @@ export default function AdminFechos() {
                                
                                {/* SISTEMA */}
                                <td className="p-3 text-right text-zinc-400 border-l border-white/10 bg-blue-500/[0.02]">
-                                  {sysMb > 0 ? `€${sysMb.toFixed(2)}` : '-'}
+                                  {formatVal(sysMb, hasData)}
                                </td>
                                <td className="p-3 text-right text-zinc-400 bg-blue-500/[0.02]">
-                                  {sysDin > 0 ? `€${sysDin.toFixed(2)}` : '-'}
+                                  {formatVal(sysDin, hasData)}
                                </td>
                                <td className="p-3 text-right text-zinc-400 bg-blue-500/[0.02]">
-                                  {sysMesa > 0 ? `€${sysMesa.toFixed(2)}` : '-'}
+                                  {formatVal(sysMesa, hasData)}
                                </td>
                                <td className="p-3 text-right text-zinc-400 bg-blue-500/[0.02]">
-                                  {sysUber > 0 ? `€${sysUber.toFixed(2)}` : '-'}
+                                  {formatVal(sysUber, hasData)}
                                </td>
                                <td className="p-3 text-right font-bold text-blue-400 bg-blue-500/[0.05]">
-                                  {tVenda > 0 ? `€${tVenda.toFixed(2)}` : '-'}
+                                  {formatVal(tVenda, hasData)}
                                </td>
 
                                {/* APRESENTADO */}
                                <td className="p-3 text-right text-zinc-400 border-l border-white/10 bg-emerald-500/[0.02]">
-                                  {realMb > 0 ? `€${realMb.toFixed(2)}` : '-'}
+                                  {formatVal(realMb, hasData)}
                                </td>
                                <td className="p-3 text-right text-zinc-400 bg-emerald-500/[0.02]">
-                                  {realDin > 0 ? `€${realDin.toFixed(2)}` : '-'}
+                                  {formatVal(realDin, hasData)}
                                </td>
                                <td className="p-3 text-right text-zinc-400 bg-emerald-500/[0.02]">
-                                  {realMesa > 0 ? `€${realMesa.toFixed(2)}` : '-'}
+                                  {formatVal(realMesa, hasData)}
                                </td>
                                <td className="p-3 text-right text-zinc-400 bg-emerald-500/[0.02]">
-                                  {realUber > 0 ? `€${realUber.toFixed(2)}` : '-'}
+                                  {formatVal(realUber, hasData)}
                                </td>
                                <td className="p-3 text-right font-bold text-emerald-400 bg-emerald-500/[0.05]">
-                                  {tVendasApre > 0 ? `€${tVendasApre.toFixed(2)}` : '-'}
+                                  {formatVal(tVendasApre, hasData)}
                                </td>
                                
                                {/* TOTALS */}
@@ -495,36 +497,36 @@ export default function AdminFechos() {
                                
                                {/* SISTEMA */}
                                <td className="p-3 text-right font-bold text-blue-400 border-l border-white/10 bg-blue-500/[0.05]">
-                                  {totais.sysMb > 0 ? `€${totais.sysMb.toFixed(2)}` : '-'}
+                                  {formatVal(totais.sysMb)}
                                </td>
                                <td className="p-3 text-right font-bold text-blue-400 bg-blue-500/[0.05]">
-                                  {totais.sysDin > 0 ? `€${totais.sysDin.toFixed(2)}` : '-'}
+                                  {formatVal(totais.sysDin)}
                                </td>
                                <td className="p-3 text-right font-bold text-blue-400 bg-blue-500/[0.05]">
-                                  {totais.sysMesa > 0 ? `€${totais.sysMesa.toFixed(2)}` : '-'}
+                                  {formatVal(totais.sysMesa)}
                                </td>
                                <td className="p-3 text-right font-bold text-blue-400 bg-blue-500/[0.05]">
-                                  {totais.sysUber > 0 ? `€${totais.sysUber.toFixed(2)}` : '-'}
+                                  {formatVal(totais.sysUber)}
                                </td>
                                <td className="p-3 text-right font-black text-blue-500 bg-blue-500/[0.1]">
-                                  {totais.tVenda > 0 ? `€${totais.tVenda.toFixed(2)}` : '-'}
+                                  {formatVal(totais.tVenda)}
                                </td>
 
                                {/* APRESENTADO */}
                                <td className="p-3 text-right font-bold text-emerald-400 border-l border-white/10 bg-emerald-500/[0.05]">
-                                  {totais.realMb > 0 ? `€${totais.realMb.toFixed(2)}` : '-'}
+                                  {formatVal(totais.realMb)}
                                </td>
                                <td className="p-3 text-right font-bold text-emerald-400 bg-emerald-500/[0.05]">
-                                  {totais.realDin > 0 ? `€${totais.realDin.toFixed(2)}` : '-'}
+                                  {formatVal(totais.realDin)}
                                </td>
                                <td className="p-3 text-right font-bold text-emerald-400 bg-emerald-500/[0.05]">
-                                  {totais.realMesa > 0 ? `€${totais.realMesa.toFixed(2)}` : '-'}
+                                  {formatVal(totais.realMesa)}
                                </td>
                                <td className="p-3 text-right font-bold text-emerald-400 bg-emerald-500/[0.05]">
-                                  {totais.realUber > 0 ? `€${totais.realUber.toFixed(2)}` : '-'}
+                                  {formatVal(totais.realUber)}
                                </td>
                                <td className="p-3 text-right font-black text-emerald-500 bg-emerald-500/[0.1]">
-                                  {totais.tVendasApre > 0 ? `€${totais.tVendasApre.toFixed(2)}` : '-'}
+                                  {formatVal(totais.tVendasApre)}
                                </td>
                                
                                {/* TOTALS */}
