@@ -26,6 +26,7 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
   const [categoriaDespesa, setCategoriaDespesa] = useState("");
   const [valorTotal, setValorTotal] = useState("");
   const [novaCategoria, setNovaCategoria] = useState("");
+  const [parcelas, setParcelas] = useState(1);
 
   const CATEGORIAS_DESPESA = [
     { id: "luz", nome: "Luz / Eletricidade" },
@@ -67,24 +68,62 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
       setIsProcessing(true);
 
       const finalCategoria = categoriaDespesa === "novo_tipo" ? novaCategoria.trim() : categoriaDespesa;
+      
+      const numParcelas = Number(parcelas) || 1;
+      let payloadToSubmit: any = [];
+      
+      if (numParcelas > 1) {
+         const [year, month, day] = dataFatura.split('-');
+         let currentEmissao = new Date(Number(year), Number(month) - 1, Number(day));
+         
+         let currentVencimento: Date | null = null;
+         if (dataVencimento) {
+             const [vYear, vMonth, vDay] = dataVencimento.split('-');
+             currentVencimento = new Date(Number(vYear), Number(vMonth) - 1, Number(vDay));
+         } else {
+             currentVencimento = new Date(currentEmissao.getTime());
+         }
 
-      const payload = {
-        fornecedor_id: useNovaEntidade ? null : fornecedorExistente,
-        novo_fornecedor_nome: useNovaEntidade ? fornecedorNovo : null,
-        numero_fatura: numeroFatura,
-        data_fatura: dataFatura,
-        data_vencimento: dataVencimento || dataFatura,
-        categoria_despesa: finalCategoria,
-        valor_total: Number(valorTotal),
-        loja_id: lojaId || (selectedLoja ? selectedLoja : null)
-      };
+         for (let i = 0; i < numParcelas; i++) {
+             const suffix = `-P${i+1}/${numParcelas}`;
+             const pad = (n: number) => String(n).padStart(2, '0');
+             const formatD = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 
-      await api.post("/admin/faturas/despesas", payload);
+             payloadToSubmit.push({
+                 fornecedor_id: useNovaEntidade ? null : fornecedorExistente,
+                 novo_fornecedor_nome: useNovaEntidade ? fornecedorNovo : null,
+                 numero_fatura: `${numeroFatura}${suffix}`,
+                 data_fatura: formatD(currentEmissao),
+                 data_vencimento: formatD(currentVencimento),
+                 categoria_despesa: finalCategoria,
+                 valor_total: Number(valorTotal),
+                 loja_id: lojaId || (selectedLoja ? selectedLoja : null)
+             });
+             
+             currentEmissao.setMonth(currentEmissao.getMonth() + 1);
+             if (currentVencimento) {
+                 currentVencimento.setMonth(currentVencimento.getMonth() + 1);
+             }
+         }
+      } else {
+          payloadToSubmit = {
+            fornecedor_id: useNovaEntidade ? null : fornecedorExistente,
+            novo_fornecedor_nome: useNovaEntidade ? fornecedorNovo : null,
+            numero_fatura: numeroFatura,
+            data_fatura: dataFatura,
+            data_vencimento: dataVencimento || dataFatura,
+            categoria_despesa: finalCategoria,
+            valor_total: Number(valorTotal),
+            loja_id: lojaId || (selectedLoja ? selectedLoja : null)
+          };
+      }
+
+      await api.post("/admin/faturas/despesas", payloadToSubmit);
 
       Swal.fire({
         icon: "success",
         title: "Despesa Registrada",
-        text: "A despesa foi lançada com sucesso.",
+        text: numParcelas > 1 ? `A despesa foi lançada em ${numParcelas} parcelas com sucesso.` : "A despesa foi lançada com sucesso.",
         confirmButtonColor: "#10b981",
         background: "#18181b",
         color: "#fff"
@@ -95,8 +134,8 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
       setValorTotal("");
       setNovaCategoria("");
       setCategoriaDespesa("");
+      setParcelas(1);
       if (onSuccess) onSuccess();
-
     } catch (error: any) {
       Swal.fire({
         icon: "error",
@@ -225,6 +264,17 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
                 type="date"
                 value={dataVencimento}
                 onChange={(e) => setDataVencimento(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-rose-500/50 outline-none transition-all"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block mb-2">Nº de Parcelas</label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={parcelas}
+                onChange={(e) => setParcelas(parseInt(e.target.value) || 1)}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-rose-500/50 outline-none transition-all"
               />
             </div>

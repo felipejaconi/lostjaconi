@@ -94,7 +94,8 @@ export default function AdminFinancial() {
     tipo: "despesa", 
     valor_total: "",
     data_emissao: new Date().toISOString().split("T")[0],
-    data_vencimento: ""
+    data_vencimento: "",
+    parcelas: 1
   });
 
   const [pedidos, setPedidos] = useState<any[]>([]);
@@ -195,16 +196,61 @@ export default function AdminFinancial() {
   const handleCreateDespesa = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const payload = {
-         ...formData,
-         valor_total: Number(formData.valor_total),
-         valor_pendente: Number(formData.valor_total),
-         status_pagamento: "pendente"
-      };
-      await api.post("/admin/faturas", payload);
+      const numParcelas = Number(formData.parcelas) || 1;
+      
+      if (numParcelas > 1) {
+         const payloadArray = [];
+         const [year, month, day] = formData.data_emissao.split('-');
+         let currentEmissao = new Date(Number(year), Number(month) - 1, Number(day));
+         
+         let currentVencimento: Date | null = null;
+         if (formData.data_vencimento) {
+             const [vYear, vMonth, vDay] = formData.data_vencimento.split('-');
+             currentVencimento = new Date(Number(vYear), Number(vMonth) - 1, Number(vDay));
+         }
+
+         for (let i = 0; i < numParcelas; i++) {
+             const suffix = `-P${i+1}/${numParcelas}`;
+             
+             // Check to properly format dates YYYY-MM-DD
+             const pad = (n: number) => String(n).padStart(2, '0');
+             const formatD = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+
+             payloadArray.push({
+                 numero_fatura: `${formData.numero_fatura}${suffix}`,
+                 fornecedor_id: formData.fornecedor_id,
+                 tipo: formData.tipo,
+                 valor_total: Number(formData.valor_total),
+                 valor_pendente: Number(formData.valor_total),
+                 status_pagamento: "pendente",
+                 data_emissao: formatD(currentEmissao),
+                 data_vencimento: currentVencimento ? formatD(currentVencimento) : null
+             });
+             
+             // increment 1 month
+             currentEmissao.setMonth(currentEmissao.getMonth() + 1);
+             if (currentVencimento) {
+                 currentVencimento.setMonth(currentVencimento.getMonth() + 1);
+             }
+         }
+         await api.post("/admin/faturas", payloadArray);
+      } else {
+         const payload = {
+            numero_fatura: formData.numero_fatura,
+            fornecedor_id: formData.fornecedor_id,
+            tipo: formData.tipo,
+            data_emissao: formData.data_emissao,
+            data_vencimento: formData.data_vencimento || null,
+            valor_total: Number(formData.valor_total),
+            valor_pendente: Number(formData.valor_total),
+            status_pagamento: "pendente"
+         };
+         await api.post("/admin/faturas", payload);
+      }
+
       Swal.fire({
          title: 'Sucesso',
-         text: 'Despesa registada com sucesso',
+         text: numParcelas > 1 ? `Foram registadas ${numParcelas} parcelas com sucesso!` : 'Despesa registada com sucesso',
          icon: 'success',
          background: '#18181b', color: '#f4f4f5',
          confirmButtonColor: '#10b981'
@@ -699,15 +745,24 @@ export default function AdminFinancial() {
          {activeTab === "faturas" && (
             <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-sm flex flex-col h-full min-h-[500px]">
                <div className="sticky top-[calc(66.63px-1px)] md:top-[calc(66.63px-1px)] z-30 p-2 sm:p-3 border-b border-zinc-800 flex flex-col xl:flex-row gap-4 justify-between items-center bg-zinc-950 mt-[67px]">
-                  <div className="relative w-full sm:w-80">
-                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                     <input
-                       type="text"
-                       placeholder="Pesquisar fatura ou fornecedor..."
-                       value={search}
-                       onChange={(e) => setSearch(e.target.value)}
-                       className="w-full pl-9 pr-4 py-2.5 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-zinc-600 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors"
-                     />
+                  <div className="relative w-full sm:w-80 flex gap-2">
+                     <div className="relative w-full">
+                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                       <input
+                         type="text"
+                         placeholder="Pesquisar fatura ou fornecedor..."
+                         value={search}
+                         onChange={(e) => setSearch(e.target.value)}
+                         className="w-full pl-9 pr-4 py-2.5 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-zinc-600 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors"
+                       />
+                     </div>
+                     <button
+                        onClick={() => setIsModalOpen(true)}
+                        className="px-4 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg shrink-0 flex items-center justify-center transition-colors"
+                        title="Registar Nova Despesa"
+                     >
+                        <Plus className="w-4 h-4 mr-1" /> Despesa
+                     </button>
                   </div>
                   <div className="flex flex-nowrap sm:flex-wrap items-center gap-2 w-full sm:w-auto overflow-x-auto no-scrollbar pb-1 sm:pb-0">
                      <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0">
@@ -1002,6 +1057,13 @@ export default function AdminFinancial() {
                      <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wide mb-2">Vencimento (Opç)</label>
                      <input type="date" value={formData.data_vencimento} onChange={e => setFormData({...formData, data_vencimento: e.target.value})} className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 focus:border-blue-500 focus:bg-zinc-950 rounded-xl text-zinc-100 outline-none text-sm transition-colors" />
                   </div>
+               </div>
+               <div>
+                  <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wide mb-2">Nº de Parcelas (Meses)</label>
+                  <input required type="number" min="1" step="1" value={formData.parcelas} onChange={e => setFormData({...formData, parcelas: parseInt(e.target.value) || 1})} className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 focus:border-blue-500 focus:bg-zinc-950 rounded-xl text-zinc-100 outline-none text-sm transition-colors" />
+                  <p className="text-[10px] text-zinc-500 mt-2">
+                     Se inserir 2 ou mais, o sistema lançará a despesa para os meses seguintes automaticamente (Ex: P1/2, P2/2).
+                  </p>
                </div>
             </form>
 

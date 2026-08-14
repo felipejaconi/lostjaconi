@@ -89,9 +89,21 @@ export default function AdminStoreSales() {
             >
               <ChevronLeft size={18} className="transition-transform group-hover:-translate-x-0.5" />
             </button>
-            <div className="flex items-center gap-2 px-4 py-1.5 font-bold text-zinc-100 min-w-[150px] justify-center">
+            <div className="flex items-center gap-2 px-4 py-1.5 font-bold text-zinc-100 min-w-[150px] justify-center relative cursor-pointer group">
               <Calendar size={16} className="text-emerald-500" />
-              {displayMonth}
+              <span>{displayMonth}</span>
+              <input 
+                type="month" 
+                value={`${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}`}
+                onChange={(e) => {
+                   if (e.target.value) {
+                       const [year, month] = e.target.value.split('-');
+                       setSelectedDate(new Date(Number(year), Number(month) - 1, 1));
+                   }
+                }}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                title="Selecionar Mês"
+              />
             </div>
             <button 
               onClick={() => changeMonth(1)}

@@ -26,7 +26,7 @@ import { printGenericDocument } from "../../lib/printGenericDocument";
 import { cn } from "../../lib/utils";
 import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
 
-type ReportType = "receber" | "pagar" | "faturas_pagas" | "iva_credito" | "consumo_lojas" | "fornecedores";
+type ReportType = "receber" | "pagar" | "faturas_pagas" | "iva_credito" | "consumo_lojas" | "fornecedores" | "despesas";
 
 export default function AdminReports({ embedded = false }: { embedded?: boolean }) {
   const [reportType, setReportType] = useState<ReportType>("pagar");
@@ -377,6 +377,69 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         
         data.push(["", "", "TOTAL CALCULADO", totalValor.toFixed(2), ""]);
         
+      } else if (reportType === "despesas") {
+        const res = await api.get("/admin/faturas");
+        let fetchedData = Array.isArray(res.data) ? res.data : [];
+        
+        fetchedData = fetchedData.filter(f => {
+            const isDespesa = f.tipo && f.tipo.startsWith('despesa');
+            const periodMatch = filterByPeriod(f.data_emissao, period);
+            let statusMatch = true;
+            if (status !== "todos") {
+                if (status === "pago") statusMatch = f.status_pagamento === "pago";
+                if (status === "nao_pago") statusMatch = f.status_pagamento !== "pago";
+            }
+            
+            let lojaId = "armazem";
+            try {
+               if (f.descrição) {
+                  const parsed = JSON.parse(f.descrição);
+                  if (parsed.loja_id) lojaId = String(parsed.loja_id);
+               }
+            } catch(e) {}
+            
+            const entityMatch = entity === "todos" || lojaId === entity;
+            
+            return isDespesa && periodMatch && statusMatch && entityMatch;
+        });
+
+        headers = ["Data Emissão", "Vencimento", "Loja", "Fornecedor", "Categoria", "Valor (€)", "Pendente (€)", "Status"];
+        title = "Relatório de Despesas";
+        
+        let totalValor = 0;
+        let totalPendente = 0;
+        data = fetchedData.map(f => {
+           let calcTotal = Number(f.valor_total || 0);
+           let calcPendente = Number(f.valor_pendente !== undefined ? f.valor_pendente : calcTotal);
+           if (f.status_pagamento === 'pago') calcPendente = 0;
+           
+           totalValor += calcTotal;
+           totalPendente += calcPendente;
+           
+           let lojaNome = "Armazém Central";
+           try {
+              if (f.descrição) {
+                 const parsed = JSON.parse(f.descrição);
+                 if (parsed.loja_id) {
+                     const l = lojas.find(x => String(x.id) === String(parsed.loja_id));
+                     if (l) lojaNome = l.name || l.nome;
+                 }
+              }
+           } catch(e) {}
+           
+           return [
+              f.data_emissao ? new Date(f.data_emissao).toLocaleDateString("pt-PT") : "N/A",
+              f.data_vencimento ? new Date(f.data_vencimento).toLocaleDateString("pt-PT") : "N/A",
+              lojaNome,
+              f.fornecedor?.nome || "---",
+              (f.tipo || "despesa").replace("despesa_", "").toUpperCase(),
+              calcTotal.toFixed(2),
+              calcPendente.toFixed(2),
+              (f.status_pagamento || "pendente").toUpperCase()
+           ];
+        });
+        
+        data.push(["", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""]);
       } else if (reportType === "consumo_lojas") {
          const pedRes = await api.get("/pedidos");
          const faturasRes = await api.get("/admin/faturas");
@@ -494,6 +557,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       { id: "iva_credito", title: "Crédito IVA", icon: FileSpreadsheet, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500" },
       { id: "debito_iva", title: "Débito IVA", icon: FileSpreadsheet, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500" },
       { id: "receber", title: "A Receber", icon: TrendingUp, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500" },
+      { id: "despesas", title: "Despesas", icon: Receipt, color: "text-purple-500", bg: "bg-purple-500/10", border: "border-purple-500" },
       { id: "consumo_lojas", title: "Totais Lojas", icon: Store, color: "text-blue-500", bg: "bg-blue-500/10", border: "border-blue-500" },
       { id: "fornecedores", title: "Fornecedores", icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10", border: "border-cyan-500" }
   ];
@@ -644,7 +708,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                 {reportType !== "fornecedores" && (
                 <div>
                     <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
-                        <Building2 size={14}/> {["pagar", "faturas_pagas"].includes(reportType) ? "Filtrar por Loja ou Fornecedor" : ["iva_credito", "despesas"].includes(reportType) ? "Filtrar por Fornecedor" : "Filtrar por Loja"}
+                        <Building2 size={14}/> {["pagar", "faturas_pagas"].includes(reportType) ? "Filtrar por Loja ou Fornecedor" : reportType === "iva_credito" ? "Filtrar por Fornecedor" : reportType === "despesas" ? "Filtrar por Loja ou Armazém" : "Filtrar por Loja"}
                     </label>
                     <div className="relative">
                         <SearchableCombobox 
@@ -657,8 +721,12 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                                     ...fornecedores.map(f => ({ id: `fornecedor_${f.id}`, nome: `${f.nome} (Fornecedor)` })),
                                     ...lojas.map(l => ({ id: `loja_${l.id}`, nome: `${l.name || l.nome} (Loja)` }))
                                 ] : []),
-                                ...(["iva_credito", "despesas"].includes(reportType) ? fornecedores.map(f => ({ id: String(f.id), nome: f.nome })) : []),
-                                ...(["receber", "consumo_lojas", "debito_iva"].includes(reportType) ? lojas.map(l => ({ id: String(l.id), nome: l.name || l.nome })) : [])
+                                ...(reportType === "iva_credito" ? fornecedores.map(f => ({ id: String(f.id), nome: f.nome })) : []),
+                                ...(["receber", "consumo_lojas", "debito_iva"].includes(reportType) ? lojas.map(l => ({ id: String(l.id), nome: l.name || l.nome })) : []),
+                                ...(reportType === "despesas" ? [
+                                    { id: "armazem", nome: "Armazém Central" },
+                                    ...lojas.map(l => ({ id: String(l.id), nome: l.name || l.nome }))
+                                ] : [])
                             ]}
                         />
                     </div>
@@ -677,8 +745,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                             className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 appearance-none transition-colors"
                         >
                             <option value="todos">Todos os Status</option>
-                            <option value="pago">Recebidos</option>
-                            <option value="nao_pago">A Receber</option>
+                            <option value="pago">{reportType === 'despesas' ? 'Pagos' : 'Recebidos'}</option>
+                            <option value="nao_pago">{reportType === 'despesas' ? 'Pendentes' : 'A Receber'}</option>
                         </select>
                         <ChevronDown size={16} className="absolute right-4 top-3.5 text-zinc-500 pointer-events-none"/>
                     </div>

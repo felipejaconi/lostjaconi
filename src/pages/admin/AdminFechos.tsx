@@ -291,9 +291,21 @@ export default function AdminFechos() {
             >
               <ChevronLeft size={18} />
             </button>
-            <div className="flex items-center gap-2 px-3 py-1 font-medium text-emerald-400 min-w-[140px] justify-center">
+            <div className="flex items-center gap-2 px-3 py-1 font-medium text-emerald-400 min-w-[140px] justify-center relative cursor-pointer group">
               <Calendar size={16} />
-              {displayMonth}
+              <span>{displayMonth}</span>
+              <input 
+                type="month" 
+                value={`${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}`}
+                onChange={(e) => {
+                   if (e.target.value) {
+                       const [year, month] = e.target.value.split('-');
+                       setSelectedDate(new Date(Number(year), Number(month) - 1, 1));
+                   }
+                }}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                title="Selecionar Mês"
+              />
             </div>
             <button 
               onClick={() => changeMonth(1)}

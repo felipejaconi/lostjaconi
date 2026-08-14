@@ -197,7 +197,6 @@ export default function AdminAnalytics() {
                 <BarChart2 className="text-yellow-500" size={20} />
                 Evolução Mensal Gasto vs Orçamento Base
               </h3>
-              <p className="text-sm text-slate-500 mt-1">Análise de custos operacionais por filial no período atual. O teto de risco reflete o consumo total do mês anterior.</p>
             </div>
           </div>
           <div className="h-[300px] w-full">
