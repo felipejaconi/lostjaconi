@@ -111,7 +111,7 @@ export default function AdminHome() {
 
   useEffect(() => {
     fetchStats();
-    fetchChartData();
+    // fetchChartData is already called by the other useEffect
 
     const debouncedFetch = () => {
       if (fetchTimeoutRef.current) clearTimeout(fetchTimeoutRef.current);

@@ -483,7 +483,7 @@ export default function AdminOrders() {
         setScaleStatus(setStatus);
     });
 
-    fetchOrders(); fetchStores(); fetchProducts();
+    fetchStores(); fetchProducts(); // fetchOrders is called by the viewMode effect
 
     const handleFocus = () => {
       fetchOrders(); fetchProducts();
@@ -510,31 +510,7 @@ export default function AdminOrders() {
   }, []);
 
   // Auto-sync prices for pending/processing orders if product prices changed
-  useEffect(() => {
-    if (products.length > 0 && orders.length > 0) {
-      let needsUpdate = false;
-      const updates: any[] = [];
-      const updatedOrders = [...orders];
-
-      updatedOrders.forEach(order => {
-        if (order.status === 'pendente' || order.status === 'processando') {
-          order.pedido_itens?.forEach((item: any) => {
-            const prod = products.find(p => p.id === item.produto_id);
-            if (prod && Number(prod.preco) > 0 && Math.abs(Number(prod.preco) - Number(item.preco_unitario)) > 0.001) {
-              updates.push(api.put(`/pedidos/${order.id}/itens/${item.id}`, { preco_unitario: Number(prod.preco) }));
-              item.preco_unitario = Number(prod.preco);
-              needsUpdate = true;
-            }
-          });
-        }
-      });
-
-      if (needsUpdate) {
-        setOrders(updatedOrders); // Trigger re-render with new values
-        Promise.all(updates).catch(e => console.error("Error auto-syncing prices:", e));
-      }
-    }
-  }, [products]); // Trigger sync whenever products are updated
+  // Removed auto-sync prices to fix massive lag on load
 
   const updateStatus = async (id: number, status: string) => {
     // Optimistic Update

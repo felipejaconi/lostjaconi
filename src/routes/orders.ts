@@ -72,12 +72,12 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
   });
 
   app.get("/api/pedidos", authenticateToken, async (req: any, res: any) => {
-      const cacheKey = `pedidos_${req.user.role}_${req.user.id}_${req.url}`;
+      const cacheKey = `pedidos_${req.user.role}_${req.user.id}`; // Ignored query params for cache
       const cached = cache.get(cacheKey);
       if (cached) return res.json(cached);
 
     try {
-      let query = supabase.from("pedidos").select("*, user:users(name), pedido_itens(*, produto:produtos(*, categoria:categorias(nome)))").order("created_at", { ascending: false });
+      let query = supabase.from("pedidos").select("*, user:users(name), pedido_itens(*, produto:produtos(*, categoria:categorias(nome)))").order("created_at", { ascending: false }).limit(300);
       if (req.user.role === "loja") {
          query = query.eq("user_id", req.user.id);
       }
