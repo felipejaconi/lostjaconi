@@ -104,7 +104,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.put("/api/pedidos/:id/status", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
-      const { data, error } = await supabase.from("pedidos").update({ status: req.body.status }).eq("id", req.params.id).select().single();
+      const updateData: any = { status: req.body.status };
+      if (req.body.status === 'pronto') {
+          updateData.created_at = new Date().toISOString();
+      }
+      const { data, error } = await supabase.from("pedidos").update(updateData).eq("id", req.params.id).select().single();
       if (error) throw error;
       res.json(data);
     } catch (e: any) {

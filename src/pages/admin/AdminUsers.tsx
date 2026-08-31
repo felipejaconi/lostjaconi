@@ -7,8 +7,10 @@ import { motion, AnimatePresence } from "motion/react";
 import { optimizeImage } from "../../lib/imageOptimization";
 import { ContentViewport } from "../../components/layout/ContentViewport";
 import { Badge } from "../../components/ui/Badge";
+import { useAuth } from "../../context/AuthContext";
 
 export default function AdminUsers({ filterRole }: { filterRole?: string }) {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
   const [isModalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
@@ -29,6 +31,16 @@ export default function AdminUsers({ filterRole }: { filterRole?: string }) {
   const fetchUsers = () => {
     api.get("/admin/users").then((res) => {
       let data = res.data as any[];
+      
+      data = data.filter((u: any) => {
+         const isTecnico = u.name?.toLowerCase().includes("tecnico") || u.email?.toLowerCase().includes("tecnico") || u.role?.toLowerCase() === "tecnico";
+         if (isTecnico) {
+             const currentUserIsTecnico = currentUser?.name?.toLowerCase().includes("tecnico") || currentUser?.email?.toLowerCase().includes("tecnico") || currentUser?.role?.toLowerCase() === "tecnico";
+             return currentUserIsTecnico;
+         }
+         return true;
+      });
+      
       if (filterRole) data = data.filter((u: any) => u.role === filterRole);
       setUsers(data);
     });
@@ -51,7 +63,7 @@ export default function AdminUsers({ filterRole }: { filterRole?: string }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [filterRole]);
+  }, [filterRole, currentUser]);
 
   const openModal = (user?: any) => {
     if (user) {

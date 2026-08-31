@@ -19,9 +19,11 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+import { useAuth } from "../../context/AuthContext";
 import { ProductDescriptionModal } from "../../components/ProductDescriptionModal";
 
 export default function AdminGlobalStock() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<"dashboard" | "quebras" | "movimentos" | "contagem">("dashboard");
   
   const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
@@ -115,6 +117,7 @@ export default function AdminGlobalStock() {
   };
 
   const handleQuickEditStock = async (produto: any) => {
+    if (user?.role !== "admin") return;
     const { value: newStock } = await Swal.fire({
       title: "Stock Armazém",
       input: "number",
@@ -416,9 +419,9 @@ export default function AdminGlobalStock() {
                                  </td>
                                  <td className="p-4 text-right">
                                    <div 
-                                      className="flex items-center justify-end gap-1.5 cursor-pointer hover:bg-white/5 rounded pl-4 pr-1 py-1 transition-colors group/qty"
+                                      className={cn("flex items-center justify-end gap-1.5 rounded pl-4 pr-1 py-1 transition-colors group/qty", user?.role === 'admin' ? "cursor-pointer hover:bg-white/5" : "")}
                                       onClick={() => handleQuickEditStock(p)}
-                                      title="Clique para ajustar"
+                                      title={user?.role === 'admin' ? "Clique para ajustar" : ""}
                                    >
                                      <span className={`text-2xl font-black ${
                                         Number(p.stock_armazem) <= 0 ? "text-red-500" : 

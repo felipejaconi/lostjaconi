@@ -1352,7 +1352,7 @@ export default function AdminOrders() {
                       <Edit className="w-4 h-4" /> Editar
                    </button>
                  )}
-                 { order.status === 'pendente' && (
+                 {(user?.role === 'admin' || (user?.role === 'armazem' && order.status === 'processando')) && (
                    <button onClick={() => deleteOrder(order.id)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 font-bold rounded-xl text-sm transition-all shadow-md">
                       <Trash2 className="w-4 h-4" /> Excluir
                    </button>

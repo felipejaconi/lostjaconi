@@ -26,7 +26,7 @@ import { printGenericDocument } from "../../lib/printGenericDocument";
 import { cn } from "../../lib/utils";
 import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
 
-type ReportType = "receber" | "pagar" | "faturas_pagas" | "iva_credito" | "consumo_lojas" | "fornecedores" | "despesas";
+type ReportType = "receber" | "pagar" | "faturas_pagas" | "iva_credito" | "consumo_lojas" | "fornecedores" | "despesas" | "fechos";
 
 export default function AdminReports({ embedded = false }: { embedded?: boolean }) {
   const [reportType, setReportType] = useState<ReportType>("pagar");
@@ -440,6 +440,72 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         });
         
         data.push(["", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""]);
+      } else if (reportType === "fechos") {
+         const res = await api.get("/admin/fechos");
+         let fetchedData = Array.isArray(res.data) ? res.data : [];
+         
+         fetchedData = fetchedData.filter(f => {
+             const periodMatch = filterByPeriod(f.data, period);
+             const entityMatch = entity === "todos" || String(f.loja_id) === entity;
+             return periodMatch && entityMatch;
+         });
+         
+         fetchedData.sort((a, b) => new Date(a.data).getTime() - new Date(b.data).getTime());
+
+         headers = ["Data", "Loja", "Sys MB", "Sys Dinh.", "Sys Mesa", "Sys Uber", "Total Sys", "Real MB", "Real Dinh.", "Real Mesa", "Real Uber", "Total Real", "Diferença"];
+         title = "Relatório de Fechos de Caixa";
+         
+         let tSysMb=0, tSysDinh=0, tSysMesa=0, tSysUber=0, tTotalSys=0;
+         let tRealMb=0, tRealDinh=0, tRealMesa=0, tRealUber=0, tTotalReal=0;
+         let tDiff=0;
+         
+         data = fetchedData.map(f => {
+            let lojaNome = f.loja_id;
+            const l = lojas.find(x => String(x.id) === String(f.loja_id));
+            if (l) lojaNome = l.name || l.nome;
+            
+            const sysMb = Number(f.sys_mb||0);
+            const sysDinh = Number(f.sys_dinheiro||0);
+            const sysMesa = Number(f.sys_mesa||0);
+            const sysUber = Number(f.sys_uber||0);
+            const totSys = sysMb + sysDinh + sysMesa + sysUber;
+            
+            const realMb = Number(f.real_mb||0);
+            const realDinh = Number(f.real_dinheiro||0);
+            const realMesa = Number(f.real_mesa||0);
+            const realUber = Number(f.real_uber||0);
+            const totReal = realMb + realDinh + realMesa + realUber;
+            
+            const diff = totReal - totSys;
+            
+            tSysMb+=sysMb; tSysDinh+=sysDinh; tSysMesa+=sysMesa; tSysUber+=sysUber; tTotalSys+=totSys;
+            tRealMb+=realMb; tRealDinh+=realDinh; tRealMesa+=realMesa; tRealUber+=realUber; tTotalReal+=totReal;
+            tDiff+=diff;
+            
+            return [
+               f.data ? new Date(f.data).toLocaleDateString("pt-PT") : "N/A",
+               lojaNome,
+               sysMb.toFixed(2),
+               sysDinh.toFixed(2),
+               sysMesa.toFixed(2),
+               sysUber.toFixed(2),
+               totSys.toFixed(2),
+               realMb.toFixed(2),
+               realDinh.toFixed(2),
+               realMesa.toFixed(2),
+               realUber.toFixed(2),
+               totReal.toFixed(2),
+               diff.toFixed(2)
+            ];
+         });
+         
+         data.push([
+             "", "TOTAIS", 
+             tSysMb.toFixed(2), tSysDinh.toFixed(2), tSysMesa.toFixed(2), tSysUber.toFixed(2), tTotalSys.toFixed(2),
+             tRealMb.toFixed(2), tRealDinh.toFixed(2), tRealMesa.toFixed(2), tRealUber.toFixed(2), tTotalReal.toFixed(2),
+             tDiff.toFixed(2)
+         ]);
+
       } else if (reportType === "consumo_lojas") {
          const pedRes = await api.get("/pedidos");
          const faturasRes = await api.get("/admin/faturas");
@@ -559,6 +625,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       { id: "receber", title: "A Receber", icon: TrendingUp, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500" },
       { id: "despesas", title: "Despesas", icon: Receipt, color: "text-purple-500", bg: "bg-purple-500/10", border: "border-purple-500" },
       { id: "consumo_lojas", title: "Totais Lojas", icon: Store, color: "text-blue-500", bg: "bg-blue-500/10", border: "border-blue-500" },
+      { id: "fechos", title: "Fechos de Caixa", icon: Store, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500" },
       { id: "fornecedores", title: "Fornecedores", icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10", border: "border-cyan-500" }
   ];
 
@@ -722,7 +789,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                                     ...lojas.map(l => ({ id: `loja_${l.id}`, nome: `${l.name || l.nome} (Loja)` }))
                                 ] : []),
                                 ...(reportType === "iva_credito" ? fornecedores.map(f => ({ id: String(f.id), nome: f.nome })) : []),
-                                ...(["receber", "consumo_lojas", "debito_iva"].includes(reportType) ? lojas.map(l => ({ id: String(l.id), nome: l.name || l.nome })) : []),
+                                ...(["receber", "consumo_lojas", "debito_iva", "fechos"].includes(reportType) ? lojas.map(l => ({ id: String(l.id), nome: l.name || l.nome })) : []),
                                 ...(reportType === "despesas" ? [
                                     { id: "armazem", nome: "Armazém Central" },
                                     ...lojas.map(l => ({ id: String(l.id), nome: l.name || l.nome }))
@@ -733,7 +800,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                 </div>
                 )}
 
-                {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar"].includes(reportType) && (
+                {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar", "fechos"].includes(reportType) && (
                 <div>
                     <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
                         <Filter size={14}/> Status de Pagamento
