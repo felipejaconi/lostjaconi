@@ -7,9 +7,10 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
   
   const clearPedidosCache = (req: any, res: any, next: any) => {
     const keys = cache.keys();
-    const orderKeys = keys.filter((k: string) => k.startsWith("pedidos_"));
+    const orderKeys = keys.filter((k: string) => k.startsWith("pedidos_") || k.startsWith("admin_analytics_consumo_"));
     cache.del(orderKeys);
     cache.del("admin_stats");
+    cache.del("admin_dashboard_extended");
     next();
   };
 
@@ -163,6 +164,13 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.get("/api/admin/analytics/consumo", authenticateToken, async (req: any, res: any) => {
       if (!["admin", "armazem"].includes(req.user.role)) return res.sendStatus(403);
+
+      const month = req.query.month || "";
+      const year = req.query.year || "";
+      const cacheKey = `admin_analytics_consumo_${month}_${year}`;
+      const cached = cache.get(cacheKey);
+      if (cached) return res.json(cached);
+
       try {
         const { data: stores } = await supabase
           .from("users")
@@ -172,6 +180,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
         const { data: orders, error } = await supabase
           .from("pedidos")
           .select("*, user:users(name), pedido_itens(*, produto:produtos(iva))")
+          .in("status", ["pronto", "entregue", "concluido"])
           .order("created_at", { ascending: false });
         if (error) throw error;
 

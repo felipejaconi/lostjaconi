@@ -18,7 +18,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const { data: vendas } = await supabase
         .from("pedidos")
         .select("total")
-        .neq("status", "cancelado");
+        .in("status", ["pronto", "entregue", "concluido"]);
 
       const totalVendas = (vendas || []).reduce(
         (acc, v) => acc + (v.total || 0),
@@ -28,7 +28,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const { count: pedidosPendentes } = await supabase
         .from("pedidos")
         .select("*", { count: "exact", head: true })
-        .eq("status", "enviado");
+        .in("status", ["pendente", "processando"]);
 
       const { count: totalProdutos } = await supabase
         .from("produtos")
@@ -81,7 +81,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
          // Calcular CMV baseado nos items de pedidos do mês atual
          const { data: monthOrders } = await supabase.from("pedidos")
             .select("id, total, created_at")
-            .neq("status", "cancelado")
+            .in("status", ["pronto", "entregue", "concluido"])
             .gte("created_at", startOfMonthIso);
          
          if (monthOrders && monthOrders.length > 0) {
@@ -242,7 +242,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
 
       if (pedidos) {
         pedidos.forEach((p: any) => {
-          if (p.status === 'cancelado') return;
+          if (!['pronto', 'entregue', 'concluido'].includes(p.status)) return;
           const d = new Date(p.created_at);
           if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
             const day = d.getDate().toString();
@@ -347,7 +347,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         .select("total, created_at")
         .eq("user_id", userId)
         .gte("created_at", sixMonthsAgo.toISOString())
-        .neq("status", "cancelado");
+        .in("status", ["pronto", "entregue", "concluido"]);
 
       if (error) throw error;
 
@@ -455,7 +455,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         .from('pedidos')
         .select('total, user_id, user:users(name)')
         .gte('created_at', startOfMonth.toISOString())
-        .neq('status', 'cancelado');
+        .in('status', ['pronto', 'entregue', 'concluido']);
         
       const storeTotals: Record<string, {name: string, total: number}> = {};
       (pedidos || []).forEach(p => {
@@ -473,7 +473,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         .from('pedidos')
         .select('pedido_itens(quantidade, produto:produtos(nome))')
         .gte('created_at', startOfMonth.toISOString())
-        .neq('status', 'cancelado');
+        .in('status', ['pronto', 'entregue', 'concluido']);
         
       const productTotals: Record<string, {name: string, quantity: number}> = {};
       (pedidosProd || []).forEach(p => {

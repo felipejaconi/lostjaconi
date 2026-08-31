@@ -88,7 +88,7 @@ export function setupAuthRoutes({ app, supabase, authenticateToken, upload, uplo
           .from("pedidos")
           .select("id, user_id, user:users(name)")
           .gte("created_at", oneMonthAgo.toISOString())
-          .neq("status", "cancelado");
+          .in("status", ["pronto", "entregue", "concluido"]);
 
         if (pedidosError) {
           console.error("Supabase error in GET /api/admin/relatorios/consumo-mensal (pedidos):", pedidosError);
