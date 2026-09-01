@@ -345,8 +345,8 @@ export default function AdminFechos() {
                           formatter={(value) => [`€${Number(value).toFixed(2)}`, '']}
                        />
                        <Legend verticalAlign="top" align="right" wrapperStyle={{ paddingBottom: '20px' }} />
-                       <Bar dataKey="atual" name="Mês Atual" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={60} onClick={(data: any) => data?.id && setSelectedLojaId(data.id)} cursor="pointer" />
-                       <Bar dataKey="anterior" name="Mês Anterior" fill="#64748b" radius={[4, 4, 0, 0]} maxBarSize={60} opacity={0.5} onClick={(data: any) => data?.id && setSelectedLojaId(data.id)} cursor="pointer" />
+                       <Bar dataKey="atual" name="Mês Atual" fill="#eab308" radius={[4, 4, 0, 0]} maxBarSize={60} onClick={(data: any) => data?.id && setSelectedLojaId(data.id)} cursor="pointer" />
+                       <Bar dataKey="anterior" name="Mês Anterior" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={60} opacity={0.5} onClick={(data: any) => data?.id && setSelectedLojaId(data.id)} cursor="pointer" />
                     </BarChart>
                  </ResponsiveContainer>
               </div>

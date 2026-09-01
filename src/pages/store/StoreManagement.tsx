@@ -52,8 +52,21 @@ export default function StoreManagement() {
   const [fechos, setFechos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Lock logic
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [expectedPin, setExpectedPin] = useState("0000");
+  const [pinError, setPinError] = useState(false);
+
   useEffect(() => {
     if (!user) return;
+    
+    // Fetch the PIN for the current store
+    supabase.from('users').select('manager_pin').eq('id', user.id).single().then(({ data }) => {
+       if (data && data.manager_pin) {
+           setExpectedPin(data.manager_pin);
+       }
+    });
     
     const fetchData = async () => {
       try {

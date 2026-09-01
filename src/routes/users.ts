@@ -61,6 +61,7 @@ export function setupUsersRoutes({ app, supabase, authenticateToken, upload, upl
         picking_start_time,
         picking_end_time,
         manager_name,
+        manager_pin,
         address,
         phone,
         matricula,
@@ -88,6 +89,7 @@ export function setupUsersRoutes({ app, supabase, authenticateToken, upload, upl
           picking_start_time,
           picking_end_time,
           manager_name,
+          manager_pin: manager_pin || "0000",
           address,
           phone,
           matricula,
@@ -95,7 +97,15 @@ export function setupUsersRoutes({ app, supabase, authenticateToken, upload, upl
         };
         if (id) insertData.id = id;
 
-        const { error } = await supabase.from("users").insert([insertData]);
+                let { error } = await supabase
+          .from("users")
+          .insert([insertData]);
+          
+        if (error && error.code === '42703') {
+           delete insertData.manager_pin;
+           const res = await supabase.from("users").insert([insertData]);
+           error = res.error;
+        }
         if (error) throw error;
         res.json({ message: "Utilizador criado com sucesso" });
       } catch (error: any) {
@@ -126,6 +136,7 @@ export function setupUsersRoutes({ app, supabase, authenticateToken, upload, upl
         picking_start_time,
         picking_end_time,
         manager_name,
+        manager_pin,
         password,
         address,
         phone,
@@ -152,6 +163,7 @@ export function setupUsersRoutes({ app, supabase, authenticateToken, upload, upl
           picking_start_time,
           picking_end_time,
           manager_name,
+          manager_pin: manager_pin || "0000",
           address,
           phone,
           matricula,
@@ -160,10 +172,16 @@ export function setupUsersRoutes({ app, supabase, authenticateToken, upload, upl
         if (password) updateData.password = await bcrypt.hash(password, 10);
         if (avatar_url !== undefined) updateData.avatar_url = avatar_url;
 
-        const { error } = await supabase
+                let { error } = await supabase
           .from("users")
           .update(updateData)
           .eq("id", req.params.id);
+          
+        if (error && error.code === '42703') {
+           delete updateData.manager_pin;
+           const res = await supabase.from("users").update(updateData).eq("id", req.params.id);
+           error = res.error;
+        }
         if (error) throw error;
         res.json({ message: "Utilizador atualizado" });
       } catch (error: any) {

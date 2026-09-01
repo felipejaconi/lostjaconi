@@ -10,7 +10,9 @@ import {
   DollarSign,
   Activity,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import Swal from "sweetalert2";
 import api from "../../lib/api";
@@ -41,12 +43,35 @@ const formatCurrency = (val: number | string) => {
 export default function AdminAnalytics() {
   const navigate = useNavigate();
   const [data, setData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(true);
+
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d;
+  });
+
+  const changeMonth = (offset: number) => {
+    setSelectedDate(prev => {
+      const d = new Date(prev);
+      d.setMonth(d.getMonth() + offset);
+      return d;
+    });
+  };
+
+  const monthNames = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+  ];
+  const displayMonth = `${monthNames[selectedDate.getMonth()]} ${selectedDate.getFullYear()}`;
+
 
 
   const fetchAnalytics = () => {
+    const month = selectedDate.getMonth();
+    const year = selectedDate.getFullYear();
     api
-      .get("/admin/analytics/consumo")
+      .get(`/admin/analytics/consumo?month=${month}&year=${year}`)
       .then((res) => {
         setData(res.data);
         setLoading(false);
@@ -73,7 +98,7 @@ export default function AdminAnalytics() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [selectedDate]);
 
   const globals = useMemo(() => {
     const totalGasto = data.reduce((acc, item) => acc + Number(item.mensal || 0), 0);
@@ -195,7 +220,7 @@ export default function AdminAnalytics() {
             <div>
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <BarChart2 className="text-yellow-500" size={20} />
-                Evolução Mensal Gasto vs Orçamento Base
+                Evolução Mensal: Mês Atual vs Mês Anterior
               </h3>
             </div>
           </div>
@@ -210,8 +235,8 @@ export default function AdminAnalytics() {
                   contentStyle={{ backgroundColor: "#0a0a0a", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.1)", color: "#fff" }}
                   formatter={(value: number) => [`€${formatCurrency(value)}`, ""]}
                 />
-                <Bar dataKey="mensal" name="Gasto Realizado" fill="#eab308" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                <Bar dataKey="previsto" name="Gasto Previsto" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={40} opacity={0.5} />
+                <Bar dataKey="mensal" name="Mês Atual" fill="#eab308" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                <Bar dataKey="previsto" name="Mês Anterior" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={40} opacity={0.5} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -257,8 +282,39 @@ export default function AdminAnalytics() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
       >
-        <div className="mb-4 flex items-center justify-between px-2">
+        <div className="mb-4 flex flex-col md:flex-row items-start md:items-center justify-between px-2 gap-4">
           <h3 className="text-lg font-bold text-white uppercase tracking-wide">Relatório Analítico Consolidado</h3>
+          
+          <div className="flex items-center bg-zinc-950/80 backdrop-blur-md border border-white/10 rounded-xl p-1 shadow-lg shadow-black/50">
+            <button 
+              onClick={() => changeMonth(-1)}
+              className="p-1.5 hover:bg-white/10 active:bg-white/5 rounded-lg text-zinc-400 hover:text-emerald-400 transition-all active:scale-95 focus:outline-none"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <div className="flex items-center gap-2 px-3 py-1 font-bold text-zinc-100 min-w-[130px] justify-center relative cursor-pointer">
+              <Calendar size={14} className="text-emerald-500" />
+              <span className="text-sm">{displayMonth}</span>
+              <input 
+                type="month" 
+                value={`${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}`}
+                onChange={(e) => {
+                   if (e.target.value) {
+                       const [year, month] = e.target.value.split('-');
+                       setSelectedDate(new Date(Number(year), Number(month) - 1, 1));
+                   }
+                }}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                title="Selecionar Mês"
+              />
+            </div>
+            <button 
+              onClick={() => changeMonth(1)}
+              className="p-1.5 hover:bg-white/10 active:bg-white/5 rounded-lg text-zinc-400 hover:text-emerald-400 transition-all active:scale-95 focus:outline-none"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
         <Table>
           <TableHeader>

@@ -292,7 +292,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
         const result = Object.values(consumption).map((c: any) => ({
           ...c,
-          mediaPedido: c.numPedidos > 0 ? (c.totalHistorico / c.numPedidos).toFixed(2) : 0,
+          mediaPedido: c.numPedidos > 0 ? (c.mensal / c.numPedidos).toFixed(2) : 0,
         }));
 
         res.json(result);

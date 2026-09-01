@@ -42,6 +42,7 @@ export default function AdminStores() {
     matricula: "",
     email: "",
     manager_name: "",
+    manager_pin: "0000",
     password: "",
     avatar_url: "",
   });
@@ -122,7 +123,7 @@ export default function AdminStores() {
       setModalOpen(false);
       setEditingStore(null);
       setFormData({
-        id: "", name: "", address: "", phone: "", matricula: "", email: "", manager_name: "", password: "", avatar_url: "",
+        id: "", name: "", address: "", phone: "", matricula: "", email: "", manager_name: "", manager_pin: "0000", password: "", avatar_url: "",
       });
       fetchData();
     } catch (error) {
@@ -164,6 +165,7 @@ export default function AdminStores() {
       matricula: store.matricula || "",
       email: store.email,
       manager_name: store.manager_name || "",
+      manager_pin: store.manager_pin || "0000",
       password: "",
       avatar_url: store.avatar_url || "",
     });
@@ -667,9 +669,13 @@ export default function AdminStores() {
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Email de Login</label>
                     <input type="email" required value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-yellow-500/30 rounded-2xl focus:border-primary/50 outline-none text-white text-sm" />
                   </div>
-                  <div className="space-y-2">
+                                    <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Responsável</label>
                     <input type="text" value={formData.manager_name} onChange={(e) => setFormData({ ...formData, manager_name: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-yellow-500/30 rounded-2xl focus:border-primary/50 outline-none text-white text-sm" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">PIN Gerência</label>
+                    <input type="text" value={formData.manager_pin} onChange={(e) => setFormData({ ...formData, manager_pin: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-yellow-500/30 rounded-2xl focus:border-primary/50 outline-none text-white text-sm" placeholder="0000" maxLength={8} />
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Telefone</label>
@@ -718,7 +724,7 @@ export default function AdminStores() {
              <button
                onClick={() => {
                  setEditingStore(null);
-                 setFormData({ id: "", name: "", address: "", phone: "", email: "", manager_name: "", password: "", avatar_url: "" });
+                 setFormData({ id: "", name: "", address: "", phone: "", email: "", manager_name: "", manager_pin: "0000", password: "", avatar_url: "" });
                  setModalOpen(true);
                }}
                className="flex-1 sm:flex-none px-6 py-3 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 whitespace-nowrap bg-purple-600 text-white shadow-xl shadow-purple-500/20 hover:bg-purple-500 active:scale-95 opacity-90 hover:opacity-100"
@@ -837,10 +843,14 @@ export default function AdminStores() {
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Email de Login</label>
                   <input type="email" required value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-yellow-500/30 rounded-2xl focus:border-primary/50 outline-none text-white text-sm" />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Responsável</label>
-                  <input type="text" value={formData.manager_name} onChange={(e) => setFormData({ ...formData, manager_name: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-yellow-500/30 rounded-2xl focus:border-primary/50 outline-none text-white text-sm" />
-                </div>
+                                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Responsável</label>
+                    <input type="text" value={formData.manager_name} onChange={(e) => setFormData({ ...formData, manager_name: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-yellow-500/30 rounded-2xl focus:border-primary/50 outline-none text-white text-sm" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">PIN Gerência</label>
+                    <input type="text" value={formData.manager_pin} onChange={(e) => setFormData({ ...formData, manager_pin: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-yellow-500/30 rounded-2xl focus:border-primary/50 outline-none text-white text-sm" placeholder="0000" maxLength={8} />
+                  </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Telefone</label>
                   <input type="text" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-yellow-500/30 rounded-2xl focus:border-primary/50 outline-none text-white text-sm" />
