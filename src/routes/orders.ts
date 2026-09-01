@@ -106,7 +106,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
   app.put("/api/pedidos/:id/status", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
       const updateData: any = { status: req.body.status };
-      if (req.body.status === 'pronto') {
+      if (['pronto', 'entregue', 'concluido'].includes(req.body.status)) {
           updateData.created_at = new Date().toISOString();
       }
       const { data, error } = await supabase.from("pedidos").update(updateData).eq("id", req.params.id).select().single();
