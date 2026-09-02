@@ -154,6 +154,68 @@ export default function StoreManagement() {
     );
   }
 
+  if (!isUnlocked) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full min-h-[70vh] px-4">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-[#0a0a0a] border border-white/10 p-8 rounded-3xl shadow-2xl max-w-sm w-full relative overflow-hidden"
+        >
+          <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-500/10 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-32 h-32 bg-yellow-500/5 rounded-full blur-3xl -ml-10 -mb-10 pointer-events-none" />
+          
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <div className="mb-6">
+              <img src={`${import.meta.env.VITE_SUPABASE_URL || "https://ybaoaskddcmwoincsnwm.supabase.co"}/storage/v1/object/public/uploads/icon.png`} alt="Logo" className="w-16 h-16 object-contain drop-shadow-xl" />
+            </div>
+            
+            <h2 className="text-2xl font-bold text-white mb-8 tracking-wide">A GERÊNCIA</h2>
+            
+            <form 
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (pinInput === expectedPin) {
+                  setIsUnlocked(true);
+                  setPinError(false);
+                } else {
+                  setPinError(true);
+                  setPinInput("");
+                }
+              }} 
+              className="w-full space-y-4"
+            >
+              <div>
+                <input 
+                  type="password"
+                  value={pinInput}
+                  onChange={(e) => {
+                    setPinInput(e.target.value);
+                    setPinError(false);
+                  }}
+                  maxLength={8}
+                  placeholder="PIN"
+                  className={`w-full bg-black/50 border ${pinError ? 'border-red-500/50' : 'border-white/10 focus:border-yellow-500/50'} text-white text-center text-2xl font-black tracking-[0.5em] rounded-xl px-4 py-4 outline-none transition-colors`}
+                  autoFocus
+                />
+                {pinError && (
+                  <p className="text-red-500 text-xs font-bold mt-2 uppercase tracking-wider">PIN Incorreto</p>
+                )}
+              </div>
+              
+              <button 
+                type="submit" 
+                className="w-full py-4 bg-gradient-to-r from-yellow-600 to-yellow-500 text-white font-bold uppercase tracking-widest text-sm rounded-xl hover:shadow-[0_0_20px_rgba(234,179,8,0.3)] transition-all"
+              >
+                Desbloquear
+              </button>
+            </form>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
     <ContentViewport className="pt-2 sm:pt-4 px-4 sm:px-6 lg:px-8 space-y-6 sm:space-y-8 max-w-7xl mx-auto w-full pb-20">
 
