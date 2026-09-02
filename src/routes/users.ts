@@ -12,7 +12,7 @@ export function setupUsersRoutes({ app, supabase, authenticateToken, upload, upl
       let query = supabase
         .from("users")
         .select(
-          "id, name, email, role, order_start_time, order_end_time, picking_start_time, picking_end_time, manager_name, address, phone, matricula, created_at, avatar_url",
+          "id, name, email, role, order_start_time, order_end_time, picking_start_time, picking_end_time, manager_name, manager_pin, address, phone, matricula, created_at, avatar_url",
         )
         .order("name");
         
@@ -22,7 +22,7 @@ export function setupUsersRoutes({ app, supabase, authenticateToken, upload, upl
         let queryFallback = supabase
           .from("users")
           .select(
-            "id, name, email, role, order_start_time, order_end_time, picking_start_time, picking_end_time, manager_name, created_at, avatar_url",
+            "id, name, email, role, order_start_time, order_end_time, picking_start_time, picking_end_time, manager_name, manager_pin, created_at, avatar_url",
           )
           .order("name");
         const fb = await queryFallback;
