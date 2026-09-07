@@ -209,9 +209,14 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     try {
       const cached = cache.get("admin_faturas");
       if (cached) return res.json(cached);
+      const dozeMesesAtras = new Date();
+      dozeMesesAtras.setMonth(dozeMesesAtras.getMonth() - 12);
+      const dataIso = dozeMesesAtras.toISOString().split("T")[0];
+
       const { data, error } = await supabase
         .from("faturas")
         .select("*, fornecedor:fornecedores(nome, iban), fatura_itens(*, produto:produtos(nome, unidade_base, iva)), movimentos_financeiros(*)")
+        .or(`data_emissao.gte.${dataIso},status_pagamento.in.(pendente,parcial)`)
         .order("data_emissao", { ascending: false });
       if (error) {
          if (error.code === '42P01') return res.json([]);
