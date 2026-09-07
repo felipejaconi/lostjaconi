@@ -55,7 +55,7 @@ export default function StoreManagement() {
   // Lock logic
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [pinInput, setPinInput] = useState("");
-  const [expectedPin, setExpectedPin] = useState("0000");
+  const [expectedPin, setExpectedPin] = useState("0021");
   const [pinError, setPinError] = useState(false);
 
   useEffect(() => {
