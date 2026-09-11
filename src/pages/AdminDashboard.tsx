@@ -284,6 +284,7 @@ export default function AdminDashboard() {
        {
          title: "GESTÃO",
          items: [
+           { to: "/admin/relatorios", icon: <FileText size={18} />, label: "Relatórios" },
            { to: "/admin/financeiro", icon: <Banknote size={18} />, label: "Financeiro" },
                       { to: "/admin/precos", icon: <Tags size={18} />, label: "Margens / Preços" },
            { to: "/admin/consumo", icon: <PieChart size={18} />, label: "Consumo" },

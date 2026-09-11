@@ -50,7 +50,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const startOfMonthIso = startOfMonth.toISOString();
       
       try {
-        const { data: faturasC } = await supabase.from("faturas").select("tipo, valor_total, valor_pendente, data_emissao").or(`data_emissao.gte.${startOfMonthIso.split('T')[0]},valor_pendente.gt.0`);
+        const { data: faturasC } = await supabase.from("faturas").select("tipo, valor_total, valor_pendente, data_emissao");
         (faturasC || []).forEach(f => {
            dividaFornecedores += Number(f.valor_pendente || 0);
            const isThisMonth = new Date(f.data_emissao) > startOfMonth;

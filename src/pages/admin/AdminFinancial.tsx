@@ -9,7 +9,6 @@ import api from "../../lib/api";
 import { clsx, type ClassValue } from "clsx";
 import { Modal } from "../../components/ui/Modal";
 import { BrandTitle } from "../../components/BrandTitle";
-import AdminReports from "./AdminReports";
 import AdminExpenseEntries from "./AdminExpenseEntries";
 import { useAuth } from "../../context/AuthContext";
 import { useSearchParams } from "react-router-dom";
@@ -76,7 +75,7 @@ export default function AdminFinancial() {
   const [payFormData, setPayFormData] = useState({ valor: "", data_pagamento: new Date().toISOString().split("T")[0], metodo: "transferencia" });
 
   const [filterDataAPagar, setFilterDataAPagar] = useState({
-    periodo: "todos",
+    periodo: "mes",
     status: "todos",
     fornecedor: "todos",
     loja: "todos"
@@ -87,6 +86,12 @@ export default function AdminFinancial() {
     status: "todos",
     loja: "todos"
   });
+
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const toggleGroup = (groupId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
 
   const [formData, setFormData] = useState({
     numero_fatura: "",
@@ -501,6 +506,67 @@ export default function AdminFinancial() {
     return textMatch && tipoMatch && periodMatch && statusMatch && fornecedorMatch && lojaMatch;
   });
 
+  const groupedFaturas = useMemo(() => {
+    const groups = new Map<string, any>();
+    const result: any[] = [];
+    
+    filteredFaturas.forEach(f => {
+      const match = f.numero_fatura?.match(/(.+)-P(\d+)\/(\d+)$/);
+      if (match) {
+        const baseNum = match[1];
+        const currentP = match[2];
+        const totalP = match[3];
+        const groupKey = `${f.fornecedor_id}-${baseNum}-${totalP}`;
+        
+        if (!groups.has(groupKey)) {
+          const groupObj = {
+            isGroup: true,
+            id: groupKey,
+            numero_fatura: `${baseNum}`,
+            tipo: f.tipo,
+            fornecedor: f.fornecedor,
+            fornecedor_id: f.fornecedor_id,
+            data_emissao: f.data_emissao,
+            data_vencimento: f.data_vencimento,
+            descrição: f.descrição,
+            installments: [],
+            total_group_value: new Decimal(0),
+            total_group_pendente: new Decimal(0),
+            status_pagamento: "pendente",
+            totalInstallments: Number(totalP),
+          };
+          groups.set(groupKey, groupObj);
+          result.push(groupObj);
+        }
+        
+        const group = groups.get(groupKey);
+        group.installments.push(f);
+        group.total_group_value = group.total_group_value.add(new Decimal(f.valor_total || 0));
+        group.total_group_pendente = group.total_group_pendente.add(new Decimal(f.valor_pendente || 0));
+      } else {
+        result.push(f);
+      }
+    });
+
+    groups.forEach(group => {
+       group.installments.sort((a: any, b: any) => {
+          const aNum = Number(a.numero_fatura.match(/-P(\d+)\/\d+$/)?.[2] || 0);
+          const bNum = Number(b.numero_fatura.match(/-P(\d+)\/\d+$/)?.[2] || 0);
+          return aNum - bNum;
+       });
+       group.valor_total = group.total_group_value.toNumber();
+       group.valor_pendente = group.total_group_pendente.toNumber();
+       group.status_pagamento = group.valor_pendente === 0 ? 'pago' : (group.valor_pendente < group.valor_total ? 'parcial' : 'pendente');
+       
+       if (group.installments.length > 0) {
+          group.data_emissao = group.installments[0].data_emissao;
+          group.data_vencimento = group.installments[0].data_vencimento;
+       }
+    });
+    
+    return result;
+  }, [filteredFaturas]);
+
   const faturasReceber = pedidos.filter(p => {
     const isReceberBase = ['pronto', 'entregue', 'concluido'].includes(p.status?.toLowerCase());
     const textMatch = (p.loja_nome || "").toLowerCase().includes(search.toLowerCase());
@@ -553,15 +619,6 @@ export default function AdminFinancial() {
                  <ShoppingCart size={14} />
                  Faturas a Receber
               </button>
-              <button 
-                  onClick={() => setActiveTab("relatorios")}
-                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-2.5 text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap ${
-                    activeTab === "relatorios" ? "bg-emerald-500 text-black shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]" : "text-zinc-400 hover:text-emerald-400 hover:bg-white/5"
-                 }`}
-              >
-                 <FileText size={14} className={activeTab === "relatorios" ? "text-black" : ""} />
-                 Relatórios
-              </button>
            </div>
            )}
         <div className="flex items-center gap-3">
@@ -578,10 +635,6 @@ export default function AdminFinancial() {
          ) : (
             <>
 
-         {activeTab === "relatorios" && (
-            <div className="mt-6"><AdminReports embedded={true} /></div>
-         )}
-         
          {activeTab === "dashboard" && (
             <div className="space-y-6 mt-6">
                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
@@ -745,49 +798,60 @@ export default function AdminFinancial() {
          {activeTab === "faturas" && (
             <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-sm flex flex-col h-full min-h-[500px]">
                <div className="sticky top-[calc(66.63px-1px)] md:top-[calc(66.63px-1px)] z-30 p-2 sm:p-3 border-b border-zinc-800 flex flex-col xl:flex-row gap-4 justify-between items-center bg-zinc-950 mt-[67px]">
-                  <div className="relative w-full sm:w-80 flex gap-2">
-                     <div className="relative w-full">
+                  <div className="relative w-full xl:w-auto flex flex-col sm:flex-row gap-3">
+                     <div className="relative w-full sm:w-64 shrink-0">
                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
                        <input
                          type="text"
-                         placeholder="Pesquisar fatura ou fornecedor..."
+                         placeholder="Pesquisar fatura..."
                          value={search}
                          onChange={(e) => setSearch(e.target.value)}
-                         className="w-full pl-9 pr-4 py-2.5 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-zinc-600 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors"
+                         className="w-full pl-9 pr-4 py-2 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-zinc-600 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors h-[38px]"
                        />
                      </div>
-                     <button
-                        onClick={() => setIsModalOpen(true)}
-                        className="px-4 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg shrink-0 flex items-center justify-center transition-colors"
-                        title="Registar Nova Despesa"
-                     >
-                        <Plus className="w-4 h-4 mr-1" /> Despesa
-                     </button>
+                     <div className="inline-flex bg-black/40 p-1 rounded-lg border border-white/5 shadow-inner w-full sm:w-auto h-[38px]">
+                        <button 
+                           onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'mes'})}
+                           className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
+                             filterDataAPagar.periodo === 'mes' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
+                           }`}
+                        >
+                           Mensal
+                        </button>
+                        <button 
+                           onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'ano'})}
+                           className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
+                             filterDataAPagar.periodo === 'ano' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
+                           }`}
+                        >
+                           Anual
+                        </button>
+                        <button 
+                           onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'todos'})}
+                           className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
+                             filterDataAPagar.periodo === 'todos' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
+                           }`}
+                        >
+                           Todas
+                        </button>
+                     </div>
                   </div>
-                  <div className="flex flex-nowrap sm:flex-wrap items-center gap-2 w-full sm:w-auto overflow-x-auto no-scrollbar pb-1 sm:pb-0">
-                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0">
+                  <div className="flex flex-nowrap sm:flex-wrap items-center gap-2 w-full xl:w-auto overflow-x-auto no-scrollbar pb-1 sm:pb-0">
+                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0 h-[38px]">
                         <select value={filterTipo} onChange={e => setFilterTipo(e.target.value)} className="bg-transparent text-sm text-zinc-300 outline-none appearance-none">
                            <option value="todos">Todos os Tipos</option>
                            <option value="compra">Compras (Stock)</option>
                            <option value="despesa">Despesas</option>
                         </select>
                      </div>
-                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0">
-                        <select value={filterDataAPagar.periodo} onChange={e => setFilterDataAPagar({...filterDataAPagar, periodo: e.target.value})} className="bg-transparent text-sm text-zinc-300 outline-none appearance-none">
-                           <option value="todos">Todo o período</option>
-                           <option value="semana">Esta Semana</option>
-                           <option value="mes">Este Mês</option>
-                           <option value="ano">Este Ano</option>
-                        </select>
-                     </div>
-                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0">
+                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0 h-[38px]">
                         <select value={filterDataAPagar.status} onChange={e => setFilterDataAPagar({...filterDataAPagar, status: e.target.value})} className="bg-transparent text-sm text-zinc-300 outline-none appearance-none">
                            <option value="todos">Todos os Status</option>
                            <option value="pago">Pagos</option>
                            <option value="nao_pago">Pendentes / Parciais</option>
                         </select>
                      </div>
-                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0">
+                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0 h-[38px]">
                         <select value={filterDataAPagar.fornecedor} onChange={e => setFilterDataAPagar({...filterDataAPagar, fornecedor: e.target.value})} className="bg-transparent text-sm text-zinc-300 outline-none appearance-none max-w-[150px] truncate">
                            <option value="todos">Fornecedores</option>
                            {fornecedores.map(f => (
@@ -795,7 +859,7 @@ export default function AdminFinancial() {
                            ))}
                         </select>
                      </div>
-                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0">
+                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0 h-[38px]">
                         <select value={filterDataAPagar.loja} onChange={e => setFilterDataAPagar({...filterDataAPagar, loja: e.target.value})} className="bg-transparent text-sm text-zinc-300 outline-none appearance-none max-w-[150px] truncate">
                            <option value="todos">Todas Lojas</option>
                            <option value="armazem">Armazém Central</option>
@@ -828,67 +892,119 @@ export default function AdminFinancial() {
                               </td>
                            </tr>
                         ) : (
-                           filteredFaturas.slice(0, displayCountFaturas).map(f => (
-                              <tr key={f.id} className="hover:bg-zinc-800/30 transition-colors cursor-pointer" onClick={() => { setSelectedFatura(f); setIsDetailsModalOpen(true); }}>
-                                 <td className="p-4">
-                                    <p className="text-sm font-bold text-zinc-100">{f.numero_fatura}</p>
-                                    <p className={cn("text-[10px] font-bold uppercase tracking-wider mt-0.5", f.tipo === 'compra' ? "text-blue-500" : "text-rose-500")}>
-                                       {f.tipo?.replace('despesa_', 'Despesa: ')}
-                                    </p>
-                                 </td>
-                                 <td className="p-4">
-                                    <p className="text-sm font-semibold text-zinc-300">{f.fornecedor?.nome}</p>
-                                    <p className="text-[11px] text-zinc-500 uppercase mt-0.5">NIF: {f.fornecedor?.nif || "-"}</p>
-                                    {(() => {
-                                       try {
-                                          if (f.descrição) {
-                                             const desc = JSON.parse(f.descrição);
-                                             if (desc.loja_id) {
-                                                const s = stores.find((s: any) => String(s.id) === String(desc.loja_id));
-                                                if (s) {
-                                                   return <p className="text-[10px] font-bold text-amber-500 mt-1 uppercase tracking-wider">{s.name}</p>;
+                           groupedFaturas.slice(0, displayCountFaturas).map(f => {
+                              const isExpanded = f.isGroup && expandedGroups[f.id];
+                              return (
+                              <React.Fragment key={f.id}>
+                                 <tr className={cn("transition-colors cursor-pointer", isExpanded ? "bg-zinc-800/30 border-l-2 border-l-transparent" : "hover:bg-zinc-800/30 border-l-2 border-l-transparent")} onClick={(e) => {
+                                    if (f.isGroup) toggleGroup(f.id, e as any);
+                                    else { setSelectedFatura(f); setIsDetailsModalOpen(true); }
+                                 }}>
+                                    <td className="p-4">
+                                       <div className="flex items-center gap-2">
+                                          {f.isGroup && (
+                                             <ChevronRight className={cn("w-4 h-4 text-zinc-500 transition-transform", isExpanded && "rotate-90")} />
+                                          )}
+                                          <div>
+                                             <p className="text-sm font-bold text-zinc-100">{f.numero_fatura}</p>
+                                             <p className={cn("text-[10px] font-bold uppercase tracking-wider mt-0.5", f.tipo === 'compra' ? "text-blue-500" : "text-rose-500")}>
+                                                {f.tipo?.replace('despesa_', 'Despesa: ')} {f.isGroup && <span className="text-zinc-500 ml-1">({f.totalInstallments} parcelas)</span>}
+                                             </p>
+                                          </div>
+                                       </div>
+                                    </td>
+                                    <td className="p-4">
+                                       <p className="text-sm font-semibold text-zinc-300">{f.fornecedor?.nome}</p>
+                                       <p className="text-[11px] text-zinc-500 uppercase mt-0.5">NIF: {f.fornecedor?.nif || "-"}</p>
+                                       {(() => {
+                                          try {
+                                             if (f.descrição) {
+                                                const desc = JSON.parse(f.descrição);
+                                                if (desc.loja_id) {
+                                                   const s = stores.find((s: any) => String(s.id) === String(desc.loja_id));
+                                                   if (s) {
+                                                      return <p className="text-[10px] font-bold text-amber-500 mt-1 uppercase tracking-wider">{s.name}</p>;
+                                                   }
                                                 }
                                              }
+                                          } catch(e) {}
+                                          if (f.tipo?.startsWith('despesa')) {
+                                             return <p className="text-[10px] font-bold text-blue-500 mt-1 uppercase tracking-wider">Armazém Central</p>;
                                           }
-                                       } catch(e) {}
-                                       if (f.tipo?.startsWith('despesa')) {
-                                          return <p className="text-[10px] font-bold text-blue-500 mt-1 uppercase tracking-wider">Armazém Central</p>;
-                                       }
-                                       return null;
-                                    })()}
-                                 </td>
-                                 <td className="p-4 space-y-1 text-sm text-zinc-400">
-                                    <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> <span className="text-[11px]">Em: {f.data_emissao}</span></div>
-                                    {f.data_vencimento && (
-                                       <div className="flex items-center gap-1.5 text-amber-500/80 flex-wrap">
-                                          <Clock className="w-3.5 h-3.5" /> <span className="text-[11px]">Venc: {f.data_vencimento}</span>
-                                          {getVencimentoText(f.data_vencimento, f.status_pagamento)}
-                                       </div>
-                                    )}
-                                 </td>
-                                 <td className="p-4 text-right">
-                                    <span className="text-sm font-bold text-zinc-100">€ {Number(f.valor_total).toLocaleString('pt-PT', {minimumFractionDigits:2})}</span>
-                                 </td>
-                                 <td className="p-4 text-center">
-                                    {f.status_pagamento === 'pago' ? (
-                                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider"><CheckCircle2 className="w-3 h-3" /> Pago</span>
-                                    ) : f.status_pagamento === 'parcial' ? (
-                                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Parcial</span>
-                                    ) : (
-                                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Pendente</span>
-                                    )}
-                                 </td>
-                                 <td className="p-4 text-right">
-                                    <span className={cn("text-sm font-bold", Number(f.valor_pendente) > 0 ? "text-amber-500" : "text-zinc-500")}>
-                                       € {Number(f.valor_pendente).toLocaleString('pt-PT', {minimumFractionDigits:2})}
-                                    </span>
-                                 </td>
-                              </tr>
-                           ))
+                                          return null;
+                                       })()}
+                                    </td>
+                                    <td className="p-4 space-y-1 text-sm text-zinc-400">
+                                       <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> <span className="text-[11px]">Em: {f.data_emissao}</span></div>
+                                       {f.data_vencimento && (
+                                          <div className="flex items-center gap-1.5 text-amber-500/80 flex-wrap">
+                                             <Clock className="w-3.5 h-3.5" /> <span className="text-[11px]">Venc: {f.data_vencimento}</span>
+                                             {getVencimentoText(f.data_vencimento, f.status_pagamento)}
+                                          </div>
+                                       )}
+                                    </td>
+                                    <td className="p-4 text-right">
+                                       <span className="text-sm font-bold text-zinc-100">€ {Number(f.valor_total).toLocaleString('pt-PT', {minimumFractionDigits:2})}</span>
+                                    </td>
+                                    <td className="p-4 text-center">
+                                       {f.status_pagamento === 'pago' ? (
+                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider"><CheckCircle2 className="w-3 h-3" /> Pago</span>
+                                       ) : f.status_pagamento === 'parcial' ? (
+                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Parcial</span>
+                                       ) : (
+                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Pendente</span>
+                                       )}
+                                    </td>
+                                    <td className="p-4 text-right">
+                                       <span className={cn("text-sm font-bold", Number(f.valor_pendente) > 0 ? "text-amber-500" : "text-zinc-500")}>
+                                          € {Number(f.valor_pendente).toLocaleString('pt-PT', {minimumFractionDigits:2})}
+                                       </span>
+                                    </td>
+                                 </tr>
+                                 
+                                 {isExpanded && f.installments.map((inst: any) => (
+                                    <tr key={inst.id} className="bg-zinc-900/30 hover:bg-zinc-800/40 transition-colors cursor-pointer border-l-2 border-l-rose-500/50" onClick={() => { setSelectedFatura(inst); setIsDetailsModalOpen(true); }}>
+                                       <td className="p-4 pl-10">
+                                          <p className="text-sm font-bold text-zinc-300">{inst.numero_fatura}</p>
+                                       </td>
+                                       <td className="p-4">
+                                          <p className="text-sm font-semibold text-zinc-300">{inst.fornecedor?.nome}</p>
+                                          <p className="text-[11px] text-zinc-500 uppercase mt-0.5">NIF: {inst.fornecedor?.nif || "-"}</p>
+                                       </td>
+                                       <td className="p-4 space-y-1 text-sm text-zinc-400">
+                                          {inst.data_vencimento && (
+                                             <div className="flex items-center gap-1.5 text-amber-500/80 flex-wrap">
+                                                <Clock className="w-3.5 h-3.5" /> <span className="text-[11px]">Venc: {inst.data_vencimento}</span>
+                                                {getVencimentoText(inst.data_vencimento, inst.status_pagamento)}
+                                             </div>
+                                          )}
+                                       </td>
+                                       <td className="p-4 text-right">
+                                          <span className="text-sm font-medium text-zinc-300">€ {Number(inst.valor_total).toLocaleString('pt-PT', {minimumFractionDigits:2})}</span>
+                                       </td>
+                                       <td className="p-4 text-center">
+                                          {inst.status_pagamento === 'pago' ? (
+                                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider"><CheckCircle2 className="w-3 h-3" /> Pago</span>
+                                          ) : inst.status_pagamento === 'parcial' ? (
+                                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Parcial</span>
+                                          ) : (
+                                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Pendente</span>
+                                          )}
+                                       </td>
+                                       <td className="p-4 text-right">
+                                          <span className={cn("text-sm font-medium", Number(inst.valor_pendente) > 0 ? "text-amber-500" : "text-zinc-500")}>
+                                             € {Number(inst.valor_pendente).toLocaleString('pt-PT', {minimumFractionDigits:2})}
+                                          </span>
+                                       </td>
+                                    </tr>
+                                 ))}
+                              </React.Fragment>
+                              )
+                           })
                         )}
                      </tbody>
                   </table>
-                  {filteredFaturas.length > displayCountFaturas && (
+                  {groupedFaturas.length > displayCountFaturas && (
                     <div ref={loadMoreFaturasRef} className="w-full flex justify-center py-6">
                       <span className="px-6 py-3 text-zinc-500 font-medium tracking-tight text-sm">
                         Carregando mais itens...

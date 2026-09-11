@@ -177,8 +177,16 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
           .select("id, name")
           .eq("role", "loja");
           
+        const { data: orders, error } = await supabase
+          .from("pedidos")
+          .select("*, user:users(name), pedido_itens(*, produto:produtos(iva))")
+          .in("status", ["pronto", "entregue", "concluido"])
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+
         const agora = new Date();
         agora.setHours(0,0,0,0);
+
         const startOfDay = new Date(agora);
         
         const startOfWeek = new Date(agora);
@@ -194,25 +202,14 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
            endOfMonth = new Date(Number(req.query.year), Number(req.query.month) + 1, 1);
         }
 
-        if (startOfWeek < startOfMonth) startOfWeek.setTime(startOfMonth.getTime());
-        const startOfPreviousMonth = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
-
-        const minDate = new Date(Math.min(startOfDay.getTime(), startOfWeek.getTime(), startOfPreviousMonth.getTime(), startOfMonth.getTime()));
-
         const { data: faturas } = await supabase
           .from("faturas")
           .select("*")
           .gte("data_emissao", startOfMonth.toISOString().split("T")[0])
           .lt("data_emissao", endOfMonth.toISOString().split("T")[0]);
 
-        const { data: orders, error } = await supabase
-          .from("pedidos")
-          .select("user_id, total, created_at, user:users(name), pedido_itens(quantidade, preco_unitario, produto:produtos(iva))")
-          .in("status", ["pronto", "entregue", "concluido"])
-          .gte("created_at", minDate.toISOString())
-          .order("created_at", { ascending: false });
-
-        if (error) throw error;
+        if (startOfWeek < startOfMonth) startOfWeek.setTime(startOfMonth.getTime());
+        const startOfPreviousMonth = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
 
         const consumption: any = {};
         
