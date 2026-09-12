@@ -412,7 +412,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
          </div>
       </Modal>
 
-      <Modal isOpen={isCheckoutModalOpen} onClose={() => { setIsCheckoutModalOpen(false); setSelectedCheckoutFatura(null); setIsCheckoutListModalOpen(true); }} title={`Checkout Fatura: ${selectedCheckoutFatura?.numero_fatura || ""}`} maxWidth="4xl">
+      <Modal isOpen={isCheckoutModalOpen} onClose={() => { setIsCheckoutModalOpen(false); setSelectedCheckoutFatura(null); setIsCheckoutListModalOpen(true); }} title={`Check Fatura: ${selectedCheckoutFatura?.numero_fatura || ""}`} maxWidth="4xl">
          <div className="pt-4 space-y-6 max-h-[80vh] overflow-y-auto no-scrollbar">
             
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-zinc-900/30 p-4 rounded-xl border border-zinc-800">
@@ -584,7 +584,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
           {user?.role === 'admin' && (
             <button onClick={handleOpenCheckoutList} className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
                <CheckCircle2 size={16} />
-               Checkout Faturas
+               Check Faturas
             </button>
           )}
           <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
