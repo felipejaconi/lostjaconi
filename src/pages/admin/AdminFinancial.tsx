@@ -68,6 +68,8 @@ export default function AdminFinancial() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPayModalOpen, setIsPayModalOpen] = useState(false);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+  const [checkoutFormData, setCheckoutFormData] = useState({ valor_liquido: "", valor_iva: "", valor_total: "" });
   const [isStoreModalOpen, setIsStoreModalOpen] = useState(false);
   const [selectedStore, setSelectedStore] = useState<any>(null);
   const [selectedFatura, setSelectedFatura] = useState<any>(null);
@@ -466,6 +468,10 @@ export default function AdminFinancial() {
     const periodMatch = filterByPeriod(f.data_emissao, filterDataAPagar.periodo);
     
     let statusMatch = true;
+    if (activeTab === 'faturas') {
+       if (f.status_pagamento === 'em_conferencia') return false;
+    }
+    
     if (filterDataAPagar.status !== "todos") {
        if (filterDataAPagar.status === "pago") statusMatch = f.status_pagamento === "pago";
        if (filterDataAPagar.status === "nao_pago") statusMatch = ["pendente", "parcial"].includes(f.status_pagamento || 'pendente');
@@ -951,6 +957,8 @@ export default function AdminFinancial() {
                                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider"><CheckCircle2 className="w-3 h-3" /> Pago</span>
                                        ) : f.status_pagamento === 'parcial' ? (
                                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Parcial</span>
+                                       ) : f.status_pagamento === 'em_conferencia' ? (
+                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Conferencia</span>
                                        ) : (
                                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Pendente</span>
                                        )}
@@ -987,6 +995,8 @@ export default function AdminFinancial() {
                                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider"><CheckCircle2 className="w-3 h-3" /> Pago</span>
                                           ) : inst.status_pagamento === 'parcial' ? (
                                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Parcial</span>
+                                          ) : inst.status_pagamento === 'em_conferencia' ? (
+                                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Conferencia</span>
                                           ) : (
                                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Pendente</span>
                                           )}

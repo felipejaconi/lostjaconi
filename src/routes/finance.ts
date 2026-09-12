@@ -295,6 +295,79 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     }
   });
 
+  app.put("/api/admin/faturas/:id/checkout", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    const faturaId = req.params.id;
+    const { numero_fatura, data_emissao, fornecedor_id, valor_liquido, valor_iva, valor_total, itens } = req.body;
+    
+    try {
+      // 1. Update the Fatura header
+      const { error: headerError } = await supabase.from("faturas").update({
+         numero_fatura,
+         data_emissao,
+         fornecedor_id,
+         valor_liquido,
+         valor_iva,
+         valor_total,
+         valor_pendente: valor_total,
+         status_pagamento: "pendente"
+      }).eq("id", faturaId);
+      
+      if (headerError) throw headerError;
+      
+      // 2. Update the Fatura Items
+      if (itens && Array.isArray(itens)) {
+         for (const item of itens) {
+            if (item.id) {
+               // Update each item
+               let updatePayload: any = {
+                  iva: item.iva,
+                  valor_liquido: item.valor_liquido,
+                  valor_iva: item.valor_iva,
+                  valor_total: item.valor_total
+               };
+               
+               // Try to set preco_custo
+               updatePayload.preco_custo = item.preco_unitario;
+               
+               const { error: itemErr } = await supabase.from("fatura_itens").update(updatePayload).eq("id", item.id);
+               
+               if (itemErr) {
+                  // Fallback to preco_unitario
+                  delete updatePayload.preco_custo;
+                  updatePayload.preco_unitario = item.preco_unitario;
+                  await supabase.from("fatura_itens").update(updatePayload).eq("id", item.id);
+               }
+            }
+         }
+      }
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Erro no checkout fatura:", error);
+      res.status(500).json({ error: error.message || "Erro no checkout da fatura" });
+    }
+  });
+
+  app.put("/api/admin/faturas/:id", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    const faturaId = req.params.id;
+    const { valor_liquido, valor_iva, valor_total, status_pagamento } = req.body;
+    try {
+      const { data, error } = await supabase.from("faturas").update({
+         valor_liquido,
+         valor_iva,
+         valor_total,
+         valor_pendente: valor_total, // Reset pendente na aprovação
+         status_pagamento
+      }).eq("id", faturaId).select();
+      if (error) throw error;
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post("/api/admin/faturas/:id/pagar", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     const { valor, data_pagamento, metodo } = req.body;

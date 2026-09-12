@@ -14,6 +14,7 @@ import {
   Area 
 } from "recharts";
 import { ContentViewport } from "../../components/layout/ContentViewport";
+import { StoreDRE } from "../../components/store/StoreDRE";
 import { DollarSign, TrendingUp, Package, Calendar, Target, BarChart2, Star, AlertTriangle, FileText, CheckCircle, Clock } from "lucide-react";
 import { motion } from "motion/react";
 import { OptimizedImage } from "../../components/OptimizedImage";
@@ -46,8 +47,7 @@ function getPedidoTotalComIva(pedido: any): number {
 
 export default function StoreManagement() {
   const { user } = useAuth();
-  const isBenavente = user?.name?.toLowerCase().includes("benavente") || user?.email?.toLowerCase().includes("benavente");
-  const [orders, setOrders] = useState<any[]>([]);
+    const [orders, setOrders] = useState<any[]>([]);
   const [stockLoja, setStockLoja] = useState<any[]>([]);
   const [fechos, setFechos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,23 +85,20 @@ export default function StoreManagement() {
     };
 
     fetchData();
-  }, [user, isBenavente]);
+  }, [user]);
 
   // Filter by selected month and year
   
-  // Benavente exclusive state
-  const [benaventeMonth, setBenaventeMonth] = useState<number>(new Date().getMonth());
-  const [benaventeYear, setBenaventeYear] = useState<number>(new Date().getFullYear());
-
-  useEffect(() => {
-    if (!user || !isBenavente) return;
-    api.get(`/admin/fechos?month=${benaventeMonth + 1}&year=${benaventeYear}`)
-       .then(res => setFechos(res.data || []))
-       .catch(() => setFechos([]));
-  }, [user, isBenavente, benaventeMonth, benaventeYear]);
 
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+
+  useEffect(() => {
+    if (!user) return;
+    api.get(`/admin/fechos?month=${selectedMonth + 1}&year=${selectedYear}`)
+       .then(res => setFechos(res.data || []))
+       .catch(() => setFechos([]));
+  }, [user, selectedMonth, selectedYear]);
 
   // Derived metrics
   const completedOrders = orders.filter(o => o.status === "concluido" || o.status === "entregue");
@@ -426,7 +423,7 @@ export default function StoreManagement() {
         </div>
 
       </div>
-      {isBenavente && (
+            {true && (
         <div className="bg-[#111]/80 backdrop-blur-xl border border-blue-500/20 rounded-3xl p-6 sm:p-8 shadow-2xl mb-8 mt-12 relative overflow-hidden">
            {/* Abstract Background Elements */}
            <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 bg-blue-500/10 rounded-full blur-[80px] pointer-events-none" />
@@ -438,15 +435,15 @@ export default function StoreManagement() {
                     <Star className="text-blue-400" size={24} />
                  </div>
                  <div>
-                    <h2 className="text-2xl font-black text-white tracking-widest uppercase">BENAVENTE</h2>
+                    <h2 className="text-2xl font-black text-white tracking-widest uppercase">{user?.name || "Loja"}</h2>
                  </div>
               </div>
               
               <div className="flex items-center gap-3">
                  <div className="relative group">
                     <select 
-                      value={benaventeMonth} 
-                      onChange={(e) => setBenaventeMonth(Number(e.target.value))}
+                      value={selectedMonth} 
+                      onChange={(e) => setSelectedMonth(Number(e.target.value))}
                       className="bg-black/50 border border-white/10 group-hover:border-blue-500/50 text-white text-xs font-bold uppercase tracking-wider rounded-xl px-4 py-3 outline-none appearance-none cursor-pointer transition-colors pr-10"
                     >
                       {['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'].map((m, i) => (
@@ -458,8 +455,8 @@ export default function StoreManagement() {
                  
                  <div className="relative group">
                     <select 
-                      value={benaventeYear} 
-                      onChange={(e) => setBenaventeYear(Number(e.target.value))}
+                      value={selectedYear} 
+                      onChange={(e) => setSelectedYear(Number(e.target.value))}
                       className="bg-black/50 border border-white/10 group-hover:border-blue-500/50 text-white text-xs font-bold tracking-wider rounded-xl px-4 py-3 outline-none appearance-none cursor-pointer transition-colors pr-10"
                     >
                       {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map(y => (
@@ -479,19 +476,19 @@ export default function StoreManagement() {
                  const data = f.data;
                  if (!data) return;
                  const d = new Date(data);
-                 if (d.getMonth() === benaventeMonth && d.getFullYear() === benaventeYear) {
+                 if (d.getMonth() === selectedMonth && d.getFullYear() === selectedYear) {
                      if (!map.has(data)) map.set(data, { vendas: 0, compras: 0 });
                      map.get(data).vendas += Number(f.real_total || 0);
                  }
               });
               
               // Add Pedidos (Compras)
-              const benaventeOrders = completedOrders.filter(o => {
+              const monthlyOrders = completedOrders.filter(o => {
                  const d = new Date(o.created_at);
-                 return d.getMonth() === benaventeMonth && d.getFullYear() === benaventeYear;
+                 return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
               });
               
-              benaventeOrders.forEach(o => {
+              monthlyOrders.forEach(o => {
                  const data = new Date(o.created_at).toISOString().split('T')[0];
                  if (!map.has(data)) map.set(data, { vendas: 0, compras: 0 });
                  map.get(data).compras += getPedidoTotalComIva(o) || 0;
@@ -579,6 +576,15 @@ export default function StoreManagement() {
                           <p className="text-xs text-slate-500">Não há registos para o período selecionado.</p>
                        </div>
                     )}
+                    
+                    {/* D.R.E. Section */}
+                    <StoreDRE 
+                       storeId={user.id} 
+                       month={selectedMonth} 
+                       year={selectedYear} 
+                       totalVendas={totalVendas} 
+                       totalCompras={totalCompras}
+                    />
                  </div>
               );
            })()}

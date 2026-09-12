@@ -100,6 +100,59 @@ export function setupConfigRoutes({ app, supabase, authenticateToken }: any) {
     }
   });
 
+  
+  // --- DRE MENSAL LOJAS ---
+  app.get("/api/loja/dre", authenticateToken, async (req: any, res: any) => {
+    try {
+      const storeId = req.query.store_id || req.user.id;
+      const month = parseInt(req.query.month);
+      const year = parseInt(req.query.year);
+      
+      const { data, error } = await supabase
+        .from('dre_lojas')
+        .select('dados')
+        .eq('store_id', storeId)
+        .eq('mes', month)
+        .eq('ano', year)
+        .single();
+        
+      if (error && error.code !== 'PGRST116') { // PGRST116 is 'not found'
+        throw error;
+      }
+      
+      return res.json(data?.dados || {});
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/loja/dre", authenticateToken, async (req: any, res: any) => {
+    try {
+      const storeId = req.body.store_id || req.user.id;
+      const month = parseInt(req.body.month);
+      const year = parseInt(req.body.year);
+      const values = req.body.values;
+      
+      const { error } = await supabase
+        .from('dre_lojas')
+        .upsert({
+           store_id: storeId,
+           mes: month,
+           ano: year,
+           dados: values,
+           updated_at: new Date().toISOString()
+        }, {
+           onConflict: 'store_id, mes, ano'
+        });
+        
+      if (error) throw error;
+      
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
   // --- FECHOS DE CAIXA ---
   app.get("/api/admin/fechos", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin" && req.user.role !== "loja") return res.sendStatus(403);

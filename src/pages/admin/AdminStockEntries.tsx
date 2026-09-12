@@ -10,6 +10,8 @@ import Decimal from "decimal.js";
 import { BrandTitle } from "../../components/BrandTitle";
 import { Modal } from "../../components/ui/Modal";
 import AdminExpenseEntries from "./AdminExpenseEntries";
+import { useAuth } from "../../context/AuthContext";
+import { CheckCircle2 } from "lucide-react";
 
 // Configuração profissional de precisão decimal (High Precision, HALF_UP rounding)
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -32,6 +34,62 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
   const [isProductModalOpen, setProductModalOpen] = useState(false);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [targetItemRowId, setTargetItemRowId] = useState<number | null>(null);
+  
+  const { user } = useAuth();
+  const [isCheckoutListModalOpen, setIsCheckoutListModalOpen] = useState(false);
+  const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+  const [pendingFaturas, setPendingFaturas] = useState<any[]>([]);
+  const [selectedCheckoutFatura, setSelectedCheckoutFatura] = useState<any>(null);
+    const [checkoutFormData, setCheckoutFormData] = useState({ 
+    numero_fatura: "", 
+    data_emissao: "", 
+    fornecedor_id: "", 
+    valor_liquido: "", 
+    valor_iva: "", 
+    valor_total: "" 
+  });
+  const [checkoutFaturaItens, setCheckoutFaturaItens] = useState<any[]>([]);
+
+  // We recalculate totals whenever items change
+  useEffect(() => {
+     if (isCheckoutModalOpen && checkoutFaturaItens.length > 0) {
+        let totalLiquido = new Decimal(0);
+        let totalIva = new Decimal(0);
+        checkoutFaturaItens.forEach(it => {
+           const preco = new Decimal(it.preco_unitario || it.preco_custo || 0);
+           const qtd = new Decimal(it.quantidade || 0);
+           const iva = new Decimal(it.iva || 0);
+           
+           const liq = preco.mul(qtd);
+           const vIva = liq.mul(iva).div(100);
+           totalLiquido = totalLiquido.add(liq);
+           totalIva = totalIva.add(vIva);
+        });
+        const totalFinal = totalLiquido.add(totalIva);
+        
+        setCheckoutFormData(prev => ({
+           ...prev,
+           valor_liquido: totalLiquido.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toString(),
+           valor_iva: totalIva.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toString(),
+           valor_total: totalFinal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toString()
+        }));
+     }
+  }, [checkoutFaturaItens, isCheckoutModalOpen]);
+
+  const loadPendingFaturas = async () => {
+     try {
+        const { data } = await api.get("/admin/faturas");
+        setPendingFaturas((data || []).filter((f: any) => f.status_pagamento === 'em_conferencia'));
+     } catch (e) {
+        console.error("Erro ao carregar faturas pendentes", e);
+     }
+  };
+
+  const handleOpenCheckoutList = () => {
+     loadPendingFaturas();
+     setIsCheckoutListModalOpen(true);
+  };
+
   const [newProductData, setNewProductData] = useState({
     nome: "",
     descricao: "",
@@ -303,6 +361,219 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
   return (
     <div className=" pt-2 md:pt-4 pb-32 ">
 
+      <Modal isOpen={isCheckoutListModalOpen} onClose={() => setIsCheckoutListModalOpen(false)} title="Faturas Aguardando Conferência" maxWidth="3xl">
+         <div className="pt-4 max-h-[70vh] overflow-y-auto no-scrollbar">
+            {pendingFaturas.length === 0 ? (
+               <p className="text-zinc-500 text-center py-8">Nenhuma fatura aguardando conferência.</p>
+            ) : (
+               <div className="space-y-3">
+                  {pendingFaturas.map(f => (
+                     <div key={f.id} className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                           <p className="text-sm font-bold text-zinc-100">{f.numero_fatura}</p>
+                           <p className="text-xs text-zinc-400 mt-1">{f.fornecedor?.nome}</p>
+                        </div>
+                        <div className="flex items-center gap-4">
+                           <div className="text-right">
+                              <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Total Registado</p>
+                              <p className="text-sm font-bold text-amber-500">€ {Number(f.valor_total || 0).toFixed(2)}</p>
+                           </div>
+                           <button 
+                              onClick={() => {
+                                 setSelectedCheckoutFatura(f);
+                                 setCheckoutFormData({
+                                    numero_fatura: f.numero_fatura || '',
+                                    data_emissao: f.data_emissao || '',
+                                    fornecedor_id: f.fornecedor_id ? String(f.fornecedor_id) : '',
+                                    valor_liquido: String(f.valor_liquido || ''),
+                                    valor_iva: String(f.valor_iva || ''),
+                                    valor_total: String(f.valor_total || '')
+                                 });
+                                 if (f.fatura_itens) {
+                                    setCheckoutFaturaItens(f.fatura_itens.map((it: any) => ({
+                                       ...it,
+                                       preco_unitario: it.preco_custo !== undefined ? it.preco_custo : it.preco_unitario
+                                    })));
+                                 } else {
+                                    setCheckoutFaturaItens([]);
+                                 }
+                                 setIsCheckoutListModalOpen(false);
+                                 setIsCheckoutModalOpen(true);
+                              }}
+                              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-colors whitespace-nowrap"
+                           >
+                              Conferir Valores
+                           </button>
+                        </div>
+                     </div>
+                  ))}
+               </div>
+            )}
+         </div>
+      </Modal>
+
+      <Modal isOpen={isCheckoutModalOpen} onClose={() => { setIsCheckoutModalOpen(false); setSelectedCheckoutFatura(null); setIsCheckoutListModalOpen(true); }} title={`Checkout Fatura: ${selectedCheckoutFatura?.numero_fatura || ""}`} maxWidth="4xl">
+         <div className="pt-4 space-y-6 max-h-[80vh] overflow-y-auto no-scrollbar">
+            
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-zinc-900/30 p-4 rounded-xl border border-zinc-800">
+               <div>
+                  <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Nº Fatura</label>
+                  <input
+                     type="text"
+                     value={checkoutFormData.numero_fatura}
+                     onChange={e => setCheckoutFormData({...checkoutFormData, numero_fatura: e.target.value})}
+                     className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500/50"
+                  />
+               </div>
+               <div>
+                  <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Data</label>
+                  <input
+                     type="date"
+                     value={checkoutFormData.data_emissao}
+                     onChange={e => setCheckoutFormData({...checkoutFormData, data_emissao: e.target.value})}
+                     className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500/50"
+                  />
+               </div>
+               <div>
+                  <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Fornecedor</label>
+                  <select 
+                     value={checkoutFormData.fornecedor_id} 
+                     onChange={e => setCheckoutFormData({...checkoutFormData, fornecedor_id: e.target.value})}
+                     className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500/50"
+                  >
+                     <option value="">Selecione...</option>
+                     {fornecedores.map(forn => (
+                        <option key={forn.id} value={forn.id}>{forn.nome}</option>
+                     ))}
+                  </select>
+               </div>
+            </div>
+
+            <div>
+               <h3 className="text-sm font-bold text-zinc-300 mb-3 border-b border-zinc-800 pb-2">Itens da Fatura</h3>
+               <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                     <thead>
+                        <tr className="border-b border-zinc-800">
+                           <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase">Produto</th>
+                           <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase text-right w-24">Qtd</th>
+                           <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase w-32">V. Unitário (€)</th>
+                           <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase w-24">IVA (%)</th>
+                        </tr>
+                     </thead>
+                     <tbody>
+                        {checkoutFaturaItens.map((item, idx) => (
+                           <tr key={item.id} className="border-b border-zinc-800/50 hover:bg-zinc-900/20">
+                              <td className="py-2 px-3 text-xs text-zinc-300 font-medium">{item.produto?.nome || 'Produto Desconhecido'}</td>
+                              <td className="py-2 px-3 text-xs text-zinc-400 text-right">{item.quantidade}</td>
+                              <td className="py-2 px-3">
+                                 <input
+                                    type="number"
+                                    step="0.001"
+                                    value={item.preco_unitario}
+                                    onChange={e => {
+                                       const newItems = [...checkoutFaturaItens];
+                                       newItems[idx].preco_unitario = e.target.value;
+                                       setCheckoutFaturaItens(newItems);
+                                    }}
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500/50"
+                                 />
+                              </td>
+                              <td className="py-2 px-3">
+                                 <select
+                                    value={item.iva}
+                                    onChange={e => {
+                                       const newItems = [...checkoutFaturaItens];
+                                       newItems[idx].iva = e.target.value;
+                                       setCheckoutFaturaItens(newItems);
+                                    }}
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500/50"
+                                 >
+                                    {IVA_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}%</option>)}
+                                 </select>
+                              </td>
+                           </tr>
+                        ))}
+                     </tbody>
+                  </table>
+               </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-zinc-800">
+               <div>
+                  <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Valor Líquido (€)</label>
+                  <input
+                     type="number"
+                     step="0.01"
+                     value={checkoutFormData.valor_liquido}
+                     onChange={e => setCheckoutFormData({...checkoutFormData, valor_liquido: e.target.value})}
+                     className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 outline-none"
+                  />
+               </div>
+               <div>
+                  <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Valor IVA (€)</label>
+                  <input
+                     type="number"
+                     step="0.01"
+                     value={checkoutFormData.valor_iva}
+                     onChange={e => setCheckoutFormData({...checkoutFormData, valor_iva: e.target.value})}
+                     className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 outline-none"
+                  />
+               </div>
+               <div>
+                  <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Valor Total (€)</label>
+                  <input
+                     type="number"
+                     step="0.01"
+                     value={checkoutFormData.valor_total}
+                     onChange={e => setCheckoutFormData({...checkoutFormData, valor_total: e.target.value})}
+                     className="w-full bg-zinc-950 border border-amber-500/30 rounded-lg px-3 py-2 text-sm text-amber-500 font-bold outline-none"
+                  />
+               </div>
+            </div>
+            
+            <div className="pt-6 flex justify-end gap-3 sticky bottom-0 bg-[#0a0a0a] pb-2">
+               <button onClick={() => { setIsCheckoutModalOpen(false); setIsCheckoutListModalOpen(true); }} className="px-5 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 rounded-lg transition-colors">Voltar</button>
+               <button
+                  onClick={async () => {
+                     try {
+                        const payload = {
+                           numero_fatura: checkoutFormData.numero_fatura,
+                           data_emissao: checkoutFormData.data_emissao,
+                           fornecedor_id: checkoutFormData.fornecedor_id,
+                           valor_liquido: Number(checkoutFormData.valor_liquido),
+                           valor_iva: Number(checkoutFormData.valor_iva),
+                           valor_total: Number(checkoutFormData.valor_total),
+                           itens: checkoutFaturaItens.map(it => ({
+                              id: it.id,
+                              preco_unitario: Number(it.preco_unitario),
+                              iva: Number(it.iva),
+                              // Calculados para o endpoint:
+                              valor_liquido: Number(it.preco_unitario) * Number(it.quantidade),
+                              valor_iva: (Number(it.preco_unitario) * Number(it.quantidade)) * (Number(it.iva) / 100),
+                              valor_total: (Number(it.preco_unitario) * Number(it.quantidade)) * (1 + Number(it.iva) / 100)
+                           }))
+                        };
+
+                        await api.put(`/admin/faturas/${selectedCheckoutFatura.id}/checkout`, payload);
+                        
+                        setIsCheckoutModalOpen(false);
+                        setSelectedCheckoutFatura(null);
+                        loadPendingFaturas();
+                        setIsCheckoutListModalOpen(true);
+                        Swal.fire("Sucesso", "Fatura aprovada com sucesso!", "success");
+                     } catch(e: any) {
+                        Swal.fire("Erro", e.response?.data?.error || "Erro ao aprovar fatura", "error");
+                     }
+                  }}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded-lg shadow-sm transition-colors flex items-center gap-2"
+               >
+                  <CheckCircle2 className="w-4 h-4" /> Aprovar e Corrigir
+               </button>
+            </div>
+         </div>
+      </Modal>
+
       <Modal isOpen={isExpenseModalOpen} onClose={() => setIsExpenseModalOpen(false)} maxWidth="2xl">
         <AdminExpenseEntries compact={true} onSuccess={() => setIsExpenseModalOpen(false)} />
       </Modal>
@@ -310,10 +581,12 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
       <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-4 -mt-2 md:-mt-4 mb-10 w-full flex flex-col sm:flex-row sm:items-center justify-between gap-4 max-w-full">
         <BrandTitle title="Registro de Faturas" titleClassName="-mt-7 pl-0 pt-0 ml-0" hideUnderline />
         <div className="flex items-center gap-3 -mt-6 sm:mt-0">
-          <button onClick={() => navigate("/admin/financeiro?tab=faturas")} className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm border border-zinc-700">
-             <Receipt size={16} />
-             Faturas
-          </button>
+          {user?.role === 'admin' && (
+            <button onClick={handleOpenCheckoutList} className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
+               <CheckCircle2 size={16} />
+               Checkout Faturas
+            </button>
+          )}
           <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
              <Receipt size={16} />
              Registrar Despesa

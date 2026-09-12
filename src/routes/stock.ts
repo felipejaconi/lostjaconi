@@ -64,7 +64,7 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
            valor_iva: req.body.credito_iva || 0,
            valor_total: totalDaFatura,
            valor_pendente: totalDaFatura,
-           status_pagamento: 'pendente',
+           status_pagamento: req.user.role === 'admin' ? 'pendente' : 'em_conferencia',
            data_emissao: data,
            data_vencimento: data_vencimento || null,
            created_by: req.user.id
@@ -78,7 +78,7 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
                tipo: 'compra',
                valor_total: totalDaFatura,
                valor_pendente: totalDaFatura,
-               status_pagamento: 'pendente',
+               status_pagamento: req.user.role === 'admin' ? 'pendente' : 'em_conferencia',
                data_emissao: data,
                data_vencimento: data_vencimento || null,
                created_by: req.user.id
