@@ -298,20 +298,29 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
   app.put("/api/admin/faturas/:id/checkout", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin") return res.sendStatus(403);
     const faturaId = req.params.id;
-    const { numero_fatura, data_emissao, fornecedor_id, valor_liquido, valor_iva, valor_total, itens } = req.body;
+    const { numero_fatura, data_emissao, data_vencimento, data_entrada, fornecedor_id, valor_liquido, valor_iva, valor_total, itens } = req.body;
     
     try {
       // 1. Update the Fatura header
-      const { error: headerError } = await supabase.from("faturas").update({
+      const updatePayload: any = {
          numero_fatura,
          data_emissao,
+         data_vencimento,
          fornecedor_id,
          valor_liquido,
          valor_iva,
          valor_total,
          valor_pendente: valor_total,
          status_pagamento: "pendente"
-      }).eq("id", faturaId);
+      };
+      
+      // If the database supports created_at (data_entrada), we could update it, but let's stick to emissao and vencimento.
+      // Actually, if data_entrada is provided, maybe they mean 'created_at'.
+      if (data_entrada) {
+         updatePayload.created_at = data_entrada;
+      }
+      
+      const { error: headerError } = await supabase.from("faturas").update(updatePayload).eq("id", faturaId);
       
       if (headerError) throw headerError;
       
