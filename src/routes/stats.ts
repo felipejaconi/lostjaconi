@@ -15,95 +15,74 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
     }
 
     try {
-      const { data: vendas } = await supabase
-        .from("pedidos")
-        .select("total")
-        .in("status", ["pronto", "entregue", "concluido"]);
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0,0,0,0);
+      const startOfMonthIso = startOfMonth.toISOString();
 
-      const totalVendas = (vendas || []).reduce(
-        (acc, v) => acc + (v.total || 0),
-        0,
-      );
+      const [
+        { data: vendas },
+        { count: pedidosPendentes },
+        { count: totalProdutos },
+        { count: totalLojas },
+        { data: faturasC },
+        { data: prods },
+        { data: monthOrders }
+      ] = await Promise.all([
+        supabase.from("pedidos").select("total").in("status", ["pronto", "entregue", "concluido"]),
+        supabase.from("pedidos").select("*", { count: "exact", head: true }).in("status", ["pendente", "processando"]),
+        supabase.from("produtos").select("*", { count: "exact", head: true }),
+        supabase.from("users").select("*", { count: "exact", head: true }).eq("role", "loja"),
+        supabase.from("faturas").select("tipo, valor_total, valor_pendente, data_emissao"),
+        supabase.from("produtos").select("stock_armazem, preco_custo"),
+        supabase.from("pedidos").select("id, total, created_at").in("status", ["pronto", "entregue", "concluido"]).gte("created_at", startOfMonthIso)
+      ]);
 
-      const { count: pedidosPendentes } = await supabase
-        .from("pedidos")
-        .select("*", { count: "exact", head: true })
-        .in("status", ["pendente", "processando"]);
-
-      const { count: totalProdutos } = await supabase
-        .from("produtos")
-        .select("*", { count: "exact", head: true });
-
-      const { count: totalLojas } = await supabase
-        .from("users")
-        .select("*", { count: "exact", head: true })
-        .eq("role", "loja");
+      const totalVendas = (vendas || []).reduce((acc, v) => acc + (v.total || 0), 0);
 
       // ERP STATS
       let comprasMes = 0;
       let despesasMes = 0;
       let dividaFornecedores = 0;
       
-      const startOfMonth = new Date();
-      startOfMonth.setDate(1);
-      startOfMonth.setHours(0,0,0,0);
-      const startOfMonthIso = startOfMonth.toISOString();
-      
-      try {
-        const { data: faturasC } = await supabase.from("faturas").select("tipo, valor_total, valor_pendente, data_emissao");
-        (faturasC || []).forEach(f => {
-           dividaFornecedores += Number(f.valor_pendente || 0);
-           const isThisMonth = new Date(f.data_emissao) > startOfMonth;
-           if (isThisMonth) {
-              if (f.tipo === 'compra') comprasMes += Number(f.valor_total || 0);
-              if (f.tipo === 'despesa') despesasMes += Number(f.valor_total || 0);
-           }
-        });
-      } catch (e) {}
+      (faturasC || []).forEach(f => {
+         dividaFornecedores += Number(f.valor_pendente || 0);
+         const isThisMonth = new Date(f.data_emissao) > startOfMonth;
+         if (isThisMonth) {
+            if (f.tipo === 'compra') comprasMes += Number(f.valor_total || 0);
+            if (f.tipo === 'despesa') despesasMes += Number(f.valor_total || 0);
+         }
+      });
 
       let capitalStock = 0;
       let totalStockQty = 0;
-      try {
-         const { data: prods } = await supabase.from("produtos").select("stock_armazem, preco_custo");
-         (prods || []).forEach((p: any) => {
-            const qtd = Number(p.stock_armazem || 0);
-            const custo = Number(p.preco_custo || 0);
-            capitalStock += (qtd * custo);
-            totalStockQty += qtd;
-         });
-      } catch (e) {}
+      (prods || []).forEach((p: any) => {
+         const qtd = Number(p.stock_armazem || 0);
+         const custo = Number(p.preco_custo || 0);
+         capitalStock += (qtd * custo);
+         totalStockQty += qtd;
+      });
 
       let cmv = 0;
-      let totalVendasLiquidas = 0; // Se os pedidos tiverem IVA incluído, este será o valor real usado para lucro. No momento pedido.total já entra como sales.
-
+      let totalVendasLiquidas = 0;
       let vendasMes = 0;
-      try {
-         // Calcular CMV baseado nos items de pedidos do mês atual
-         const { data: monthOrders } = await supabase.from("pedidos")
-            .select("id, total, created_at")
-            .in("status", ["pronto", "entregue", "concluido"])
-            .gte("created_at", startOfMonthIso);
+      
+      if (monthOrders && monthOrders.length > 0) {
+         monthOrders.forEach(v => { vendasMes += Number(v.total || 0); });
+         const monthOrderIds = monthOrders.map(o => o.id);
          
-         if (monthOrders && monthOrders.length > 0) {
-            monthOrders.forEach(v => {
-               vendasMes += Number(v.total || 0);
-            });
+         const { data: orderItems } = await supabase.from("pedido_itens")
+            .select("pedido_id, quantidade, produto:produtos(preco_custo, fator_conversao_venda)")
+            .in("pedido_id", monthOrderIds);
             
-            const monthOrderIds = monthOrders.map(o => o.id);
-            // Fetch order items in chunks to avoid URL too long or use multiple queries if necessary, but we'll fetch them normally first
-            const { data: orderItems } = await supabase.from("pedido_itens")
-               .select("pedido_id, quantidade, produto:produtos(preco_custo, fator_conversao_venda)")
-               .in("pedido_id", monthOrderIds);
-               
-            (orderItems || []).forEach((item: any) => {
-               const qtyVenda = Number(item.quantidade || 0);
-               const fator = Number(item.produto?.fator_conversao_venda || 1);
-               const qtyBase = qtyVenda * fator;
-               const custoBase = Number(item.produto?.preco_custo || 0);
-               cmv += (qtyBase * custoBase);
-            });
-         }
-      } catch (e) {}
+         (orderItems || []).forEach((item: any) => {
+            const qtyVenda = Number(item.quantidade || 0);
+            const fator = Number(item.produto?.fator_conversao_venda || 1);
+            const qtyBase = qtyVenda * fator;
+            const custoBase = Number(item.produto?.preco_custo || 0);
+            cmv += (qtyBase * custoBase);
+         });
+      }
 
       const result = {
         totalVendas,
@@ -146,18 +125,17 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
     if (cached) return res.json(cached);
     
     try {
-      // Pending Orders Count
-      const { count: pendingOrdersCount } = await supabase
-        .from("pedidos")
-        .select("*", { count: "exact", head: true })
-        .in("status", ["pendente", "processando"]);
-
-      // Recent 8 Orders
-      const { data: recentOrders } = await supabase
-        .from("pedidos")
-        .select("*, user:users(name)")
-        .order("created_at", { ascending: false })
-        .limit(8);
+      const [
+        { count: pendingOrdersCount },
+        { data: recentOrders },
+        { data: prods },
+        { count: totalFornecedores }
+      ] = await Promise.all([
+        supabase.from("pedidos").select("*", { count: "exact", head: true }).in("status", ["pendente", "processando"]),
+        supabase.from("pedidos").select("*, user:users(name)").order("created_at", { ascending: false }).limit(8),
+        supabase.from("produtos").select("id, nome, stock_armazem, preco, preco_custo, categorias(nome)"),
+        supabase.from("fornecedores").select("*", { count: "exact", head: true })
+      ]);
 
       const mappedRecentOrders = (recentOrders || []).map((p: any) => ({
         ...p,
@@ -167,11 +145,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       // Produtos Alertas
       let produtosAlertas: any[] = [];
       const isAdmin = req.user.role === "admin";
-      
-      const { data: prods } = await supabase
-        .from("produtos")
-        .select("id, nome, stock_armazem, preco, preco_custo, categorias(nome)");
-        
+              
       if (prods) {
          const alertas = prods.filter(p => {
             const stock = Number(p.stock_armazem || 0);
@@ -185,10 +159,6 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
          }).sort((a,b) => Number(a.stock_armazem || 0) - Number(b.stock_armazem || 0)).slice(0, 8);
          produtosAlertas = alertas.map(a => ({...a, categorias: a.categorias}));
       }
-
-      const { count: totalFornecedores } = await supabase
-        .from("fornecedores")
-        .select("*", { count: "exact", head: true });
 
       const result = {
          pendingOrdersCount: pendingOrdersCount || 0,
@@ -446,16 +416,19 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
     if (cached) return res.json(cached);
     
     try {
-      // 1. Top Loja Consumo (Current Month)
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
       
-      const { data: pedidos } = await supabase
-        .from('pedidos')
-        .select('total, user_id, user:users(name)')
-        .gte('created_at', startOfMonth.toISOString())
-        .in('status', ['pronto', 'entregue', 'concluido']);
+      const [
+        { data: pedidos },
+        { data: pedidosProd },
+        { data: faturas }
+      ] = await Promise.all([
+        supabase.from('pedidos').select('total, user_id, user:users(name)').gte('created_at', startOfMonth.toISOString()).in('status', ['pronto', 'entregue', 'concluido']),
+        supabase.from('pedidos').select('pedido_itens(quantidade, produto:produtos(nome))').gte('created_at', startOfMonth.toISOString()).in('status', ['pronto', 'entregue', 'concluido']),
+        supabase.from('faturas').select('valor_total, fornecedor:fornecedores(nome)').eq('tipo', 'compra').gte('data_emissao', startOfMonth.toISOString().split('T')[0])
+      ]);
         
       const storeTotals: Record<string, {name: string, total: number}> = {};
       (pedidos || []).forEach(p => {
@@ -469,11 +442,6 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const topLojas = Object.values(storeTotals).sort((a,b) => b.total - a.total).slice(0, 12);
 
       // 2. Top Produtos Vendidos (Current Month)
-      const { data: pedidosProd } = await supabase
-        .from('pedidos')
-        .select('pedido_itens(quantidade, produto:produtos(nome))')
-        .gte('created_at', startOfMonth.toISOString())
-        .in('status', ['pronto', 'entregue', 'concluido']);
         
       const productTotals: Record<string, {name: string, quantity: number}> = {};
       (pedidosProd || []).forEach(p => {
@@ -490,11 +458,6 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const topProdutos = Object.values(productTotals).sort((a,b) => b.quantity - a.quantity).slice(0, 12);
 
       // 3. Melhores Fornecedores (Current Month)
-      const { data: faturas } = await supabase
-         .from('faturas')
-         .select('valor_total, fornecedor:fornecedores(nome)')
-         .eq('tipo', 'compra')
-         .gte('created_at', startOfMonth.toISOString());
          
       const supplierTotals: Record<string, {name: string, total: number}> = {};
       (faturas || []).forEach(f => {

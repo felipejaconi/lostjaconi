@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, Suspense } from "react";
 import { ErrorBoundary } from "../components/ErrorBoundary";
-const StoreHome = React.lazy(() => import("./store/StoreHome"));
-const StoreOrder = React.lazy(() => import("./store/StoreOrder"));
-const StoreHistory = React.lazy(() => import("./store/StoreHistory"));
-const StoreNotifications = React.lazy(() => import("./store/StoreNotifications"));
-const StoreManagement = React.lazy(() => import("./store/StoreManagement"));
+import StoreHome from "./store/StoreHome";
+import StoreOrder from "./store/StoreOrder";
+import StoreHistory from "./store/StoreHistory";
+import StoreNotifications from "./store/StoreNotifications";
+import StoreManagement from "./store/StoreManagement";
 import {
   Routes,
   Route,

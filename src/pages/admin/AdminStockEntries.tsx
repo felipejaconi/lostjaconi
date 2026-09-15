@@ -79,7 +79,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
   const loadPendingFaturas = async () => {
      try {
         const { data } = await api.get("/admin/faturas");
-        setPendingFaturas((data || []).filter((f: any) => f.status_pagamento === 'em_conferencia'));
+        setPendingFaturas(((data as any[]) || []).filter((f: any) => f.status_pagamento === 'em_conferencia'));
      } catch (e) {
         console.error("Erro ao carregar faturas pendentes", e);
      }
@@ -412,7 +412,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
          </div>
       </Modal>
 
-      <Modal isOpen={isCheckoutModalOpen} onClose={() => { setIsCheckoutModalOpen(false); setSelectedCheckoutFatura(null); setIsCheckoutListModalOpen(true); }} title={`Check Fatura: ${selectedCheckoutFatura?.numero_fatura || ""}`} maxWidth="4xl">
+      <Modal isOpen={isCheckoutModalOpen} onClose={() => { setIsCheckoutModalOpen(false); setSelectedCheckoutFatura(null); setIsCheckoutListModalOpen(true); }} title={`Check Fatura: ${selectedCheckoutFatura?.numero_fatura || ""}`} maxWidth="3xl">
          <div className="pt-4 space-y-6 max-h-[80vh] overflow-y-auto no-scrollbar">
             
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-zinc-900/30 p-4 rounded-xl border border-zinc-800">

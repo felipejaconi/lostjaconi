@@ -46,9 +46,12 @@ export function StoreDRE({ storeId, month, year, totalVendas, totalCompras }: St
     api.get(`/loja/dre?store_id=${storeId}&month=${month + 1}&year=${year}`)
       .then(res => {
          setValues(res.data || {});
+         setLoading(false);
       })
-      .catch(console.error)
-      .finally(() => setLoading(false));
+      .catch(e => {
+         console.error(e);
+         setLoading(false);
+      });
   }, [storeId, month, year]);
 
   const handleSave = async () => {

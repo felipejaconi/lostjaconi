@@ -143,7 +143,7 @@ export default function AdminStoreSales() {
                 </TableRow>
               ) : (
                 consumoData.map(loja => {
-                  const consumo = Number(loja.mensal || 0);
+                  const consumo = Number(loja.mensal_sem_iva || 0);
                   const despesas = Number(loja.despesasMensal || 0);
                   const venda = vendas[loja.id] || 0;
                   const custoTotal = consumo + despesas;
@@ -212,7 +212,7 @@ export default function AdminStoreSales() {
                     Total
                   </TableCell>
                   <TableCell className="font-bold text-orange-400">
-                    €{formatCurrency(consumoData.reduce((acc, l) => acc + Number(l.mensal || 0), 0))}
+                    €{formatCurrency(consumoData.reduce((acc, l) => acc + Number(l.mensal_sem_iva || 0), 0))}
                   </TableCell>
                   <TableCell className="font-bold text-red-400">
                     €{formatCurrency(consumoData.reduce((acc, l) => acc + Number(l.despesasMensal || 0), 0))}
@@ -222,7 +222,7 @@ export default function AdminStoreSales() {
                   </TableCell>
                   <TableCell>
                     {(() => {
-                      const tConsumo = consumoData.reduce((acc, l) => acc + Number(l.mensal || 0), 0);
+                      const tConsumo = consumoData.reduce((acc, l) => acc + Number(l.mensal_sem_iva || 0), 0);
                       const tDespesas = consumoData.reduce((acc, l) => acc + Number(l.despesasMensal || 0), 0);
                       const tVendas = consumoData.reduce((acc, l) => acc + (vendas[l.id] || 0), 0);
                       const tCusto = tConsumo + tDespesas;
@@ -238,7 +238,7 @@ export default function AdminStoreSales() {
                   </TableCell>
                   <TableCell>
                     {(() => {
-                      const tConsumo = consumoData.reduce((acc, l) => acc + Number(l.mensal || 0), 0);
+                      const tConsumo = consumoData.reduce((acc, l) => acc + Number(l.mensal_sem_iva || 0), 0);
                       const tDespesas = consumoData.reduce((acc, l) => acc + Number(l.despesasMensal || 0), 0);
                       const tVendas = consumoData.reduce((acc, l) => acc + (vendas[l.id] || 0), 0);
                       const tCusto = tConsumo + tDespesas;

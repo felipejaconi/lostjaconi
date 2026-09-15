@@ -1,24 +1,24 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense } from "react";
 import { ErrorBoundary } from "../components/ErrorBoundary";
-const AdminReportsComponent = React.lazy(() => import("./admin/AdminReports"));
-const AdminHomeComponent = React.lazy(() => import("./admin/AdminHome"));
-const AdminOrders = React.lazy(() => import("./admin/AdminOrders"));
-const AdminWarehousePicking = React.lazy(() => import("./admin/AdminWarehousePicking"));
-const AdminProducts = React.lazy(() => import("./admin/AdminProducts"));
-const AdminWarehouseMap = React.lazy(() => import("./admin/AdminWarehouseMap"));
-const AdminStores = React.lazy(() => import("./admin/AdminStores"));
-const AdminGiro = React.lazy(() => import("./admin/AdminGiro"));
-const AdminUsers = React.lazy(() => import("./admin/AdminUsers"));
-const AdminStoreSales = React.lazy(() => import("./admin/AdminStoreSales"));
-const AdminFechos = React.lazy(() => import("./admin/AdminFechos"));
-const AdminAnalytics = React.lazy(() => import("./admin/AdminAnalytics"));
-const AdminNotifications = React.lazy(() => import("./admin/AdminNotifications"));
-const AdminStockEntries = React.lazy(() => import("./admin/AdminStockEntries")); // Faturas de Mercadoria (Armazém)
-const AdminSuppliers = React.lazy(() => import("./admin/AdminSuppliers")); // Fornecedores
-const AdminFinancial = React.lazy(() => import("./admin/AdminFinancial")); // Financeiro / Despesas
-const AdminProductsPricing = React.lazy(() => import("./admin/AdminProductsPricing")); // Precos e Margens
-const AdminWarehouseConfig = React.lazy(() => import("./admin/AdminWarehouseConfig")); // Add Config Armazem
-const AdminGlobalStock = React.lazy(() => import("./admin/AdminGlobalStock")); // Estoque Global
+import AdminReportsComponent from "./admin/AdminReports";
+import AdminHomeComponent from "./admin/AdminHome";
+import AdminOrders from "./admin/AdminOrders";
+import AdminWarehousePicking from "./admin/AdminWarehousePicking";
+import AdminProducts from "./admin/AdminProducts";
+import AdminWarehouseMap from "./admin/AdminWarehouseMap";
+import AdminStores from "./admin/AdminStores";
+import AdminGiro from "./admin/AdminGiro";
+import AdminUsers from "./admin/AdminUsers";
+import AdminStoreSales from "./admin/AdminStoreSales";
+import AdminFechos from "./admin/AdminFechos";
+import AdminAnalytics from "./admin/AdminAnalytics";
+import AdminNotifications from "./admin/AdminNotifications";
+import AdminStockEntries from "./admin/AdminStockEntries"; // Faturas de Mercadoria (Armazém)
+import AdminSuppliers from "./admin/AdminSuppliers"; // Fornecedores
+import AdminFinancial from "./admin/AdminFinancial"; // Financeiro / Despesas
+import AdminProductsPricing from "./admin/AdminProductsPricing"; // Precos e Margens
+import AdminWarehouseConfig from "./admin/AdminWarehouseConfig"; // Add Config Armazem
+import AdminGlobalStock from "./admin/AdminGlobalStock"; // Estoque Global
 
 import {
   Routes,

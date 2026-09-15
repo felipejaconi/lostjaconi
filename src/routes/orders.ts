@@ -220,6 +220,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
               diario: 0,
               semanal: 0,
               mensal: 0,
+              mensal_sem_iva: 0,
               despesasMensal: 0,
               mesAnterior: 0,
               totalHistorico: 0,
@@ -252,6 +253,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
               diario: 0,
               semanal: 0,
               mensal: 0,
+              mensal_sem_iva: 0,
               despesasMensal: 0,
               mesAnterior: 0,
               totalHistorico: 0,
@@ -259,12 +261,15 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
             };
           }
 
+          const totalSemIva = Number(order.total);
+          
           if (orderDate >= startOfDay) consumption[storeId].diario += total;
           if (orderDate >= startOfWeek) consumption[storeId].semanal += total;
           
           // Use specific month for mensal if queried, otherwise current month
           if (orderDate >= startOfMonth && orderDate < endOfMonth) {
               consumption[storeId].mensal += total;
+              consumption[storeId].mensal_sem_iva += totalSemIva;
               consumption[storeId].numPedidos += 1;
           }
           
