@@ -73,20 +73,23 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
   });
 
   app.get("/api/pedidos", authenticateToken, async (req: any, res: any) => {
-      const cacheKey = `pedidos_${req.user.role}_${req.user.id}`; // Ignored query params for cache
-      const cached = cache.get(cacheKey);
-      if (cached) return res.json(cached);
+    const cacheKey = `pedidos_${req.user.role}_${req.user.id}_${req.query.limit || 'all'}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json(cached);
 
     try {
-      let query = supabase.from("pedidos").select("*, user:users(name), pedido_itens(*, produto:produtos(*, categoria:categorias(nome)))").order("created_at", { ascending: false }).limit(300);
+      let query = supabase.from("pedidos").select("*, user:users(name), pedido_itens(*, produto:produtos(*, categoria:categorias(nome)))").order("created_at", { ascending: false });
       if (req.user.role === "loja") {
          query = query.eq("user_id", req.user.id);
+      }
+      if (req.query.limit) {
+         query = query.limit(Number(req.query.limit));
       }
       const { data, error } = await query;
       if (error) throw error;
       
       const mapped = data.map((d: any) => ({...d, loja_nome: d.user?.name}));
-      cache.set(cacheKey, mapped);
+      cache.set(cacheKey, mapped, 30);
       res.json(mapped);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -106,9 +109,6 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
   app.put("/api/pedidos/:id/status", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
       const updateData: any = { status: req.body.status };
-      if (['pronto', 'entregue', 'concluido'].includes(req.body.status)) {
-          updateData.created_at = new Date().toISOString();
-      }
       const { data, error } = await supabase.from("pedidos").update(updateData).eq("id", req.params.id).select().single();
       if (error) throw error;
       res.json(data);

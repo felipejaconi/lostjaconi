@@ -40,16 +40,23 @@ const formatCurrency = (val: number | string) => {
   return parts.join(".");
 };
 
+// In-memory client cache for months across navigations for instant loading
+const consumoMemoryCache = new Map<string, any[]>();
+
 export default function AdminAnalytics() {
   const navigate = useNavigate();
-  const [data, setData] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
 
   const [selectedDate, setSelectedDate] = useState(() => {
     const d = new Date();
     d.setDate(1);
     return d;
   });
+
+  const cacheKey = `${selectedDate.getFullYear()}-${selectedDate.getMonth()}`;
+  const cachedInitial = consumoMemoryCache.get(cacheKey);
+
+  const [data, setData] = useState<any[]>(() => cachedInitial || []);
+  const [loading, setLoading] = useState(() => !cachedInitial);
 
   const changeMonth = (offset: number) => {
     setSelectedDate(prev => {
@@ -65,15 +72,24 @@ export default function AdminAnalytics() {
   ];
   const displayMonth = `${monthNames[selectedDate.getMonth()]} ${selectedDate.getFullYear()}`;
 
-
-
   const fetchAnalytics = () => {
     const month = selectedDate.getMonth();
     const year = selectedDate.getFullYear();
+    const key = `${year}-${month}`;
+
+    if (consumoMemoryCache.has(key)) {
+      setData(consumoMemoryCache.get(key)!);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     api
       .get(`/admin/analytics/consumo?month=${month}&year=${year}`)
       .then((res) => {
-        setData(res.data);
+        const result: any[] = Array.isArray(res.data) ? res.data : [];
+        consumoMemoryCache.set(key, result);
+        setData(result);
         setLoading(false);
       })
       .catch((err) => {
@@ -90,6 +106,7 @@ export default function AdminAnalytics() {
         "postgres_changes",
         { event: "*", schema: "public", table: "pedidos" },
         () => {
+          consumoMemoryCache.clear();
           fetchAnalytics();
         },
       )

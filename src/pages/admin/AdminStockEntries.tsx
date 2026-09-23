@@ -42,7 +42,6 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
   const [selectedCheckoutFatura, setSelectedCheckoutFatura] = useState<any>(null);
     const [checkoutFormData, setCheckoutFormData] = useState({ 
     numero_fatura: "", 
-    data_entrada: "",
     data_emissao: "", 
     data_vencimento: "",
     fornecedor_id: "", 
@@ -385,7 +384,6 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                                  setSelectedCheckoutFatura(f);
                                  setCheckoutFormData({
                                     numero_fatura: f.numero_fatura || '',
-                                    data_entrada: f.created_at ? f.created_at.split('T')[0] : '',
                                     data_emissao: f.data_emissao ? f.data_emissao.split('T')[0] : '',
                                     data_vencimento: f.data_vencimento ? f.data_vencimento.split('T')[0] : '',
                                     fornecedor_id: f.fornecedor_id ? String(f.fornecedor_id) : '',
@@ -419,22 +417,13 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
       <Modal isOpen={isCheckoutModalOpen} onClose={() => { setIsCheckoutModalOpen(false); setSelectedCheckoutFatura(null); setIsCheckoutListModalOpen(true); }} title={`Check Fatura: ${selectedCheckoutFatura?.numero_fatura || ""}`} maxWidth="3xl">
          <div className="pt-4 space-y-6 max-h-[80vh] overflow-y-auto no-scrollbar">
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 bg-zinc-900/30 p-4 rounded-xl border border-zinc-800">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 bg-zinc-900/30 p-4 rounded-xl border border-zinc-800">
                <div>
                   <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Nº Fatura</label>
                   <input
                      type="text"
                      value={checkoutFormData.numero_fatura}
                      onChange={e => setCheckoutFormData({...checkoutFormData, numero_fatura: e.target.value})}
-                     className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500/50"
-                  />
-               </div>
-               <div>
-                  <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Data de Entrada</label>
-                  <input
-                     type="date"
-                     value={checkoutFormData.data_entrada}
-                     onChange={e => setCheckoutFormData({...checkoutFormData, data_entrada: e.target.value})}
                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500/50"
                   />
                </div>
@@ -561,7 +550,6 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                      try {
                         const payload = {
                            numero_fatura: checkoutFormData.numero_fatura,
-                           data_entrada: checkoutFormData.data_entrada ? new Date(checkoutFormData.data_entrada).toISOString() : undefined,
                            data_emissao: checkoutFormData.data_emissao || null,
                            data_vencimento: checkoutFormData.data_vencimento || null,
                            fornecedor_id: checkoutFormData.fornecedor_id,
@@ -673,7 +661,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
               </div>
 
               <div className="space-y-2">
-                <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">Data de Entrada</label>
+                <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">Data de Emissão</label>
                 <input 
                   type="date" 
                   value={dataFatura}

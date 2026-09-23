@@ -49,7 +49,7 @@ export default function AdminOrders() {
   const [activeTareDropdown, setActiveTareDropdown] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<"diario" | "semanal" | "todos">("diario");
-  const [displayCount, setDisplayCount] = useState<number>(20);
+  const [displayCount, setDisplayCount] = useState<number>(50);
   const [scaleStatus, setScaleStatus] = useState<ScaleStatus>('disconnected');
 
   // When expanding an order that is in "processando", initialize conferidos
@@ -395,47 +395,23 @@ export default function AdminOrders() {
     });
   };
 
+  useEffect(() => {
+    setDisplayCount(50);
+  }, [viewMode, statusFilter, selectedStoreFilter, searchTerm]);
+
   const viewModeRef = useRef(viewMode);
   const statusFilterRef = useRef(statusFilter);
 
   useEffect(() => {
     viewModeRef.current = viewMode;
     statusFilterRef.current = statusFilter;
-    fetchOrders(); // re-fetch when viewMode or statusFilter changes
+    fetchOrders();
   }, [viewMode, statusFilter]);
 
   const fetchOrders = async () => {
     try {
-      const mode = viewModeRef.current;
-      const status = statusFilterRef.current;
-      let url = '/pedidos';
-      
-      let queryParams = [];
-
-      if (status !== 'todos') {
-         queryParams.push(`status=${status}`);
-      }
-      
-      if (mode === 'diario') {
-         const date = new Date();
-         date.setDate(date.getDate() - 1); // Yesterday
-         date.setHours(0,0,0,0);
-         queryParams.push(`startDate=${date.toISOString()}`);
-      } else if (mode === 'semanal') {
-         const date = new Date();
-         date.setDate(1); // Start of month
-         date.setHours(0,0,0,0);
-         queryParams.push(`startDate=${date.toISOString()}`);
-      } else {
-         queryParams.push(`all=true`);
-      }
-      
-      if (queryParams.length > 0) {
-         url += `?${queryParams.join('&')}`;
-      }
-      
-      const res = await api.get(url);
-      setOrders(res.data);
+      const res = await api.get('/pedidos?all=true');
+      setOrders(Array.isArray(res.data) ? res.data : []);
     } catch (error) {
       console.error("Erro ao buscar pedidos:", error);
     }
@@ -762,15 +738,16 @@ export default function AdminOrders() {
     
     const orderDate = new Date(dateString);
     const agora = new Date();
-    agora.setHours(0,0,0,0);
+    agora.setHours(0, 0, 0, 0);
     
     if (viewMode === 'diario') {
       const yesterday = new Date(agora);
       yesterday.setDate(yesterday.getDate() - 1);
       return orderDate >= yesterday;
     } else if (viewMode === 'semanal') {
-      const startOfMonth = new Date(agora.getFullYear(), agora.getMonth(), 1);
-      return orderDate >= startOfMonth;
+      const sevenDaysAgo = new Date(agora);
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      return orderDate >= sevenDaysAgo;
     }
     return true;
   };
@@ -789,13 +766,20 @@ export default function AdminOrders() {
     return matchesStatus && matchesSearch && matchesStore && matchesDate;
   });
 
-  const uniqueStores = (Array.from(new Map(orders.map((o: any) => [o.user_id, o])).values()) as any[])
-    .filter((o: any) => o.user_id)
-    .map((o: any) => ({
-      id: o.user_id,
-      name: o.loja_nome || o.user?.name || "Loja"
-    }))
-    .sort((a,b) => a.name.localeCompare(b.name));
+  const uniqueStores = React.useMemo(() => {
+    const storeMap = new Map<string, string>();
+    stores.forEach((s: any) => {
+      if (s.id) storeMap.set(String(s.id), s.name);
+    });
+    orders.forEach((o: any) => {
+      if (o.user_id && !storeMap.has(String(o.user_id))) {
+        storeMap.set(String(o.user_id), o.loja_nome || o.user?.name || "Loja");
+      }
+    });
+    return Array.from(storeMap.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [stores, orders]);
 
   const renderScaleStatus = () => {
       switch (scaleStatus) {
@@ -1380,10 +1364,21 @@ export default function AdminOrders() {
          })}
          
          {filteredOrders.length > displayCount && (
-            <div ref={loadMoreRef} className="w-full flex justify-center py-6">
-              <span className="px-6 py-3 text-zinc-500 font-medium tracking-tight text-sm">
-                Carregando mais itens...
-              </span>
+            <div ref={loadMoreRef} className="w-full flex flex-col sm:flex-row items-center justify-center gap-3 py-6">
+              <button
+                type="button"
+                onClick={() => setDisplayCount(c => c + 50)}
+                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-bold rounded-lg border border-white/10 transition-colors cursor-pointer"
+              >
+                Carregar mais 50 pedidos (a mostrar {displayCount} de {filteredOrders.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setDisplayCount(filteredOrders.length)}
+                className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold rounded-lg border border-emerald-500/20 transition-colors cursor-pointer"
+              >
+                Mostrar todos ({filteredOrders.length})
+              </button>
             </div>
          )}
          </>

@@ -204,6 +204,58 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     }
   });
 
+  const clearFinanceCache = () => {
+    cache.del("admin_faturas");
+    cache.del("admin_financial_pedidos");
+    cache.del("admin_stats");
+  };
+
+  app.get("/api/admin/financial/pedidos", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const cached = cache.get("admin_financial_pedidos");
+      if (cached) return res.json(cached);
+
+      const { data, error } = await supabase
+        .from("pedidos")
+        .select("id, user_id, total, status, created_at, user:users(name), pedido_itens(quantidade, preco_unitario, produto:produtos(iva))")
+        .in("status", ["pronto", "entregue", "concluido"])
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      const mapped = (data || []).map((p: any) => {
+        let sumSubtotal = 0;
+        let sumIva = 0;
+        (p.pedido_itens || []).forEach((item: any) => {
+          const qty = Number(item.quantidade) || 0;
+          const preco = Number(item.preco_unitario) || 0;
+          const liq = qty * preco;
+          const ivaPerc = Number(item.produto?.iva) || 0;
+          sumSubtotal += liq;
+          sumIva += liq * (ivaPerc / 100);
+        });
+        const totalComIva = sumSubtotal + sumIva;
+        return {
+          id: p.id,
+          user_id: p.user_id,
+          loja_nome: p.user?.name || "Loja Desconhecida",
+          created_at: p.created_at,
+          status: p.status,
+          total_subtotal: sumSubtotal,
+          total_iva: sumIva,
+          total_com_iva: totalComIva,
+          pedido_itens: p.pedido_itens
+        };
+      });
+
+      cache.set("admin_financial_pedidos", mapped, 60);
+      res.json(mapped);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/admin/faturas", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     try {
@@ -211,13 +263,13 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       if (cached) return res.json(cached);
       const { data, error } = await supabase
         .from("faturas")
-        .select("*, fornecedor:fornecedores(nome, iban), fatura_itens(*, produto:produtos(nome, unidade_base, iva)), movimentos_financeiros(*)")
+        .select("*, fornecedor:fornecedores(id, nome, iban, nif, tipo), fatura_itens(id, fatura_id, quantidade, preco_custo, preco_unitario, iva, valor_liquido, valor_iva, valor_total, produto:produtos(nome, unidade_base, iva)), movimentos_financeiros(*)")
         .order("data_emissao", { ascending: false });
       if (error) {
          if (error.code === '42P01') return res.json([]);
          throw error;
       }
-      cache.set("admin_faturas", data);
+      cache.set("admin_faturas", data, 60);
       res.json(data);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -273,6 +325,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       const { data, error } = await supabase.from("faturas").insert(dataToInsert).select();
       
       if (error) throw error;
+      clearFinanceCache();
       res.json(isArray ? data : data[0]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -289,6 +342,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
         
       const { data, error } = await supabase.from("faturas").insert(dataToInsert).select();
       if (error) throw error;
+      clearFinanceCache();
       res.json(isArray ? data : data[0]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -298,7 +352,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
   app.put("/api/admin/faturas/:id/checkout", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin") return res.sendStatus(403);
     const faturaId = req.params.id;
-    const { numero_fatura, data_emissao, data_vencimento, data_entrada, fornecedor_id, valor_liquido, valor_iva, valor_total, itens } = req.body;
+    const { numero_fatura, data_emissao, data_vencimento, fornecedor_id, valor_liquido, valor_iva, valor_total, itens } = req.body;
     
     try {
       // 1. Update the Fatura header
@@ -313,12 +367,6 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
          valor_pendente: valor_total,
          status_pagamento: "pendente"
       };
-      
-      // If the database supports created_at (data_entrada), we could update it, but let's stick to emissao and vencimento.
-      // Actually, if data_entrada is provided, maybe they mean 'created_at'.
-      if (data_entrada) {
-         updatePayload.created_at = data_entrada;
-      }
       
       const { error: headerError } = await supabase.from("faturas").update(updatePayload).eq("id", faturaId);
       
@@ -351,6 +399,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
          }
       }
       
+      clearFinanceCache();
       res.json({ success: true });
     } catch (error: any) {
       console.error("Erro no checkout fatura:", error);
@@ -371,6 +420,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
          status_pagamento
       }).eq("id", faturaId).select();
       if (error) throw error;
+      clearFinanceCache();
       res.json(data);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -398,6 +448,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
 
       await supabase.from("faturas").update({ valor_pendente: Math.max(0, newPendente), status_pagamento: status }).eq("id", faturaId);
 
+      clearFinanceCache();
       res.json({ message: "Pagamento registado com sucesso" });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

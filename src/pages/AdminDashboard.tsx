@@ -1,24 +1,25 @@
-import React, { useState, useEffect, useMemo, useRef, Suspense } from "react";
+import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from "react";
 import { ErrorBoundary } from "../components/ErrorBoundary";
-import AdminReportsComponent from "./admin/AdminReports";
-import AdminHomeComponent from "./admin/AdminHome";
-import AdminOrders from "./admin/AdminOrders";
-import AdminWarehousePicking from "./admin/AdminWarehousePicking";
-import AdminProducts from "./admin/AdminProducts";
-import AdminWarehouseMap from "./admin/AdminWarehouseMap";
-import AdminStores from "./admin/AdminStores";
-import AdminGiro from "./admin/AdminGiro";
-import AdminUsers from "./admin/AdminUsers";
-import AdminStoreSales from "./admin/AdminStoreSales";
-import AdminFechos from "./admin/AdminFechos";
-import AdminAnalytics from "./admin/AdminAnalytics";
-import AdminNotifications from "./admin/AdminNotifications";
-import AdminStockEntries from "./admin/AdminStockEntries"; // Faturas de Mercadoria (Armazém)
-import AdminSuppliers from "./admin/AdminSuppliers"; // Fornecedores
-import AdminFinancial from "./admin/AdminFinancial"; // Financeiro / Despesas
-import AdminProductsPricing from "./admin/AdminProductsPricing"; // Precos e Margens
-import AdminWarehouseConfig from "./admin/AdminWarehouseConfig"; // Add Config Armazem
-import AdminGlobalStock from "./admin/AdminGlobalStock"; // Estoque Global
+
+const AdminReportsComponent = lazy(() => import("./admin/AdminReports"));
+const AdminHomeComponent = lazy(() => import("./admin/AdminHome"));
+const AdminOrders = lazy(() => import("./admin/AdminOrders"));
+const AdminWarehousePicking = lazy(() => import("./admin/AdminWarehousePicking"));
+const AdminProducts = lazy(() => import("./admin/AdminProducts"));
+const AdminWarehouseMap = lazy(() => import("./admin/AdminWarehouseMap"));
+const AdminStores = lazy(() => import("./admin/AdminStores"));
+const AdminGiro = lazy(() => import("./admin/AdminGiro"));
+const AdminUsers = lazy(() => import("./admin/AdminUsers"));
+const AdminStoreSales = lazy(() => import("./admin/AdminStoreSales"));
+const AdminFechos = lazy(() => import("./admin/AdminFechos"));
+const AdminAnalytics = lazy(() => import("./admin/AdminAnalytics"));
+const AdminNotifications = lazy(() => import("./admin/AdminNotifications"));
+const AdminStockEntries = lazy(() => import("./admin/AdminStockEntries"));
+const AdminSuppliers = lazy(() => import("./admin/AdminSuppliers"));
+const AdminFinancial = lazy(() => import("./admin/AdminFinancial"));
+const AdminProductsPricing = lazy(() => import("./admin/AdminProductsPricing"));
+const AdminWarehouseConfig = lazy(() => import("./admin/AdminWarehouseConfig"));
+const AdminGlobalStock = lazy(() => import("./admin/AdminGlobalStock"));
 
 import {
   Routes,

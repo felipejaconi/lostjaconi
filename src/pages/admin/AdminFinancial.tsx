@@ -22,11 +22,14 @@ function cn(...inputs: ClassValue[]) {
 }
 
 function getPedidoTotalComIva(pedido: any): number {
+  if (pedido.total_com_iva !== undefined && pedido.total_com_iva !== null) {
+    return Number(pedido.total_com_iva);
+  }
   let sumSubtotal = 0;
   let sumIva = 0;
   (pedido.pedido_itens || []).forEach((item: any) => {
     const qty = Number(item.quantidade) || 0;
-    const preco = Number(item.preco_unitario || 0);
+    const preco = Number(item.preco_unitario || item.preco || 0);
     const liq = qty * preco;
     const ivaPerc = Number(item.produto?.iva || 0);
     const ivaVal = liq * (ivaPerc / 100);
@@ -37,10 +40,13 @@ function getPedidoTotalComIva(pedido: any): number {
 }
 
 function getPedidoTotalIva(pedido: any): number {
+  if (pedido.total_iva !== undefined && pedido.total_iva !== null) {
+    return Number(pedido.total_iva);
+  }
   let sumIva = 0;
   (pedido.pedido_itens || []).forEach((item: any) => {
     const qty = Number(item.quantidade) || 0;
-    const preco = Number(item.preco_unitario || 0);
+    const preco = Number(item.preco_unitario || item.preco || 0);
     const liq = qty * preco;
     const ivaPerc = Number(item.produto?.iva || 0);
     sumIva += liq * (ivaPerc / 100);
@@ -48,14 +54,21 @@ function getPedidoTotalIva(pedido: any): number {
   return sumIva;
 }
 
+// In-memory client cache across tab navigations for instantaneous loading
+let financialCache: {
+  faturas: any[];
+  fornecedores: any[];
+  pedidos: any[];
+  stores: any[];
+} | null = null;
 
 export default function AdminFinancial() {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const isArmazem = user?.role === "armazem";
-  const [faturas, setFaturas] = useState<any[]>([]);
-  const [fornecedores, setFornecedores] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [faturas, setFaturas] = useState<any[]>(() => financialCache?.faturas || []);
+  const [fornecedores, setFornecedores] = useState<any[]>(() => financialCache?.fornecedores || []);
+  const [isLoading, setIsLoading] = useState(() => !financialCache);
   
   const [activeTab, setActiveTab] = useState<"dashboard" | "faturas" | "fornecedores" | "despesas" | "relatorios">(() => {
     if (searchParams.get("tab") === "faturas") return "faturas";
@@ -105,8 +118,8 @@ export default function AdminFinancial() {
     parcelas: 1
   });
 
-  const [pedidos, setPedidos] = useState<any[]>([]);
-  const [stores, setStores] = useState<any[]>([]);
+  const [pedidos, setPedidos] = useState<any[]>(() => financialCache?.pedidos || []);
+  const [stores, setStores] = useState<any[]>(() => financialCache?.stores || []);
 
   const [displayCountFaturas, setDisplayCountFaturas] = useState<number>(30);
   const [displayCountReceber, setDisplayCountReceber] = useState<number>(30);
@@ -150,17 +163,32 @@ export default function AdminFinancial() {
 
   const fetchDados = async () => {
     try {
-      setIsLoading(true);
+      if (!financialCache) {
+        setIsLoading(true);
+      }
       const [fatRes, fornRes, pedRes, usersRes] = await Promise.all([
          api.get("/admin/faturas").catch(() => ({ data: [] })),
          api.get("/admin/fornecedores").catch(() => ({ data: [] })),
-         api.get("/pedidos").catch(() => ({ data: [] })),
+         api.get("/admin/financial/pedidos").catch(() => ({ data: [] })),
          api.get("/admin/users").catch(() => ({ data: [] }))
       ]);
-      setFaturas(fatRes.data);
-      setFornecedores(fornRes.data);
-      setPedidos(pedRes.data || []);
-      setStores((usersRes.data || []).filter((u: any) => u.role === 'loja').sort((a: any, b: any) => (a.name || "").localeCompare(b.name || "")));
+
+      const fatData = fatRes.data || [];
+      const fornData = fornRes.data || [];
+      const pedData = pedRes.data || [];
+      const storesData = (usersRes.data || []).filter((u: any) => u.role === 'loja').sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""));
+
+      financialCache = {
+        faturas: fatData,
+        fornecedores: fornData,
+        pedidos: pedData,
+        stores: storesData
+      };
+
+      setFaturas(fatData);
+      setFornecedores(fornData);
+      setPedidos(pedData);
+      setStores(storesData);
     } catch (err) {
       console.error(err);
     } finally {
