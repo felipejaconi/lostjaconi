@@ -263,15 +263,24 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       if (cached) return res.json(cached);
       const { data, error } = await supabase
         .from("faturas")
-        .select("*, fornecedor:fornecedores(id, nome, iban, nif, tipo), fatura_itens(id, fatura_id, quantidade, preco_custo, preco_unitario, iva, valor_liquido, valor_iva, valor_total, produto:produtos(nome, unidade_base, iva)), movimentos_financeiros(*)")
+        .select("*, fornecedor:fornecedores(id, nome, iban, contribuinte, tipo), fatura_itens(id, fatura_id, produto_id, quantidade, preco_custo, iva, valor_liquido, valor_iva, valor_total, unidade_compra, fator_conversao, produto:produtos(nome, unidade_base, iva)), movimentos_financeiros(*)")
         .order("data_emissao", { ascending: false });
       if (error) {
          if (error.code === '42P01') return res.json([]);
          throw error;
       }
-      cache.set("admin_faturas", data, 60);
-      res.json(data);
+      const formatted = (data || []).map((f: any) => ({
+        ...f,
+        fornecedor: f.fornecedor ? { ...f.fornecedor, nif: f.fornecedor.contribuinte } : null,
+        fatura_itens: (f.fatura_itens || []).map((it: any) => ({
+          ...it,
+          preco_unitario: it.preco_custo
+        }))
+      }));
+      cache.set("admin_faturas", formatted, 60);
+      res.json(formatted);
     } catch (error: any) {
+      console.error("Erro ao buscar faturas:", error);
       res.status(500).json({ error: error.message });
     }
   });
