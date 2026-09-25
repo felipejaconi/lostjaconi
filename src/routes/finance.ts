@@ -263,24 +263,21 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       if (cached) return res.json(cached);
       const { data, error } = await supabase
         .from("faturas")
-        .select("*, fornecedor:fornecedores(id, nome, iban, contribuinte, tipo), fatura_itens(id, fatura_id, produto_id, quantidade, preco_custo, iva, valor_liquido, valor_iva, valor_total, unidade_compra, fator_conversao, produto:produtos(nome, unidade_base, iva)), movimentos_financeiros(*)")
+        .select("*, fornecedor:fornecedores(id, nome, iban, contribuinte, tipo), fatura_itens(id, fatura_id, quantidade, preco_custo, iva, valor_liquido, valor_iva, valor_total, produto:produtos(nome, unidade_base, iva)), user:created_by(id, name, email), movimentos_financeiros(*)")
         .order("data_emissao", { ascending: false });
       if (error) {
          if (error.code === '42P01') return res.json([]);
          throw error;
       }
-      const formatted = (data || []).map((f: any) => ({
-        ...f,
-        fornecedor: f.fornecedor ? { ...f.fornecedor, nif: f.fornecedor.contribuinte } : null,
-        fatura_itens: (f.fatura_itens || []).map((it: any) => ({
-          ...it,
-          preco_unitario: it.preco_custo
-        }))
-      }));
-      cache.set("admin_faturas", formatted, 60);
-      res.json(formatted);
+      const mapped = (data || []).map((f: any) => {
+        if (f.fornecedor) {
+          f.fornecedor.nif = f.fornecedor.contribuinte || "";
+        }
+        return f;
+      });
+      cache.set("admin_faturas", mapped, 60);
+      res.json(mapped);
     } catch (error: any) {
-      console.error("Erro ao buscar faturas:", error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -413,6 +410,21 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     } catch (error: any) {
       console.error("Erro no checkout fatura:", error);
       res.status(500).json({ error: error.message || "Erro no checkout da fatura" });
+    }
+  });
+
+  app.delete("/api/admin/faturas/:id", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    const faturaId = req.params.id;
+    try {
+      await supabase.from("fatura_itens").delete().eq("fatura_id", faturaId);
+      await supabase.from("movimentos_financeiros").delete().eq("fatura_id", faturaId);
+      const { error } = await supabase.from("faturas").delete().eq("id", faturaId);
+      if (error) throw error;
+      clearFinanceCache();
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   });
 

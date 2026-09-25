@@ -70,9 +70,12 @@ export default function AdminFinancial() {
   const [fornecedores, setFornecedores] = useState<any[]>(() => financialCache?.fornecedores || []);
   const [isLoading, setIsLoading] = useState(() => !financialCache);
   
-  const [activeTab, setActiveTab] = useState<"dashboard" | "faturas" | "fornecedores" | "despesas" | "relatorios">(() => {
-    if (searchParams.get("tab") === "faturas") return "faturas";
-    if (user?.role === "armazem") return "faturas";
+  const [activeTab, setActiveTab] = useState<"dashboard" | "faturas_compras" | "faturas_despesas" | "fornecedores">(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "compras" || tabParam === "faturas") return "faturas_compras";
+    if (tabParam === "despesas") return "faturas_despesas";
+    if (tabParam === "fornecedores" || tabParam === "receber") return "fornecedores";
+    if (user?.role === "armazem") return "faturas_compras";
     return "dashboard";
   });
   const [search, setSearch] = useState("");
@@ -155,8 +158,13 @@ export default function AdminFinancial() {
   }, []);
 
   useEffect(() => {
-    if (searchParams.get("tab") === "faturas") {
-      setActiveTab("faturas");
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "compras" || tabParam === "faturas") {
+      setActiveTab("faturas_compras");
+    } else if (tabParam === "despesas") {
+      setActiveTab("faturas_despesas");
+    } else if (tabParam === "fornecedores" || tabParam === "receber") {
+      setActiveTab("fornecedores");
     }
   }, [searchParams]);
 
@@ -329,6 +337,8 @@ export default function AdminFinancial() {
      let totalCompras = new Decimal(0);
      let totalDespesas = new Decimal(0);
      let totalPendente = new Decimal(0);
+     let totalPendenteCompras = new Decimal(0);
+     let totalPendenteDespesas = new Decimal(0);
      let totalVencido = new Decimal(0);
      let totalIvaCredito = new Decimal(0);
      let totalIvaDebito = new Decimal(0);
@@ -343,8 +353,14 @@ export default function AdminFinancial() {
         const val = new Decimal(f.valor_total || 0);
         const pend = new Decimal(f.valor_pendente || 0);
         
-        if (f.tipo === 'compra') totalCompras = totalCompras.add(val);
-        else if (f.tipo?.startsWith('despesa')) totalDespesas = totalDespesas.add(val);
+        const isCompra = f.tipo === 'compra';
+        if (isCompra) {
+           totalCompras = totalCompras.add(val);
+           totalPendenteCompras = totalPendenteCompras.add(pend);
+        } else {
+           totalDespesas = totalDespesas.add(val);
+           totalPendenteDespesas = totalPendenteDespesas.add(pend);
+        }
         
         totalPendente = totalPendente.add(pend);
 
@@ -437,6 +453,8 @@ export default function AdminFinancial() {
         totalCompras: totalCompras.toNumber(),
         totalDespesas: totalDespesas.toNumber(),
         totalPendente: totalPendente.toNumber(),
+        totalPendenteCompras: totalPendenteCompras.toNumber(),
+        totalPendenteDespesas: totalPendenteDespesas.toNumber(),
         totalVencido: totalVencido.toNumber(),
         totalIvaCredito: totalIvaCredito.toNumber(),
         totalIvaDebito: totalIvaDebito.toNumber(),
@@ -483,20 +501,21 @@ export default function AdminFinancial() {
   const filteredFaturas = faturas.filter(f => {
     const textMatch = (f.numero_fatura || "").toLowerCase().includes(search.toLowerCase()) || 
                       (f.fornecedor?.nome || "").toLowerCase().includes(search.toLowerCase());
+    
     let tipoMatch = true;
-    if (activeTab === 'faturas') {
-       if (filterTipo === 'todos') {
-          tipoMatch = f.tipo === 'compra' || f.tipo?.startsWith('despesa');
-       } else if (filterTipo === 'despesa') {
-          tipoMatch = f.tipo?.startsWith('despesa');
-       } else {
-          tipoMatch = f.tipo === filterTipo;
-       }
+    if (activeTab === 'faturas_compras') {
+       tipoMatch = f.tipo === 'compra';
+    } else if (activeTab === 'faturas_despesas') {
+       tipoMatch = f.tipo !== 'compra';
+    } else {
+       if (filterTipo === 'compra') tipoMatch = f.tipo === 'compra';
+       else if (filterTipo === 'despesa') tipoMatch = f.tipo !== 'compra';
     }
+
     const periodMatch = filterByPeriod(f.data_emissao, filterDataAPagar.periodo);
     
     let statusMatch = true;
-    if (activeTab === 'faturas') {
+    if (activeTab === 'faturas_compras') {
        if (f.status_pagamento === 'em_conferencia') return false;
     }
     
@@ -511,7 +530,7 @@ export default function AdminFinancial() {
     if (filterDataAPagar.loja !== "todos") {
        if (filterDataAPagar.loja === "armazem") {
           let isArmazemDespesa = false;
-          if (f.tipo?.startsWith('despesa')) {
+          if (f.tipo?.startsWith('despesa') || f.tipo !== 'compra') {
              if (!f.descrição || f.descrição === "null") {
                 isArmazemDespesa = true;
              } else {
@@ -625,10 +644,10 @@ export default function AdminFinancial() {
         <BrandTitle title="Financeiro" titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0" hideUnderline />
            
                 {!isArmazem && (
-              <div className="flex bg-[#0a0a0a] p-1.5 rounded-2xl border border-white/5 w-full sm:w-auto overflow-x-auto no-scrollbar gap-1 shadow-inner">
+              <div className="flex bg-[#0a0a0a] p-1.5 rounded-2xl border border-white/5 w-full sm:w-auto overflow-x-auto no-scrollbar gap-1 shadow-inner items-center">
               <button 
                  onClick={() => setActiveTab("dashboard")}
-                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-2.5 text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap ${
+                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-2 text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap h-[44px] ${
                     activeTab === "dashboard" ? "bg-amber-500 text-black shadow-[0_0_20px_-5px_rgba(245,158,11,0.4)]" : "text-zinc-400 hover:text-amber-400 hover:bg-white/5"
                  }`}
               >
@@ -636,18 +655,33 @@ export default function AdminFinancial() {
                  Dashboard
               </button>
               <button 
-                 onClick={() => setActiveTab("faturas")}
-                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-2.5 text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap ${
-                    activeTab === "faturas" ? "bg-rose-500 text-white shadow-[0_0_20px_-5px_rgba(243,24,104,0.4)]" : "text-zinc-400 hover:text-rose-400 hover:bg-white/5"
+                 onClick={() => setActiveTab("faturas_compras")}
+                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-1 text-xs flex flex-col items-center justify-center font-bold tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap h-[44px] leading-tight ${
+                    activeTab === "faturas_compras" ? "bg-blue-600 text-white shadow-[0_0_20px_-5px_rgba(37,99,235,0.4)]" : "text-zinc-400 hover:text-blue-400 hover:bg-white/5"
                  }`}
               >
-                 <Receipt size={14} />
-                 Faturas a Pagar
+                 <span className="flex items-center gap-1.5 uppercase text-[11px]">
+                    <Receipt size={13} />
+                    Faturas a Pagar
+                 </span>
+                 <span className="text-[10px] font-semibold text-blue-200/90 lowercase">(compras)</span>
+              </button>
+              <button 
+                 onClick={() => setActiveTab("faturas_despesas")}
+                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-1 text-xs flex flex-col items-center justify-center font-bold tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap h-[44px] leading-tight ${
+                    activeTab === "faturas_despesas" ? "bg-rose-600 text-white shadow-[0_0_20px_-5px_rgba(225,29,72,0.4)]" : "text-zinc-400 hover:text-rose-400 hover:bg-white/5"
+                 }`}
+              >
+                 <span className="flex items-center gap-1.5 uppercase text-[11px]">
+                    <TrendingDown size={13} />
+                    Faturas a Pagar
+                 </span>
+                 <span className="text-[10px] font-semibold text-rose-200/90 lowercase">(despesas)</span>
               </button>
               <button 
                  onClick={() => setActiveTab("fornecedores")}
-                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-2.5 text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap ${
-                    activeTab === "fornecedores" ? "bg-blue-500 text-white shadow-[0_0_20px_-5px_rgba(59,130,246,0.4)]" : "text-zinc-400 hover:text-blue-400 hover:bg-white/5"
+                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-2 text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap h-[44px] ${
+                    activeTab === "fornecedores" ? "bg-emerald-600 text-white shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]" : "text-zinc-400 hover:text-emerald-400 hover:bg-white/5"
                  }`}
               >
                  <ShoppingCart size={14} />
@@ -669,31 +703,39 @@ export default function AdminFinancial() {
          ) : (
             <>
 
-         {activeTab === "dashboard" && (
+          {activeTab === "dashboard" && (
             <div className="space-y-6 mt-6">
-               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
-                  {/* 1. Compras Stock */}
-                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-sm">
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+                  {/* 1. Faturas a Pagar (Compras) */}
+                  <div 
+                     onClick={() => setActiveTab("faturas_compras")}
+                     className="bg-zinc-950 border border-zinc-800 hover:border-blue-500/50 rounded-xl p-4 shadow-sm cursor-pointer transition-all hover:bg-zinc-900/40 group"
+                  >
                      <div className="flex items-center justify-between mb-3">
-                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500 border border-blue-500/20">
-                           <Banknote className="w-4 h-4" />
+                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500 border border-blue-500/20 group-hover:scale-105 transition-transform">
+                           <Receipt className="w-4 h-4" />
                         </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1"><ArrowUpRight className="w-3 h-3 text-blue-500" /> Stock</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded">Pendente</span>
                      </div>
-                     <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider mb-1">Compras (Stock)</p>
-                     <p className="text-xl font-bold text-zinc-100">€ {stats.totalCompras.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
+                     <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-0.5">Faturas a Pagar</p>
+                     <p className="text-[11px] font-bold text-blue-400 uppercase tracking-wider mb-1">(Compras)</p>
+                     <p className="text-xl font-bold text-zinc-100">€ {stats.totalPendenteCompras.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
                   </div>
 
-                  {/* 2. Contas a Pagar */}
-                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-sm">
+                  {/* 2. Faturas a Pagar (Despesas) */}
+                  <div 
+                     onClick={() => setActiveTab("faturas_despesas")}
+                     className="bg-zinc-950 border border-zinc-800 hover:border-amber-500/50 rounded-xl p-4 shadow-sm cursor-pointer transition-all hover:bg-zinc-900/40 group"
+                  >
                      <div className="flex items-center justify-between mb-3">
-                        <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500 border border-amber-500/20">
-                           <Clock className="w-4 h-4" />
+                        <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500 border border-amber-500/20 group-hover:scale-105 transition-transform">
+                           <TrendingDown className="w-4 h-4" />
                         </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded">Pendente</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">Pendente</span>
                      </div>
-                     <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider mb-1">Contas a Pagar</p>
-                     <p className="text-xl font-bold text-amber-500">€ {stats.totalPendente.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
+                     <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-0.5">Faturas a Pagar</p>
+                     <p className="text-[11px] font-bold text-amber-400 uppercase tracking-wider mb-1">(Despesas)</p>
+                     <p className="text-xl font-bold text-amber-500">€ {stats.totalPendenteDespesas.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
                   </div>
                   
                   {/* 2.5 Contas Vencidas */}
@@ -735,22 +777,13 @@ export default function AdminFinancial() {
                      <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-rose-500/5 blur-2xl rounded-full group-hover:bg-rose-500/10 transition-colors"></div>
                   </div>
 
-                  {/* 4. Despesas e Custos */}
-                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-sm">
-                     <div className="flex items-center justify-between mb-3">
-                        <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-500 border border-rose-500/20">
-                           <TrendingDown className="w-4 h-4" />
-                        </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1"><ArrowDownRight className="w-3 h-3 text-rose-500" /> Operacional</span>
-                     </div>
-                     <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider mb-1">Despesas / Custos</p>
-                     <p className="text-xl font-bold text-zinc-100">€ {stats.totalDespesas.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
-                  </div>
-
                   {/* 5. Contas a Receber */}
-                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-sm">
+                  <div 
+                     onClick={() => setActiveTab("fornecedores")}
+                     className="bg-zinc-950 border border-zinc-800 hover:border-emerald-500/50 rounded-xl p-4 shadow-sm cursor-pointer transition-all hover:bg-zinc-900/40 group"
+                  >
                      <div className="flex items-center justify-between mb-3">
-                        <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-300 border border-zinc-700">
+                        <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-300 border border-zinc-700 group-hover:scale-105 transition-transform">
                            <Store className="w-4 h-4" />
                         </div>
                         <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300 bg-zinc-800 px-2 py-0.5 rounded">A Receber</span>
@@ -803,8 +836,7 @@ export default function AdminFinancial() {
                                  </button>
                                  <button 
                                     onClick={() => { 
-                                       setActiveTab("faturas");
-                                       setFilterTipo("despesa");
+                                       setActiveTab("faturas_despesas");
                                        setFilterDataAPagar({...filterDataAPagar, loja: String(store.id)});
                                     }}
                                     className="flex flex-col items-center justify-center gap-1.5 py-2.5 px-1 bg-white/5 hover:bg-rose-500/10 text-zinc-400 hover:text-rose-400 rounded-xl transition-colors border border-white/5 hover:border-rose-500/20 group/btn"
@@ -829,55 +861,67 @@ export default function AdminFinancial() {
          )}
 
 
-         {activeTab === "faturas" && (
+         {(activeTab === "faturas_compras" || activeTab === "faturas_despesas") && (() => {
+            const isCompras = activeTab === "faturas_compras";
+            return (
             <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-sm flex flex-col h-full min-h-[500px]">
-               <div className="sticky top-[calc(66.63px-1px)] md:top-[calc(66.63px-1px)] z-30 p-2 sm:p-3 border-b border-zinc-800 flex flex-col xl:flex-row gap-4 justify-between items-center bg-zinc-950 mt-[67px]">
-                  <div className="relative w-full xl:w-auto flex flex-col sm:flex-row gap-3">
-                     <div className="relative w-full sm:w-64 shrink-0">
-                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                       <input
-                         type="text"
-                         placeholder="Pesquisar fatura..."
-                         value={search}
-                         onChange={(e) => setSearch(e.target.value)}
-                         className="w-full pl-9 pr-4 py-2 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-zinc-600 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors h-[38px]"
-                       />
-                     </div>
-                     <div className="inline-flex bg-black/40 p-1 rounded-lg border border-white/5 shadow-inner w-full sm:w-auto h-[38px]">
-                        <button 
-                           onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'mes'})}
-                           className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
-                             filterDataAPagar.periodo === 'mes' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
-                           }`}
-                        >
-                           Mensal
-                        </button>
-                        <button 
-                           onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'ano'})}
-                           className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
-                             filterDataAPagar.periodo === 'ano' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
-                           }`}
-                        >
-                           Anual
-                        </button>
-                        <button 
-                           onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'todos'})}
-                           className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
-                             filterDataAPagar.periodo === 'todos' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
-                           }`}
-                        >
-                           Todas
-                        </button>
+               <div className="sticky top-[calc(66.63px-1px)] md:top-[calc(66.63px-1px)] z-30 p-2 sm:p-3 border-b border-zinc-800 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-end bg-zinc-950 mt-[67px]">
+                  <div className="relative w-full xl:w-auto flex flex-col gap-2.5">
+                     {/* Indicador / Badge em cima da barra de pesquisa */}
+                     {isCompras ? (
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg shrink-0 w-fit shadow-sm">
+                           <Receipt className="w-3.5 h-3.5 text-blue-400" />
+                           <span className="text-[11px] font-bold text-blue-300 uppercase tracking-wider">COMPRAS (STOCK)</span>
+                           <span className="text-[11px] font-semibold text-zinc-400 ml-1.5">Pendente: <strong className="text-amber-400">€ {stats.totalPendenteCompras.toLocaleString('pt-PT', {minimumFractionDigits:2})}</strong></span>
+                        </div>
+                     ) : (
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 border border-rose-500/20 rounded-lg shrink-0 w-fit shadow-sm">
+                           <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
+                           <span className="text-[11px] font-bold text-rose-300 uppercase tracking-wider">DESPESAS</span>
+                           <span className="text-[11px] font-semibold text-zinc-400 ml-1.5">Pendente: <strong className="text-amber-400">€ {stats.totalPendenteDespesas.toLocaleString('pt-PT', {minimumFractionDigits:2})}</strong></span>
+                        </div>
+                     )}
+
+                     <div className="flex flex-col sm:flex-row gap-3">
+                        <div className="relative w-full sm:w-64 shrink-0">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                          <input
+                            type="text"
+                            placeholder={isCompras ? "Pesquisar fatura de compra..." : "Pesquisar despesa..."}
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="w-full pl-9 pr-4 py-2 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-zinc-600 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors h-[38px]"
+                          />
+                        </div>
+                        <div className="inline-flex bg-black/40 p-1 rounded-lg border border-white/5 shadow-inner w-full sm:w-auto h-[38px]">
+                           <button 
+                              onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'mes'})}
+                              className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
+                                filterDataAPagar.periodo === 'mes' ? (isCompras ? 'bg-blue-600 text-white shadow-md' : 'bg-rose-600 text-white shadow-md') : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
+                              }`}
+                           >
+                              Mensal
+                           </button>
+                           <button 
+                              onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'ano'})}
+                              className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
+                                filterDataAPagar.periodo === 'ano' ? (isCompras ? 'bg-blue-600 text-white shadow-md' : 'bg-rose-600 text-white shadow-md') : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
+                              }`}
+                           >
+                              Anual
+                           </button>
+                           <button 
+                              onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'todos'})}
+                              className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
+                                filterDataAPagar.periodo === 'todos' ? (isCompras ? 'bg-blue-600 text-white shadow-md' : 'bg-rose-600 text-white shadow-md') : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
+                              }`}
+                           >
+                              Todas
+                           </button>
+                        </div>
                      </div>
                   </div>
                   <div className="flex flex-nowrap sm:flex-wrap items-center gap-2 w-full xl:w-auto overflow-x-auto no-scrollbar pb-1 sm:pb-0">
-                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0 h-[38px]">
-                        <select value={filterTipo} onChange={e => setFilterTipo(e.target.value)} className="bg-transparent text-sm text-zinc-300 outline-none appearance-none">
-                           <option value="todos">Todos os Tipos</option>
-                           <option value="compra">Compras (Stock)</option>
-                           <option value="despesa">Despesas</option>
-                        </select>
-                     </div>
                      <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0 h-[38px]">
                         <select value={filterDataAPagar.status} onChange={e => setFilterDataAPagar({...filterDataAPagar, status: e.target.value})} className="bg-transparent text-sm text-zinc-300 outline-none appearance-none">
                            <option value="todos">Todos os Status</option>
@@ -922,7 +966,9 @@ export default function AdminFinancial() {
                            <tr>
                               <td colSpan={6} className="p-10 text-center">
                                  <FileText className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
-                                 <p className="text-zinc-400 font-medium text-sm">Nenhuma fatura encontrada.</p>
+                                 <p className="text-zinc-400 font-medium text-sm">
+                                    {isCompras ? "Nenhuma fatura de compra encontrada." : "Nenhuma fatura de despesa encontrada."}
+                                 </p>
                               </td>
                            </tr>
                         ) : (
@@ -1051,7 +1097,8 @@ export default function AdminFinancial() {
                   )}
                </div>
             </div>
-         )}
+            );
+         })()}
 
 
          {activeTab === "fornecedores" && (
@@ -1446,8 +1493,7 @@ export default function AdminFinancial() {
              {selectedStore && <AdminExpenseEntries compact={true} lojaId={selectedStore.id} onSuccess={() => {
                  fetchDados();
                  setIsStoreModalOpen(false);
-                 setActiveTab("faturas");
-                 setFilterTipo("despesa");
+                 setActiveTab("faturas_despesas");
                  setFilterDataAPagar({...filterDataAPagar, loja: String(selectedStore.id)});
                  setSelectedStore(null);
              }} />}

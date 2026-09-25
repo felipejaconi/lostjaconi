@@ -77,10 +77,13 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
      }
   }, [checkoutFaturaItens, isCheckoutModalOpen]);
 
+  const [checkoutSearch, setCheckoutSearch] = useState("");
+
   const loadPendingFaturas = async () => {
      try {
         const { data } = await api.get("/admin/faturas");
-        setPendingFaturas(((data as any[]) || []).filter((f: any) => f.status_pagamento === 'em_conferencia'));
+        const pending = ((data as any[]) || []).filter((f: any) => f.status_pagamento === 'em_conferencia');
+        setPendingFaturas(pending);
      } catch (e) {
         console.error("Erro ao carregar faturas pendentes", e);
      }
@@ -89,6 +92,28 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
   const handleOpenCheckoutList = () => {
      loadPendingFaturas();
      setIsCheckoutListModalOpen(true);
+  };
+
+  const handleDeletePendingFatura = async (id: string, numero: string) => {
+    const confirm = await Swal.fire({
+      title: "Rejeitar Fatura?",
+      text: `Deseja realmente excluir a fatura #${numero || id}? Esta ação não pode ser desfeita.`,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Sim, excluir",
+      cancelButtonText: "Cancelar",
+      confirmButtonColor: "#ef4444",
+      cancelButtonColor: "#27272a"
+    });
+    if (confirm.isConfirmed) {
+      try {
+        await api.delete(`/admin/faturas/${id}`);
+        Swal.fire("Excluída", "Fatura removida com sucesso.", "success");
+        loadPendingFaturas();
+      } catch (e: any) {
+        Swal.fire("Erro", e.response?.data?.error || "Erro ao excluir fatura", "error");
+      }
+    }
   };
 
   const [newProductData, setNewProductData] = useState({
@@ -110,6 +135,9 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
 
   useEffect(() => {
     fetchData();
+    if (user?.role === 'admin') {
+      loadPendingFaturas();
+    }
     const saved = localStorage.getItem('adminStockEntriesState');
     if (saved) {
       try {
@@ -362,55 +390,101 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
   return (
     <div className=" pt-2 md:pt-4 pb-32 ">
 
-      <Modal isOpen={isCheckoutListModalOpen} onClose={() => setIsCheckoutListModalOpen(false)} title="Faturas Aguardando Conferência" maxWidth="3xl">
-         <div className="pt-4 max-h-[70vh] overflow-y-auto no-scrollbar">
-            {pendingFaturas.length === 0 ? (
-               <p className="text-zinc-500 text-center py-8">Nenhuma fatura aguardando conferência.</p>
-            ) : (
-               <div className="space-y-3">
-                  {pendingFaturas.map(f => (
-                     <div key={f.id} className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div>
-                           <p className="text-sm font-bold text-zinc-100">{f.numero_fatura}</p>
-                           <p className="text-xs text-zinc-400 mt-1">{f.fornecedor?.nome}</p>
-                        </div>
-                        <div className="flex items-center gap-4">
-                           <div className="text-right">
-                              <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Total Registado</p>
-                              <p className="text-sm font-bold text-amber-500">€ {Number(f.valor_total || 0).toFixed(2)}</p>
+      <Modal isOpen={isCheckoutListModalOpen} onClose={() => setIsCheckoutListModalOpen(false)} title={`Faturas Aguardando Conferência (${pendingFaturas.length})`} maxWidth="3xl">
+         <div className="pt-2">
+            <div className="mb-4">
+               <input
+                  type="text"
+                  placeholder="Pesquisar por nº de fatura, fornecedor ou armazém..."
+                  value={checkoutSearch}
+                  onChange={e => setCheckoutSearch(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-indigo-500/50"
+               />
+            </div>
+            <div className="max-h-[65vh] overflow-y-auto no-scrollbar">
+               {(() => {
+                  const filtered = pendingFaturas.filter(f => {
+                     if (!checkoutSearch.trim()) return true;
+                     const q = checkoutSearch.toLowerCase();
+                     const num = (f.numero_fatura || "").toLowerCase();
+                     const forn = (f.fornecedor?.nome || "").toLowerCase();
+                     const usr = (f.user?.name || "").toLowerCase();
+                     return num.includes(q) || forn.includes(q) || usr.includes(q);
+                  });
+
+                  if (pendingFaturas.length === 0) {
+                     return <p className="text-zinc-500 text-center py-10 font-medium">Nenhuma fatura aguardando conferência.</p>;
+                  }
+
+                  if (filtered.length === 0) {
+                     return <p className="text-zinc-500 text-center py-10 font-medium">Nenhuma fatura encontrada para &quot;{checkoutSearch}&quot;.</p>;
+                  }
+
+                  return (
+                     <div className="space-y-3">
+                        {filtered.map(f => (
+                           <div key={f.id} className="bg-zinc-950/80 border border-zinc-800/80 hover:border-zinc-700/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all">
+                              <div className="space-y-1">
+                                 <div className="flex items-center gap-2">
+                                    <span className="text-sm font-bold text-zinc-100">{f.numero_fatura}</span>
+                                    <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded-full font-medium">
+                                       Aguardando Conferência
+                                    </span>
+                                 </div>
+                                 <p className="text-xs text-zinc-300 font-medium">{f.fornecedor?.nome || "Fornecedor não associado"}</p>
+                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+                                    <span>Submetido por: <strong className="text-zinc-400">{f.user?.name || "Armazém"}</strong></span>
+                                    {f.data_emissao && <span>• Data: {new Date(f.data_emissao).toLocaleDateString("pt-PT")}</span>}
+                                    {f.fatura_itens?.length > 0 && <span>• {f.fatura_itens.length} {f.fatura_itens.length === 1 ? 'item' : 'itens'}</span>}
+                                 </div>
+                              </div>
+                              <div className="flex items-center gap-3 self-end sm:self-center">
+                                 <div className="text-right">
+                                    <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Total Registado</p>
+                                    <p className="text-sm font-bold text-amber-500">€ {Number(f.valor_total || 0).toFixed(2)}</p>
+                                 </div>
+                                 <button 
+                                    onClick={() => {
+                                       setSelectedCheckoutFatura(f);
+                                       setCheckoutFormData({
+                                          numero_fatura: f.numero_fatura || '',
+                                          data_emissao: f.data_emissao ? f.data_emissao.split('T')[0] : '',
+                                          data_vencimento: f.data_vencimento ? f.data_vencimento.split('T')[0] : '',
+                                          fornecedor_id: f.fornecedor_id ? String(f.fornecedor_id) : '',
+                                          valor_liquido: String(f.valor_liquido || ''),
+                                          valor_iva: String(f.valor_iva || ''),
+                                          valor_total: String(f.valor_total || '')
+                                       });
+                                       if (f.fatura_itens) {
+                                          setCheckoutFaturaItens(f.fatura_itens.map((it: any) => ({
+                                             ...it,
+                                             preco_unitario: it.preco_custo !== undefined ? it.preco_custo : it.preco_unitario
+                                          })));
+                                       } else {
+                                          setCheckoutFaturaItens([]);
+                                       }
+                                       setIsCheckoutListModalOpen(false);
+                                       setIsCheckoutModalOpen(true);
+                                    }}
+                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors whitespace-nowrap shadow-sm flex items-center gap-1.5"
+                                 >
+                                    <CheckCircle2 size={14} />
+                                    Conferir Valores
+                                 </button>
+                                 <button
+                                    onClick={() => handleDeletePendingFatura(f.id, f.numero_fatura)}
+                                    title="Rejeitar / Excluir Fatura"
+                                    className="p-2 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
+                                 >
+                                    <Trash2 size={16} />
+                                 </button>
+                              </div>
                            </div>
-                           <button 
-                              onClick={() => {
-                                 setSelectedCheckoutFatura(f);
-                                 setCheckoutFormData({
-                                    numero_fatura: f.numero_fatura || '',
-                                    data_emissao: f.data_emissao ? f.data_emissao.split('T')[0] : '',
-                                    data_vencimento: f.data_vencimento ? f.data_vencimento.split('T')[0] : '',
-                                    fornecedor_id: f.fornecedor_id ? String(f.fornecedor_id) : '',
-                                    valor_liquido: String(f.valor_liquido || ''),
-                                    valor_iva: String(f.valor_iva || ''),
-                                    valor_total: String(f.valor_total || '')
-                                 });
-                                 if (f.fatura_itens) {
-                                    setCheckoutFaturaItens(f.fatura_itens.map((it: any) => ({
-                                       ...it,
-                                       preco_unitario: it.preco_custo !== undefined ? it.preco_custo : it.preco_unitario
-                                    })));
-                                 } else {
-                                    setCheckoutFaturaItens([]);
-                                 }
-                                 setIsCheckoutListModalOpen(false);
-                                 setIsCheckoutModalOpen(true);
-                              }}
-                              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-colors whitespace-nowrap"
-                           >
-                              Conferir Valores
-                           </button>
-                        </div>
+                        ))}
                      </div>
-                  ))}
-               </div>
-            )}
+                  );
+               })()}
+            </div>
          </div>
       </Modal>
 
@@ -596,7 +670,12 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
           {user?.role === 'admin' && (
             <button onClick={handleOpenCheckoutList} className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
                <CheckCircle2 size={16} />
-               Check Faturas
+               <span>Check Faturas</span>
+               {pendingFaturas.length > 0 && (
+                  <span className="px-2 py-0.5 text-xs font-bold bg-amber-500 text-zinc-950 rounded-full animate-pulse">
+                     {pendingFaturas.length}
+                  </span>
+               )}
             </button>
           )}
           <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
