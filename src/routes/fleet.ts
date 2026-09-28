@@ -58,14 +58,14 @@ const initialVehicles = [
     responsavel_telefone: "919 882 104",
     status: "ativo",
     data_ultima_inspecao: "2025-10-10",
-    data_proxima_inspecao: "2026-10-10", // Vencendo em breve!
+    data_proxima_inspecao: "2026-10-10",
     seguradora: "Tranquilidade",
     apolice_numero: "TRQ-449120-PT",
     tipo_seguro: "Contra Todos os Riscos",
     data_validade_seguro: "2026-12-05",
     km_ultima_troca_oleo: 80000,
     km_intervalo_troca_oleo: 10000,
-    km_proxima_troca_oleo: 90000, // Apenas 650 km restantes!
+    km_proxima_troca_oleo: 90000,
     data_ultima_troca_oleo: "2026-05-18",
     mes_iuc: 10,
     ano_iuc_pago: 2025,
@@ -95,11 +95,11 @@ const initialVehicles = [
     responsavel_telefone: "925 110 339",
     status: "ativo",
     data_ultima_inspecao: "2025-03-20",
-    data_proxima_inspecao: "2027-03-20", // Veículo recente
+    data_proxima_inspecao: "2027-03-20",
     seguradora: "Allianz",
     apolice_numero: "ALZ-99318-PT",
     tipo_seguro: "Danos Próprios",
-    data_validade_seguro: "2026-10-15", // Vencendo em breve!
+    data_validade_seguro: "2026-10-15",
     km_ultima_troca_oleo: 35000,
     km_intervalo_troca_oleo: 15000,
     km_proxima_troca_oleo: 50000,
@@ -136,7 +136,7 @@ const initialVehicles = [
     data_validade_seguro: "2027-02-10",
     km_ultima_troca_oleo: 140000,
     km_intervalo_troca_oleo: 15000,
-    km_proxima_troca_oleo: 155000, // Menos de 2.200 km
+    km_proxima_troca_oleo: 155000,
     data_ultima_troca_oleo: "2026-03-25",
     mes_iuc: 11,
     ano_iuc_pago: 2025,
@@ -174,7 +174,7 @@ const initialVehicles = [
     data_validade_seguro: "2026-11-30",
     km_ultima_troca_oleo: 65000,
     km_intervalo_troca_oleo: 10000,
-    km_proxima_troca_oleo: 75000, // Apenas 100 km restantes! Alerta de troca de óleo!
+    km_proxima_troca_oleo: 75000,
     data_ultima_troca_oleo: "2026-02-14",
     mes_iuc: 7,
     ano_iuc_pago: 2026,
@@ -201,7 +201,7 @@ const initialVehicles = [
     responsavel_telefone: "914 220 901",
     status: "ativo",
     data_ultima_inspecao: "2025-09-05",
-    data_proxima_inspecao: "2026-09-05", // Alerta: Inspeção vencida ou no limite!
+    data_proxima_inspecao: "2026-09-05",
     seguradora: "Fidelidade",
     apolice_numero: "FID-332901-PT",
     tipo_seguro: "Contra Todos os Riscos",
@@ -273,10 +273,10 @@ const initialVehicles = [
     seguradora: "Allianz",
     apolice_numero: "ALZ-33819-PT",
     tipo_seguro: "Responsabilidade Civil",
-    data_validade_seguro: "2026-10-30", // Vencendo em breve
+    data_validade_seguro: "2026-10-30",
     km_ultima_troca_oleo: 105000,
     km_intervalo_troca_oleo: 10000,
-    km_proxima_troca_oleo: 115000, // Ultrapassada em 3400 km!
+    km_proxima_troca_oleo: 115000,
     data_ultima_troca_oleo: "2025-11-20",
     mes_iuc: 8,
     ano_iuc_pago: 2026,
@@ -339,7 +339,7 @@ const initialVehicles = [
     responsavel_telefone: "968 770 123",
     status: "ativo",
     data_ultima_inspecao: "2025-10-30",
-    data_proxima_inspecao: "2026-10-30", // Alerta: Próximo mês
+    data_proxima_inspecao: "2026-10-30",
     seguradora: "Zurich",
     apolice_numero: "ZUR-88190-PT",
     tipo_seguro: "Contra Todos os Riscos",
@@ -431,7 +431,8 @@ const initialVehicles = [
   }
 ];
 
-function getFleetData(): any[] {
+// Helper to read local fleet JSON
+function getLocalFleetData(): any[] {
   try {
     if (fs.existsSync(fleetFilePath)) {
       const raw = fs.readFileSync(fleetFilePath, "utf8");
@@ -440,12 +441,12 @@ function getFleetData(): any[] {
   } catch (e) {
     console.error("Erro ao ler fleet_data.json:", e);
   }
-  // Initialize file with default 12 vehicles
-  saveFleetData(initialVehicles);
+  saveLocalFleetData(initialVehicles);
   return initialVehicles;
 }
 
-function saveFleetData(data: any[]) {
+// Helper to write local fleet JSON
+function saveLocalFleetData(data: any[]) {
   try {
     fs.writeFileSync(fleetFilePath, JSON.stringify(data, null, 2), "utf8");
   } catch (e) {
@@ -453,7 +454,38 @@ function saveFleetData(data: any[]) {
   }
 }
 
-// Helper to compute vehicle alerts and health stats
+// Read Fleet from Supabase (with fallback to local JSON file)
+async function getFleetData(supabase?: any): Promise<any[]> {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from("frota_veiculos")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (!error && Array.isArray(data)) {
+        if (data.length > 0) {
+          saveLocalFleetData(data); // keep local mirror updated
+          return data;
+        } else {
+          // Table exists but is empty -> seed it with initial vehicles
+          const localData = getLocalFleetData();
+          try {
+            await supabase.from("frota_veiculos").insert(localData);
+          } catch (seedErr) {
+            console.warn("Could not auto-seed frota_veiculos in Supabase:", seedErr);
+          }
+          return localData;
+        }
+      }
+    } catch (e) {
+      console.warn("Supabase query frota_veiculos warning, using local file:", e);
+    }
+  }
+  return getLocalFleetData();
+}
+
+// Compute vehicle alerts and health stats
 export function computeVehicleStats(v: any) {
   const today = new Date();
   
@@ -511,14 +543,59 @@ export function computeVehicleStats(v: any) {
   };
 }
 
-export function setupFleetRoutes({ app, authenticateToken }: any) {
-  // GET all vehicles with computed alerts
-  app.get("/api/admin/fleet", authenticateToken, (req: any, res: any) => {
+export function setupFleetRoutes({ app, supabase, authenticateToken }: any) {
+  // GET database connection status
+  app.get("/api/admin/fleet/db-status", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Acesso restrito ao administrador." });
     }
     try {
-      const fleet = getFleetData();
+      let isSupabaseOnline = false;
+      let tableFound = false;
+      let rowCount = 0;
+
+      if (supabase) {
+        const { data, error } = await supabase
+          .from("frota_veiculos")
+          .select("id")
+          .limit(1);
+        
+        if (!error) {
+          isSupabaseOnline = true;
+          tableFound = true;
+          const countRes = await supabase.from("frota_veiculos").select("id", { count: "exact", head: true });
+          rowCount = countRes.count || (data ? data.length : 0);
+        } else {
+          isSupabaseOnline = false;
+          tableFound = false;
+        }
+      }
+
+      const localFleet = getLocalFleetData();
+
+      return res.json({
+        storageType: tableFound ? "supabase_database" : "local_json_mirror",
+        database: "Supabase PostgreSQL",
+        table: "frota_veiculos",
+        tableFound,
+        isSupabaseOnline,
+        totalVehicles: tableFound ? rowCount : localFleet.length,
+        message: tableFound
+          ? "Conectado diretamente à tabela 'frota_veiculos' no Supabase."
+          : "Armazenando em espelho seguro (fleet_data.json). Execute o script 'scripts/create_frota_veiculos.sql' no Supabase para sincronizar a tabela nativa."
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET all vehicles with computed alerts
+  app.get("/api/admin/fleet", authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ error: "Acesso restrito ao administrador." });
+    }
+    try {
+      const fleet = await getFleetData(supabase);
       const enriched = fleet.map(computeVehicleStats);
       return res.json(enriched);
     } catch (e: any) {
@@ -527,12 +604,12 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
   });
 
   // GET summary statistics of the fleet
-  app.get("/api/admin/fleet/stats", authenticateToken, (req: any, res: any) => {
+  app.get("/api/admin/fleet/stats", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Acesso restrito ao administrador." });
     }
     try {
-      const fleet = getFleetData().map(computeVehicleStats);
+      const fleet = (await getFleetData(supabase)).map(computeVehicleStats);
       const totalVeiculos = fleet.length;
       const veiculosAtivos = fleet.filter(v => v.status === 'ativo').length;
       const veiculosManutencao = fleet.filter(v => v.status === 'manutencao').length;
@@ -571,7 +648,7 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
   });
 
   // POST create new vehicle
-  app.post("/api/admin/fleet", authenticateToken, (req: any, res: any) => {
+  app.post("/api/admin/fleet", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Acesso restrito ao administrador." });
     }
@@ -581,7 +658,7 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
         return res.status(400).json({ error: "Matrícula e Modelo são obrigatórios." });
       }
 
-      const fleet = getFleetData();
+      const fleet = await getFleetData(supabase);
       const newVehicle = {
         id: "frot-" + Date.now(),
         matricula: body.matricula.toUpperCase().trim(),
@@ -615,8 +692,18 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
         manutencoes: []
       };
 
+      // Try inserting into Supabase
+      if (supabase) {
+        try {
+          await supabase.from("frota_veiculos").insert(newVehicle);
+        } catch (dbErr) {
+          console.warn("Could not insert vehicle into Supabase:", dbErr);
+        }
+      }
+
+      // Also persist to local mirror
       fleet.unshift(newVehicle);
-      saveFleetData(fleet);
+      saveLocalFleetData(fleet);
 
       return res.status(201).json(computeVehicleStats(newVehicle));
     } catch (e: any) {
@@ -625,14 +712,14 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
   });
 
   // PUT update vehicle
-  app.put("/api/admin/fleet/:id", authenticateToken, (req: any, res: any) => {
+  app.put("/api/admin/fleet/:id", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Acesso restrito ao administrador." });
     }
     try {
       const { id } = req.params;
       const body = req.body;
-      const fleet = getFleetData();
+      const fleet = await getFleetData(supabase);
       const index = fleet.findIndex(v => v.id === id);
 
       if (index === -1) {
@@ -647,11 +734,21 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
         km_atual: body.km_atual !== undefined ? Number(body.km_atual) : existing.km_atual,
         km_proxima_troca_oleo: body.km_proxima_troca_oleo !== undefined 
           ? Number(body.km_proxima_troca_oleo) 
-          : (existing.km_ultima_troca_oleo + (Number(body.km_intervalo_troca_oleo) || existing.km_intervalo_troca_oleo || 10000))
+          : (existing.km_ultima_troca_oleo + (Number(body.km_intervalo_troca_oleo) || existing.km_intervalo_troca_oleo || 10000)),
+        updated_at: new Date().toISOString()
       };
 
+      // Try updating in Supabase
+      if (supabase) {
+        try {
+          await supabase.from("frota_veiculos").update(updated).eq("id", id);
+        } catch (dbErr) {
+          console.warn("Could not update vehicle in Supabase:", dbErr);
+        }
+      }
+
       fleet[index] = updated;
-      saveFleetData(fleet);
+      saveLocalFleetData(fleet);
 
       return res.json(computeVehicleStats(updated));
     } catch (e: any) {
@@ -660,15 +757,26 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
   });
 
   // DELETE vehicle
-  app.delete("/api/admin/fleet/:id", authenticateToken, (req: any, res: any) => {
+  app.delete("/api/admin/fleet/:id", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Acesso restrito ao administrador." });
     }
     try {
       const { id } = req.params;
-      let fleet = getFleetData();
+
+      // Try deleting from Supabase
+      if (supabase) {
+        try {
+          await supabase.from("frota_veiculos").delete().eq("id", id);
+        } catch (dbErr) {
+          console.warn("Could not delete vehicle from Supabase:", dbErr);
+        }
+      }
+
+      let fleet = await getFleetData(supabase);
       fleet = fleet.filter(v => v.id !== id);
-      saveFleetData(fleet);
+      saveLocalFleetData(fleet);
+
       return res.json({ success: true, message: "Veículo removido com sucesso." });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
@@ -676,14 +784,14 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
   });
 
   // POST add fuel log (abastecimento)
-  app.post("/api/admin/fleet/:id/abastecimento", authenticateToken, (req: any, res: any) => {
+  app.post("/api/admin/fleet/:id/abastecimento", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Acesso restrito ao administrador." });
     }
     try {
       const { id } = req.params;
       const { data, km, litros, preco_litro, valor_total, posto, condutor, nota } = req.body;
-      const fleet = getFleetData();
+      const fleet = await getFleetData(supabase);
       const v = fleet.find(item => item.id === id);
 
       if (!v) {
@@ -711,7 +819,21 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
         v.km_atual = Number(km);
       }
 
-      saveFleetData(fleet);
+      v.updated_at = new Date().toISOString();
+
+      if (supabase) {
+        try {
+          await supabase.from("frota_veiculos").update({
+            abastecimentos: v.abastecimentos,
+            km_atual: v.km_atual,
+            updated_at: v.updated_at
+          }).eq("id", id);
+        } catch (dbErr) {
+          console.warn("Could not update fuel in Supabase:", dbErr);
+        }
+      }
+
+      saveLocalFleetData(fleet);
       return res.status(201).json(computeVehicleStats(v));
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
@@ -719,14 +841,14 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
   });
 
   // POST add maintenance log (manutenção / troca de óleo)
-  app.post("/api/admin/fleet/:id/manutencao", authenticateToken, (req: any, res: any) => {
+  app.post("/api/admin/fleet/:id/manutencao", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Acesso restrito ao administrador." });
     }
     try {
       const { id } = req.params;
       const { data, tipo, descricao, km, custo, oficina, fatura_numero } = req.body;
-      const fleet = getFleetData();
+      const fleet = await getFleetData(supabase);
       const v = fleet.find(item => item.id === id);
 
       if (!v) {
@@ -760,7 +882,24 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
         v.km_atual = Number(km);
       }
 
-      saveFleetData(fleet);
+      v.updated_at = new Date().toISOString();
+
+      if (supabase) {
+        try {
+          await supabase.from("frota_veiculos").update({
+            manutencoes: v.manutencoes,
+            km_atual: v.km_atual,
+            km_ultima_troca_oleo: v.km_ultima_troca_oleo,
+            data_ultima_troca_oleo: v.data_ultima_troca_oleo,
+            km_proxima_troca_oleo: v.km_proxima_troca_oleo,
+            updated_at: v.updated_at
+          }).eq("id", id);
+        } catch (dbErr) {
+          console.warn("Could not update maintenance in Supabase:", dbErr);
+        }
+      }
+
+      saveLocalFleetData(fleet);
       return res.status(201).json(computeVehicleStats(v));
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
@@ -768,14 +907,14 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
   });
 
   // POST quick update km
-  app.post("/api/admin/fleet/:id/km", authenticateToken, (req: any, res: any) => {
+  app.post("/api/admin/fleet/:id/km", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Acesso restrito ao administrador." });
     }
     try {
       const { id } = req.params;
       const { km } = req.body;
-      const fleet = getFleetData();
+      const fleet = await getFleetData(supabase);
       const v = fleet.find(item => item.id === id);
 
       if (!v) {
@@ -783,7 +922,20 @@ export function setupFleetRoutes({ app, authenticateToken }: any) {
       }
 
       v.km_atual = Number(km);
-      saveFleetData(fleet);
+      v.updated_at = new Date().toISOString();
+
+      if (supabase) {
+        try {
+          await supabase.from("frota_veiculos").update({
+            km_atual: v.km_atual,
+            updated_at: v.updated_at
+          }).eq("id", id);
+        } catch (dbErr) {
+          console.warn("Could not update km in Supabase:", dbErr);
+        }
+      }
+
+      saveLocalFleetData(fleet);
       return res.json(computeVehicleStats(v));
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
