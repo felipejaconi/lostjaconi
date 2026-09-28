@@ -21,8 +21,18 @@ import { setupProductsRoutes } from "./src/routes/products";
 import { setupOrdersRoutes } from "./src/routes/orders";
 import { setupWmsRoutes } from "./src/routes/wms";
 import { setupConfigRoutes } from "./src/routes/config";
+import { setupFleetRoutes } from "./src/routes/fleet";
 
 const cache = new NodeCache({ stdTTL: 60 }); // 60 seconds default cache
+
+// Global process resilience guards to prevent 503 / crashes
+process.on("uncaughtException", (err) => {
+  console.error("⚠️ Uncaught Exception intercepted:", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("⚠️ Unhandled Rejection intercepted:", reason);
+});
 
 // Ensure uploads directory exists
 const uploadDir = path.join(process.cwd(), "uploads");
@@ -199,6 +209,7 @@ async function startServer() {
   setupOrdersRoutes(routeDependencies);
   setupWmsRoutes(routeDependencies);
   setupConfigRoutes(routeDependencies);
+  setupFleetRoutes(routeDependencies);
 
   // --- VITE MIDDLEWARE ---
   const distPath = path.join(process.cwd(), "dist");
