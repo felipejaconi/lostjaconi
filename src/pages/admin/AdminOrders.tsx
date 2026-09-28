@@ -24,8 +24,6 @@ const TARE_OPTIONS = [
 
 export default function AdminOrders() {
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
-  const isArmazem = user?.role === "armazem";
   const [orders, setOrders] = useState<any[]>([]);
   const [stores, setStores] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
@@ -567,26 +565,19 @@ export default function AdminOrders() {
 
   const handleUpdateOrderItem = async (orderId: number, itemId: number, newQuantity: number, newPrice?: number) => {
     try {
-      const priceToUse = (isAdmin && newPrice !== undefined) ? newPrice : undefined;
-
       // Optimistic Update
       setOrders(prev => prev.map(o => {
         if (o.id === orderId) {
           if (newQuantity <= 0) {
-            const remaining = o.pedido_itens?.filter((i:any) => i.id !== itemId) || [];
-            const newTotal = remaining.reduce((acc: number, item: any) => acc + (Number(item.quantidade || 0) * Number(item.preco_unitario || 0)), 0);
-            return { ...o, pedido_itens: remaining, total: newTotal };
+            return { ...o, pedido_itens: o.pedido_itens?.filter((i:any) => i.id !== itemId) };
           } else {
-             const updated = o.pedido_itens?.map((i:any) => 
-                i.id === itemId 
-                ? { ...i, quantidade: newQuantity, ...(priceToUse !== undefined && { preco_unitario: priceToUse }) } 
-                : i
-             ) || [];
-             const newTotal = updated.reduce((acc: number, item: any) => acc + (Number(item.quantidade || 0) * Number(item.preco_unitario || 0)), 0);
              return {
                 ...o,
-                pedido_itens: updated,
-                total: newTotal
+                pedido_itens: o.pedido_itens?.map((i:any) => 
+                   i.id === itemId 
+                   ? { ...i, quantidade: newQuantity, ...(newPrice !== undefined && { preco_unitario: newPrice }) } 
+                   : i
+                )
              };
           }
         }
@@ -597,9 +588,7 @@ export default function AdminOrders() {
         await api.delete(`/pedidos/${orderId}/itens/${itemId}`);
       } else {
         const payload: any = { quantidade: newQuantity };
-        if (isAdmin && priceToUse !== undefined) {
-          payload.preco_unitario = priceToUse;
-        }
+        if (newPrice !== undefined) payload.preco_unitario = newPrice;
         await api.put(`/pedidos/${orderId}/itens/${itemId}`, payload);
       }
       
@@ -607,70 +596,45 @@ export default function AdminOrders() {
       
       if (editingOrder?.id === orderId) {
          const updatedRes = await api.get(`/pedidos/${orderId}`);
-         if (updatedRes.data) {
-           setEditingOrder(updatedRes.data);
-           setOrders(prev => prev.map(o => o.id === orderId ? updatedRes.data : o));
-         }
+         setEditingOrder(updatedRes.data);
       }
-    } catch (error: any) {
+    } catch (error) {
       fetchOrders();
-      Swal.fire("Erro", error.response?.data?.error || error.response?.data?.message || "Falha ao atualizar item", "error");
+      Swal.fire("Erro", "Falha ao atualizar item", "error");
     }
   };
 
   const handleAddOrderItem = async (orderId: number) => {
     if (!newItemProductId || newItemQuantity <= 0) return Swal.fire("Aviso", "Selecione um produto e uma quantidade válida", "warning");
     try {
-      const prod = products.find(p => String(p.id) === String(newItemProductId));
-      const catalogPrice = Number(prod?.preco != null ? prod.preco : (prod?.preco_unitario || 0));
-
+      const prod = products.find(p => p.id === newItemProductId);
       // Optimistic Update
       setOrders(prev => prev.map(o => {
         if (o.id === orderId) {
           const newItem = {
              id: Math.random(), // fake id for optimistic
-             produto_id: prod?.id || newItemProductId,
+             produto_id: newItemProductId,
              quantidade: newItemQuantity,
-             preco_unitario: catalogPrice,
+             preco_unitario: Number(prod?.preco || 0),
              produto: prod
           };
-          const currentItens = o.pedido_itens || [];
-          const updatedItens = [...currentItens, newItem];
-          const updatedTotal = updatedItens.reduce((acc: number, item: any) => acc + (Number(item.quantidade || 0) * Number(item.preco_unitario || 0)), 0);
-          return { ...o, pedido_itens: updatedItens, total: updatedTotal };
+          return { ...o, pedido_itens: [...(o.pedido_itens || []), newItem] };
         }
         return o;
       }));
 
-      await api.post(`/pedidos/${orderId}/itens`, {
-        produto_id: prod?.id || newItemProductId,
-        quantidade: newItemQuantity,
-        preco_unitario: catalogPrice
-      });
-
-      setNewItemProductId("");
-      setNewItemQuantity(1);
-      setAddProdSearch("");
-
+      await api.post(`/pedidos/${orderId}/itens`, { produto_id: newItemProductId, quantidade: newItemQuantity });
+      setNewItemProductId(""); setNewItemQuantity(1);
+      // Let realtime/refetch handle true data
+      // fetchOrders();
       if (editingOrder?.id === orderId) {
         const updatedRes = await api.get(`/pedidos/${orderId}`);
-        if (updatedRes.data) {
-          setEditingOrder(updatedRes.data);
-          setOrders(prev => prev.map(o => o.id === orderId ? updatedRes.data : o));
-        }
+        setEditingOrder(updatedRes.data);
       }
-      Swal.fire({
-        title: "Inserido!",
-        text: `Produto adicionado com o valor de € ${catalogPrice.toFixed(2)}.`,
-        icon: "success",
-        timer: 1500,
-        showConfirmButton: false,
-        toast: true,
-        position: 'bottom-end'
-      });
+      Swal.fire({ title: "Inserido!", text: "Produto adicionado com sucesso.", icon: "success", timer: 1500, showConfirmButton: false, toast: true, position: 'bottom-end' });
     } catch (error: any) {
         fetchOrders();
-        Swal.fire("Erro", error.response?.data?.message || error.response?.data?.error || "Erro ao adicionar", "error");
+        Swal.fire("Erro", error.response?.data?.message || "Erro ao adicionar", "error");
     }
   };
 
@@ -1455,11 +1419,6 @@ export default function AdminOrders() {
                     <span className="px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 rounded-md">
                       {editingOrder.status}
                     </span>
-                    {!isAdmin && (
-                      <span className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-md">
-                        Armazém (Preços Bloqueados)
-                      </span>
-                    )}
                   </div>
                   <div className="flex items-center gap-4 text-sm text-zinc-500 mt-2">
                     <div className="flex items-center gap-1.5">
@@ -1502,10 +1461,7 @@ export default function AdminOrders() {
                              <tr className="bg-zinc-900/60 border-b border-zinc-800/80">
                                 <th className="px-5 py-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Produto</th>
                                 <th className="px-5 py-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider text-center w-32">Quantidade</th>
-                                <th className="px-5 py-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider text-center w-36">
-                                  Preço Unit. (€)
-                                  {!isAdmin && <span className="block text-[9px] text-zinc-500 font-normal normal-case">Somente leitura</span>}
-                                </th>
+                                <th className="px-5 py-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider text-center w-32">Preço Unit. (€)</th>
                                 <th className="px-5 py-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider text-right w-24">Ação</th>
                              </tr>
                           </thead>
@@ -1522,32 +1478,22 @@ export default function AdminOrders() {
                                       <input 
                                          type="number" min="0" step="0.001"
                                          defaultValue={item.quantidade}
-                                         onBlur={(e) => handleUpdateOrderItem(editingOrder.id, item.id, parseFloat(e.target.value))}
+                                         onBlur={(e) => handleUpdateOrderItem(editingOrder.id, item.id, parseFloat(e.target.value), item.preco_unitario)}
                                          className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
                                       />
                                    </td>
                                    <td className="px-5 py-4 text-center">
-                                      {isAdmin ? (
-                                         <input 
-                                            type="number" min="0" step="0.01"
-                                            defaultValue={item.preco_unitario}
-                                            onBlur={(e) => handleUpdateOrderItem(editingOrder.id, item.id, item.quantidade, parseFloat(e.target.value))}
-                                            className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
-                                            title="Editar valor unitário (Acesso Admin)"
-                                         />
-                                      ) : (
-                                         <div 
-                                            className="w-full h-10 bg-zinc-900/40 border border-zinc-800/40 rounded-lg px-3 flex items-center justify-center text-sm font-semibold text-zinc-400 select-none cursor-not-allowed" 
-                                            title="Apenas o administrador pode alterar valores"
-                                         >
-                                            € {Number(item.preco_unitario || 0).toFixed(2)}
-                                         </div>
-                                      )}
+                                      <input 
+                                         type="number" min="0" step="0.01"
+                                         defaultValue={item.preco_unitario}
+                                         onBlur={(e) => handleUpdateOrderItem(editingOrder.id, item.id, item.quantidade, parseFloat(e.target.value))}
+                                         className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
+                                      />
                                    </td>
                                    <td className="px-5 py-4 text-right">
                                       <button 
                                          onClick={() => handleUpdateOrderItem(editingOrder.id, item.id, 0)}
-                                         className="w-10 h-10 rounded-lg bg-rose-500/5 text-rose-500/70 hover:bg-rose-500/10 hover:text-rose-500 flex items-center justify-center transition-all ml-auto cursor-pointer"
+                                         className="w-10 h-10 rounded-lg bg-rose-500/5 text-rose-500/70 hover:bg-rose-500/10 hover:text-rose-500 flex items-center justify-center transition-all ml-auto"
                                          title="Remover Item"
                                       >
                                          <Trash2 className="w-4 h-4" />
@@ -1577,8 +1523,8 @@ export default function AdminOrders() {
               <div className="px-6 py-4 border-t border-zinc-800 bg-zinc-900/40 shrink-0 flex flex-col md:flex-row items-center justify-between gap-4 overflow-visible">
                  
                  {/* Compact Add Product Component */}
-                 <div className="flex flex-wrap items-center gap-2 w-full md:w-auto flex-1 h-10">
-                    <div className="relative flex-1 min-w-[200px] max-w-[280px] h-full">
+                 <div className="flex items-center gap-2 w-full md:w-auto flex-1 h-10">
+                    <div className="relative flex-1 max-w-[280px] h-full">
                         <input 
                            type="text"
                            placeholder="Procurar Produto..."
@@ -1595,36 +1541,27 @@ export default function AdminOrders() {
                         <Search className="w-4 h-4 text-zinc-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                         {isAddProdSearchOpen && (
                           <div className="absolute z-50 left-0 right-0 bottom-full mb-2 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl max-h-60 overflow-y-auto custom-scrollbar">
-                             {products.filter(p => !addProdSearch || p.nome?.toLowerCase().includes(addProdSearch.toLowerCase())).map(p => (
+                             {products.filter(p => !addProdSearch || p.nome.toLowerCase().includes(addProdSearch.toLowerCase())).map(p => (
                                 <div
                                   key={p.id}
                                   onMouseDown={(e) => {
                                      e.preventDefault();
-                                     setNewItemProductId(String(p.id));
+                                     setNewItemProductId(p.id);
                                      setAddProdSearch(p.nome);
                                      setIsAddProdSearchOpen(false);
                                   }}
                                   className="px-4 py-3 flex justify-between items-center text-sm text-zinc-300 hover:bg-emerald-500/20 hover:text-emerald-400 cursor-pointer border-b border-zinc-800/50 last:border-0"
                                 >
                                   <span className="font-medium">{p.nome}</span>
-                                  <span className="text-emerald-400 font-bold text-xs px-2 py-1 bg-zinc-950 rounded">€{Number(p.preco || 0).toFixed(2)}</span>
+                                  <span className="text-zinc-500 text-xs px-2 py-1 bg-zinc-950 rounded">€{Number(p.preco).toFixed(2)}</span>
                                 </div>
                              ))}
-                             {products.filter(p => !addProdSearch || p.nome?.toLowerCase().includes(addProdSearch.toLowerCase())).length === 0 && (
+                             {products.filter(p => !addProdSearch || p.nome.toLowerCase().includes(addProdSearch.toLowerCase())).length === 0 && (
                                 <div className="px-4 py-4 text-sm text-zinc-500 text-center">Nenhum produto correspondente encontrado.</div>
                               )}
                           </div>
                         )}
                     </div>
-                    {/* Visual indicator of product price when selected */}
-                    {newItemProductId && (
-                      <div className="h-full px-3 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center gap-1.5 text-xs text-zinc-300 shrink-0">
-                        <span className="text-zinc-500">Valor:</span>
-                        <span className="font-bold text-emerald-400">
-                          €{Number(products.find(p => String(p.id) === String(newItemProductId))?.preco || 0).toFixed(2)}
-                        </span>
-                      </div>
-                    )}
                     <div className="w-20 h-full">
                         <input 
                           type="number" min="0.001" step="0.001"
@@ -1637,7 +1574,7 @@ export default function AdminOrders() {
                     <button 
                       onClick={() => handleAddOrderItem(editingOrder.id)}
                       disabled={!newItemProductId || newItemQuantity <= 0}
-                      className="px-4 h-full bg-zinc-100 hover:bg-white disabled:opacity-50 disabled:hover:bg-zinc-100 text-zinc-950 font-bold tracking-tight rounded-lg text-sm transition-all shadow-sm whitespace-nowrap cursor-pointer disabled:cursor-not-allowed"
+                      className="px-4 h-full bg-zinc-100 hover:bg-white disabled:opacity-50 disabled:hover:bg-zinc-100 text-zinc-950 font-bold tracking-tight rounded-lg text-sm transition-all shadow-sm whitespace-nowrap"
                     >
                       Inserir
                     </button>
