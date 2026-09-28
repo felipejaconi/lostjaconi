@@ -6,7 +6,6 @@ const AdminHomeComponent = lazy(() => import("./admin/AdminHome"));
 const AdminOrders = lazy(() => import("./admin/AdminOrders"));
 const AdminWarehousePicking = lazy(() => import("./admin/AdminWarehousePicking"));
 const AdminProducts = lazy(() => import("./admin/AdminProducts"));
-const AdminWarehouseMap = lazy(() => import("./admin/AdminWarehouseMap"));
 const AdminStores = lazy(() => import("./admin/AdminStores"));
 const AdminGiro = lazy(() => import("./admin/AdminGiro"));
 const AdminUsers = lazy(() => import("./admin/AdminUsers"));
@@ -31,7 +30,7 @@ import {
 } from "react-router-dom";
 import { BrandName } from "../components/Logo";
 import {
-  Package, Map,
+  Package,
   ShoppingCart,
   Users,
   Settings,
@@ -277,7 +276,6 @@ export default function AdminDashboard() {
         { to: "/admin/armazem/pedidos", label: "Pedidos", icon: <Truck size={18} /> },
         { to: "/admin/estoque-global", label: "Armazém", icon: <Layers size={18} /> },
         { to: "/admin/armazem/produtos", label: "Produtos", icon: <Package size={18} /> },
-        { to: "/admin/mapa", label: "Mapa", icon: <Map size={18} /> },
         ...(["admin", "armazem"].includes(user?.role) ? [{ to: "/admin/fornecedores", label: "Fornecedores", icon: <Users size={18} /> }] : []),
       ]
     },
@@ -609,7 +607,6 @@ export default function AdminDashboard() {
                 <Route path="/fornecedores" element={<AdminSuppliers />} />
                 <Route path="/financeiro" element={<AdminFinancial />} />
                 <Route path="/produtos" element={<AdminProducts />} />
-                <Route path="/mapa" element={<AdminWarehouseMap />} />
                 <Route path="/pedidos" element={<AdminOrders />} />
                 <Route path="/lojas" element={<AdminStores />} />
                 <Route path="/estoque-global" element={<AdminGlobalStock />} />
