@@ -30,18 +30,6 @@
   --color-blue-700: #b91c1c;
   --color-blue-800: #991b1b;
   --color-blue-900: #7f1d1d;
-
-  @keyframes scan {
-    0%,
-    100% {
-      transform: translateY(0);
-      opacity: 0.2;
-    }
-    50% {
-      transform: translateY(300px);
-      opacity: 0.8;
-    }
-  }
 }
 
 @layer base {
