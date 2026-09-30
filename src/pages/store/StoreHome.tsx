@@ -240,6 +240,9 @@ export default function StoreHome() {
               crossOrigin="anonymous"
             />
             <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight group-hover:text-yellow-500 transition-colors">A Gerência</h3>
+            <p className="text-slate-400 text-[10px] sm:text-[11px] lg:text-sm leading-snug line-clamp-2 max-w-[180px]">
+              Estatísticas, metas e financeiro.
+            </p>
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-yellow-500 mt-2 transition-colors w-full justify-center shrink-0 z-10">
