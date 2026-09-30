@@ -31,9 +31,6 @@ import {
   Settings,
   Layers,
   HelpCircle,
-  Database,
-  Copy,
-  Check,
   X
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -141,11 +138,6 @@ export default function AdminFleet() {
   const [kmTargetVehicle, setKmTargetVehicle] = useState<Veiculo | null>(null);
   const [quickKmInput, setQuickKmInput] = useState<number>(0);
 
-  // Database Connection Status
-  const [dbStatus, setDbStatus] = useState<any>(null);
-  const [isDbModalOpen, setIsDbModalOpen] = useState(false);
-  const [copiedSql, setCopiedSql] = useState(false);
-
   // Forms State
   const [formData, setFormData] = useState({
     matricula: "",
@@ -199,14 +191,12 @@ export default function AdminFleet() {
     if (showLoading) setLoading(true);
     setRefreshing(true);
     try {
-      const [fleetRes, usersRes, dbRes] = await Promise.all([
+      const [fleetRes, usersRes] = await Promise.all([
         api.get("/admin/fleet"),
-        api.get("/admin/users").catch(() => ({ data: [] })),
-        api.get("/admin/fleet/db-status").catch(() => ({ data: null }))
+        api.get("/admin/users").catch(() => ({ data: [] }))
       ]);
 
       setVehicles(fleetRes.data || []);
-      if (dbRes?.data) setDbStatus(dbRes.data);
 
       const allUsers = usersRes.data || [];
       setUsersList(allUsers);
@@ -616,18 +606,6 @@ export default function AdminFleet() {
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-zinc-800 border border-zinc-700 text-zinc-300">
                   {vehicles.length} Viaturas
                 </span>
-                <button
-                  onClick={() => setIsDbModalOpen(true)}
-                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1.5 transition-all border ${
-                    dbStatus?.tableFound
-                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
-                      : "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
-                  }`}
-                  title="Clique para ver o status do Banco de Dados"
-                >
-                  <Database className="w-3 h-3" />
-                  <span>{dbStatus?.tableFound ? "Supabase (Ativo)" : "Banco de Dados"}</span>
-                </button>
               </div>
             </div>
           </div>
@@ -2196,182 +2174,6 @@ export default function AdminFleet() {
               </div>
             </div>
           )}
-        </Modal>
-
-        {/* MODAL: CONFIGURAÇÃO DO BANCO DE DADOS SUPABASE */}
-        <Modal
-          isOpen={isDbModalOpen}
-          onClose={() => setIsDbModalOpen(false)}
-          title="Armazenamento & Banco de Dados (Frotas)"
-          maxWidth="2xl"
-        >
-          <div className="space-y-4 pt-2 text-xs">
-            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className={`w-3 h-3 rounded-full ${dbStatus?.tableFound ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
-                  <span className="font-bold text-sm text-zinc-100">
-                    {dbStatus?.tableFound ? "Supabase PostgreSQL (Conectado)" : "Armazenamento em Nuvem / Supabase"}
-                  </span>
-                </div>
-                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                  dbStatus?.tableFound
-                    ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400"
-                    : "bg-amber-500/10 border border-amber-500/30 text-amber-400"
-                }`}>
-                  {dbStatus?.tableFound ? "Tabela Ativa" : "Requer Criação de Tabela"}
-                </span>
-              </div>
-
-              <p className="text-zinc-400 leading-relaxed text-xs">
-                {dbStatus?.tableFound
-                  ? "Os dados das viaturas, abastecimentos e manutenções estão sendo sincronizados e salvos diretamente na tabela `frota_veiculos` do seu banco de dados Supabase."
-                  : "O sistema possui suporte nativo para persistir todas as informações na tabela `frota_veiculos` do Supabase. Para ativar a tabela dedicada no seu banco de dados, execute o script SQL abaixo no SQL Editor do Supabase."}
-              </p>
-
-              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-zinc-800 text-[11px]">
-                <div>
-                  <span className="text-zinc-500 block">Banco de Dados:</span>
-                  <strong className="text-zinc-200">Supabase (PostgreSQL)</strong>
-                </div>
-                <div>
-                  <span className="text-zinc-500 block">Tabela Alvo:</span>
-                  <strong className="text-zinc-200 font-mono">public.frota_veiculos</strong>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
-                  Script SQL para Criar a Tabela no Supabase
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const sqlCode = `-- TABELA DE GESTÃO DE FROTAS (LOST WIND ERP)
-CREATE TABLE IF NOT EXISTS public.frota_veiculos (
-  id text PRIMARY KEY,
-  matricula text NOT NULL,
-  marca text NOT NULL,
-  modelo text NOT NULL,
-  ano integer DEFAULT 2022,
-  cor text DEFAULT 'Branco',
-  combustivel text DEFAULT 'Gasóleo',
-  capacidade_deposito numeric DEFAULT 50,
-  km_atual numeric DEFAULT 0,
-  loja_id text,
-  loja_nome text DEFAULT 'Armazém Central',
-  responsavel_nome text,
-  responsavel_telefone text,
-  status text DEFAULT 'ativo',
-  data_ultima_inspecao text,
-  data_proxima_inspecao text,
-  seguradora text,
-  apolice_numero text,
-  tipo_seguro text DEFAULT 'Danos Próprios',
-  data_validade_seguro text,
-  km_ultima_troca_oleo numeric DEFAULT 0,
-  km_intervalo_troca_oleo numeric DEFAULT 10000,
-  km_proxima_troca_oleo numeric DEFAULT 10000,
-  data_ultima_troca_oleo text,
-  mes_iuc integer DEFAULT 1,
-  ano_iuc_pago integer DEFAULT 2026,
-  iuc_valor numeric DEFAULT 130,
-  notas text,
-  abastecimentos jsonb DEFAULT '[]'::jsonb,
-  manutencoes jsonb DEFAULT '[]'::jsonb,
-  created_at timestamp with time zone DEFAULT now(),
-  updated_at timestamp with time zone DEFAULT now()
-);
-
-ALTER TABLE public.frota_veiculos ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "frota_veiculos_all_policy" ON public.frota_veiculos;
-CREATE POLICY "frota_veiculos_all_policy" ON public.frota_veiculos
-  FOR ALL
-  USING (true)
-  WITH CHECK (true);
-
-CREATE INDEX IF NOT EXISTS idx_frota_matricula ON public.frota_veiculos(matricula);
-CREATE INDEX IF NOT EXISTS idx_frota_loja_id ON public.frota_veiculos(loja_id);
-CREATE INDEX IF NOT EXISTS idx_frota_status ON public.frota_veiculos(status);`;
-                    navigator.clipboard.writeText(sqlCode);
-                    setCopiedSql(true);
-                    setTimeout(() => setCopiedSql(false), 2000);
-                  }}
-                  className="px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all"
-                >
-                  {copiedSql ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-emerald-400">Copiado!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Copiar SQL</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 font-mono text-[11px] text-zinc-300 max-h-48 overflow-y-auto space-y-1">
-                <p className="text-emerald-400">-- 1. Abra o painel do Supabase &gt; SQL Editor</p>
-                <p className="text-emerald-400">-- 2. Cole este script e clique em 'RUN':</p>
-                <pre className="text-zinc-400 whitespace-pre-wrap">{`CREATE TABLE IF NOT EXISTS public.frota_veiculos (
-  id text PRIMARY KEY,
-  matricula text NOT NULL,
-  marca text NOT NULL,
-  modelo text NOT NULL,
-  ano integer DEFAULT 2022,
-  cor text DEFAULT 'Branco',
-  combustivel text DEFAULT 'Gasóleo',
-  capacidade_deposito numeric DEFAULT 50,
-  km_atual numeric DEFAULT 0,
-  loja_id text,
-  loja_nome text DEFAULT 'Armazém Central',
-  responsavel_nome text,
-  responsavel_telefone text,
-  status text DEFAULT 'ativo',
-  data_ultima_inspecao text,
-  data_proxima_inspecao text,
-  seguradora text,
-  apolice_numero text,
-  tipo_seguro text DEFAULT 'Danos Próprios',
-  data_validade_seguro text,
-  km_ultima_troca_oleo numeric DEFAULT 0,
-  km_intervalo_troca_oleo numeric DEFAULT 10000,
-  km_proxima_troca_oleo numeric DEFAULT 10000,
-  data_ultima_troca_oleo text,
-  mes_iuc integer DEFAULT 1,
-  ano_iuc_pago integer DEFAULT 2026,
-  iuc_valor numeric DEFAULT 130,
-  notas text,
-  abastecimentos jsonb DEFAULT '[]'::jsonb,
-  manutencoes jsonb DEFAULT '[]'::jsonb,
-  created_at timestamp with time zone DEFAULT now(),
-  updated_at timestamp with time zone DEFAULT now()
-);
-
-ALTER TABLE public.frota_veiculos ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "frota_veiculos_all_policy" ON public.frota_veiculos FOR ALL USING (true) WITH CHECK (true);`}</pre>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
-              <button
-                type="button"
-                onClick={() => {
-                  fetchData(false);
-                  setIsDbModalOpen(false);
-                }}
-                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold"
-              >
-                Entendido
-              </button>
-            </div>
-          </div>
         </Modal>
       </div>
     </ContentViewport>

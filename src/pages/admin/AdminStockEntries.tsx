@@ -817,7 +817,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                                 <div className="flex flex-col gap-0.5">
                                   <span className="text-zinc-100 text-sm font-medium">{opt.nome}</span>
                                   <span className="text-[11px] text-zinc-500">
-                                    {opt.barcode_ean ? `EAN: ${opt.barcode_ean}` : 'S/ EAN'} • {opt.categoria_nome || 'Sem Cat.'}
+                                    {opt.categoria_nome || 'Sem Categoria'}
                                   </span>
                                 </div>
                               )}
@@ -1018,18 +1018,12 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                        />
                      </div>
 
-                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                       <div>
-                         <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block mb-2">Categoria *</label>
-                         <select required value={newProductData.categoria_id} onChange={(e) => setNewProductData({ ...newProductData, categoria_id: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 outline-none transition-all">
-                           <option value="">Selecionar...</option>
-                           {categories.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-                         </select>
-                       </div>
-                       <div>
-                         <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block mb-2">Código Barras (EAN)</label>
-                         <input type="text" value={newProductData.barcode_ean} onChange={(e) => setNewProductData({ ...newProductData, barcode_ean: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 outline-none transition-all" placeholder="Opcional" />
-                       </div>
+                     <div>
+                       <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block mb-2">Categoria *</label>
+                       <select required value={newProductData.categoria_id} onChange={(e) => setNewProductData({ ...newProductData, categoria_id: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 outline-none transition-all">
+                         <option value="">Selecionar...</option>
+                         {categories.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                       </select>
                      </div>
 
                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
