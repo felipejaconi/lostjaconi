@@ -575,7 +575,7 @@ export default function AdminOrders() {
                 ...o,
                 pedido_itens: o.pedido_itens?.map((i:any) => 
                    i.id === itemId 
-                   ? { ...i, quantidade: newQuantity, ...(user?.role === 'admin' && newPrice !== undefined ? { preco_unitario: newPrice } : {}) } 
+                   ? { ...i, quantidade: newQuantity, ...(newPrice !== undefined && { preco_unitario: newPrice }) } 
                    : i
                 )
              };
@@ -588,17 +588,15 @@ export default function AdminOrders() {
         await api.delete(`/pedidos/${orderId}/itens/${itemId}`);
       } else {
         const payload: any = { quantidade: newQuantity };
-        if (user?.role === 'admin' && newPrice !== undefined) payload.preco_unitario = newPrice;
+        if (newPrice !== undefined) payload.preco_unitario = newPrice;
         await api.put(`/pedidos/${orderId}/itens/${itemId}`, payload);
       }
       
-      // Update order and sync orders state
+      // Removed fetchOrders() for immediate UI response. Realtime channel will fetch anyway.
+      
       if (editingOrder?.id === orderId) {
          const updatedRes = await api.get(`/pedidos/${orderId}`);
-         if (updatedRes.data) {
-           setEditingOrder(updatedRes.data);
-           setOrders(prev => prev.map(o => o.id === orderId ? updatedRes.data : o));
-         }
+         setEditingOrder(updatedRes.data);
       }
     } catch (error) {
       fetchOrders();
@@ -610,8 +608,6 @@ export default function AdminOrders() {
     if (!newItemProductId || newItemQuantity <= 0) return Swal.fire("Aviso", "Selecione um produto e uma quantidade válida", "warning");
     try {
       const prod = products.find(p => p.id === newItemProductId);
-      const unitPrice = Number(prod?.preco ?? 0);
-
       // Optimistic Update
       setOrders(prev => prev.map(o => {
         if (o.id === orderId) {
@@ -619,31 +615,21 @@ export default function AdminOrders() {
              id: Math.random(), // fake id for optimistic
              produto_id: newItemProductId,
              quantidade: newItemQuantity,
-             preco_unitario: unitPrice,
+             preco_unitario: Number(prod?.preco || 0),
              produto: prod
           };
-          const updatedItens = [...(o.pedido_itens || []), newItem];
-          const updatedTotal = updatedItens.reduce((sum, item) => sum + (Number(item.quantidade) || 0) * (Number(item.preco_unitario) || 0), 0);
-          return { ...o, pedido_itens: updatedItens, total: updatedTotal };
+          return { ...o, pedido_itens: [...(o.pedido_itens || []), newItem] };
         }
         return o;
       }));
 
-      await api.post(`/pedidos/${orderId}/itens`, {
-        produto_id: newItemProductId,
-        quantidade: newItemQuantity,
-        preco_unitario: unitPrice
-      });
-      setNewItemProductId("");
-      setNewItemQuantity(1);
-      setAddProdSearch("");
-      
+      await api.post(`/pedidos/${orderId}/itens`, { produto_id: newItemProductId, quantidade: newItemQuantity });
+      setNewItemProductId(""); setNewItemQuantity(1);
+      // Let realtime/refetch handle true data
+      // fetchOrders();
       if (editingOrder?.id === orderId) {
         const updatedRes = await api.get(`/pedidos/${orderId}`);
-        if (updatedRes.data) {
-          setEditingOrder(updatedRes.data);
-          setOrders(prev => prev.map(o => o.id === orderId ? updatedRes.data : o));
-        }
+        setEditingOrder(updatedRes.data);
       }
       Swal.fire({ title: "Inserido!", text: "Produto adicionado com sucesso.", icon: "success", timer: 1500, showConfirmButton: false, toast: true, position: 'bottom-end' });
     } catch (error: any) {
@@ -1492,37 +1478,17 @@ export default function AdminOrders() {
                                       <input 
                                          type="number" min="0" step="0.001"
                                          defaultValue={item.quantidade}
-                                         onBlur={(e) => {
-                                            const val = parseFloat(e.target.value);
-                                            if (!isNaN(val)) {
-                                               handleUpdateOrderItem(editingOrder.id, item.id, val, item.preco_unitario);
-                                            }
-                                         }}
+                                         onBlur={(e) => handleUpdateOrderItem(editingOrder.id, item.id, parseFloat(e.target.value), item.preco_unitario)}
                                          className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
                                       />
                                    </td>
                                    <td className="px-5 py-4 text-center">
-                                      {user?.role === 'admin' ? (
-                                         <input 
-                                            type="number" min="0" step="0.01"
-                                            defaultValue={item.preco_unitario}
-                                            onBlur={(e) => {
-                                               const val = parseFloat(e.target.value);
-                                               if (!isNaN(val)) {
-                                                  handleUpdateOrderItem(editingOrder.id, item.id, item.quantidade, val);
-                                               }
-                                            }}
-                                            className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
-                                            title="Alterar preço unitário"
-                                         />
-                                      ) : (
-                                         <div 
-                                            className="w-full h-10 bg-zinc-900/50 border border-zinc-800/60 rounded-lg px-3 flex items-center justify-center text-sm font-semibold text-zinc-400 select-none cursor-not-allowed"
-                                            title="Apenas o administrador pode alterar valores"
-                                         >
-                                            € {Number(item.preco_unitario || 0).toFixed(2)}
-                                         </div>
-                                      )}
+                                      <input 
+                                         type="number" min="0" step="0.01"
+                                         defaultValue={item.preco_unitario}
+                                         onBlur={(e) => handleUpdateOrderItem(editingOrder.id, item.id, item.quantidade, parseFloat(e.target.value))}
+                                         className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
+                                      />
                                    </td>
                                    <td className="px-5 py-4 text-right">
                                       <button 

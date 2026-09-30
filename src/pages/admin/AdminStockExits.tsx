@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Store, Package, PackageMinus, Check, ListChecks, Scale, Trash2, Save, Send, AlertCircle, ChevronRight, Plus } from "lucide-react";
+import { Store, Package, PackageMinus, Check, ListChecks, ScanLine, Scale, Trash2, Save, Send, AlertCircle, ChevronRight, Plus } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import api from "../../lib/api";
 import Swal from "sweetalert2";
@@ -205,7 +205,7 @@ export default function AdminStockExits() {
 
                {manualItems.length === 0 ? (
                   <div className="p-12 text-center border border-dashed border-zinc-800 rounded-2xl bg-zinc-900/20">
-                     <PackageMinus className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
+                     <ScanLine className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
                      <h3 className="text-sm font-medium text-zinc-300">Lista Vazia</h3>
                      <p className="text-xs text-zinc-500 mt-1 mb-4">Adicione artigos para dar saída manual no armazém.</p>
                      <button onClick={addManualItem} className="bg-zinc-800 text-zinc-100 hover:bg-zinc-700 px-6 py-2.5 rounded-lg text-xs font-semibold transition-colors border border-zinc-700 flex items-center gap-2 mx-auto">
@@ -221,7 +221,7 @@ export default function AdminStockExits() {
                              <tr className="bg-zinc-900/50 border-b border-zinc-800">
                                 <th className="px-4 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-6 w-1/3">Artigo</th>
                                 <th className="px-4 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center">Disp. Armazém</th>
-                                <th className="px-4 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center">Unidade</th>
+                                <th className="px-4 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center">Modo Leitura</th>
                                 <th className="px-4 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center">Quantidade Real</th>
                                 <th className="px-4 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-right">Alocação(€)</th>
                                 <th className="px-4 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center pr-6 w-16">Ação</th>
