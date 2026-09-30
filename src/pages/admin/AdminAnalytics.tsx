@@ -72,15 +72,15 @@ export default function AdminAnalytics() {
   ];
   const displayMonth = `${monthNames[selectedDate.getMonth()]} ${selectedDate.getFullYear()}`;
 
-  const fetchAnalytics = (force = false) => {
+  const fetchAnalytics = () => {
     const month = selectedDate.getMonth();
     const year = selectedDate.getFullYear();
     const key = `${year}-${month}`;
 
-    if (!force && consumoMemoryCache.has(key)) {
+    if (consumoMemoryCache.has(key)) {
       setData(consumoMemoryCache.get(key)!);
       setLoading(false);
-    } else if (data.length === 0) {
+    } else {
       setLoading(true);
     }
 
@@ -98,8 +98,6 @@ export default function AdminAnalytics() {
       });
   };
 
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-
   useEffect(() => {
     fetchAnalytics();
     const channel = supabase
@@ -108,17 +106,13 @@ export default function AdminAnalytics() {
         "postgres_changes",
         { event: "*", schema: "public", table: "pedidos" },
         () => {
-          if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-          debounceTimerRef.current = setTimeout(() => {
-            consumoMemoryCache.clear();
-            fetchAnalytics(true);
-          }, 1500);
+          consumoMemoryCache.clear();
+          fetchAnalytics();
         },
       )
       .subscribe();
 
     return () => {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       supabase.removeChannel(channel);
     };
   }, [selectedDate]);
@@ -141,7 +135,7 @@ export default function AdminAnalytics() {
     return [...data].sort((a, b) => Number(b.mensal) - Number(a.mensal));
   }, [data]);
 
-  if (loading && data.length === 0) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-full min-h-[500px]">
         <img src={`${import.meta.env.VITE_SUPABASE_URL || "https://ybaoaskddcmwoincsnwm.supabase.co"}/storage/v1/object/public/uploads/icon.png`} alt="Carregando..." className="w-8 h-8 animate-spin opacity-80" />

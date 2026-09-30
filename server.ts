@@ -1,4 +1,6 @@
 import express from "express";
+// Remove direct import of create ViteServer
+// import { createServer as createViteServer } from "vite";
 import path from "path";
 import cors from "cors";
 import jwt from "jsonwebtoken";
@@ -19,19 +21,8 @@ import { setupProductsRoutes } from "./src/routes/products";
 import { setupOrdersRoutes } from "./src/routes/orders";
 import { setupWmsRoutes } from "./src/routes/wms";
 import { setupConfigRoutes } from "./src/routes/config";
-import { setupFleetRoutes } from "./src/routes/fleet";
 
-const cache = new NodeCache({ stdTTL: 60, checkperiod: 120 }); // 60 seconds default cache
-
-// Global process resilience guards - MUST be at the top
-process.on("uncaughtException", (err) => {
-  console.error("Critical: Uncaught Exception intercepted:", err);
-  // Optional: monitor here but don't exit to prevent 503 loop if it's a non-fatal error
-});
-
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("Critical: Unhandled Rejection at:", promise, "reason:", reason);
-});
+const cache = new NodeCache({ stdTTL: 60 }); // 60 seconds default cache
 
 // Ensure uploads directory exists
 const uploadDir = path.join(process.cwd(), "uploads");
@@ -64,21 +55,7 @@ async function startServer() {
   
   app.use(cors());
   app.use(express.json());
-  app.get("/api/health", async (req, res) => {
-    let supabaseStatus = "unknown";
-    try {
-      const { error } = await supabase.from("users").select("id").limit(1);
-      supabaseStatus = error ? "unreachable" : "connected";
-    } catch (e) {
-      supabaseStatus = "error";
-    }
-    res.json({ 
-      status: "ok", 
-      uptime: process.uptime(),
-      supabase: supabaseStatus,
-      timestamp: new Date().toISOString()
-    });
-  });
+  app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
   // Cache uploads forever since they have unique names usually
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads"), { maxAge: "1d" }));
 
@@ -91,12 +68,7 @@ async function startServer() {
 
   // Multer for image uploads (Memory Storage for Supabase)
   const storage = multer.memoryStorage();
-  const upload = multer({ 
-    storage,
-    limits: {
-      fileSize: 5 * 1024 * 1024 // 5MB limit
-    }
-  });
+  const upload = multer({ storage });
 
   // Helper to upload to Supabase Storage
   async function uploadToSupabase(
@@ -183,8 +155,8 @@ async function startServer() {
           } else {
             isValid = true;
           }
-          // Usando NodeCache para não sobrecarregar as DB calls (5 minutos)
-          cache.set(cacheKey, isValid, 300);
+          // Usando NodeCache para não sobrecarregar as DB calls (60 segundos por default)
+          cache.set(cacheKey, isValid, 60);
         } catch (dbErr) {
           console.error("Erro na checagem de status de utilizador:", dbErr);
           // Fallback para true caso o BD apresente instabilidade rápida, para não derrubar ativos
@@ -227,7 +199,6 @@ async function startServer() {
   setupOrdersRoutes(routeDependencies);
   setupWmsRoutes(routeDependencies);
   setupConfigRoutes(routeDependencies);
-  setupFleetRoutes(routeDependencies);
 
   // --- VITE MIDDLEWARE ---
   const distPath = path.join(process.cwd(), "dist");
@@ -275,22 +246,9 @@ async function startServer() {
     });
   }
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
-  });
-
-  // Set server timeout to 30 seconds to prevent hanging connections from triggering 503
-  server.timeout = 30000;
-  server.keepAliveTimeout = 65000; // Slightly higher than load balancer
-  server.headersTimeout = 66000;
-
-  process.on('SIGTERM', () => {
-    console.log('SIGTERM signal received: closing HTTP server');
-    server.close(() => {
-      console.log('HTTP server closed');
-      process.exit(0);
-    });
   });
 }
 

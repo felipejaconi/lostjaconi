@@ -129,22 +129,9 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.put("/api/pedidos/:orderId/itens/:itemId", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
-      const updateData: any = {};
-      if (req.body.quantidade !== undefined) updateData.quantidade = req.body.quantidade;
-      // Only admin can change preco_unitario; armazem cannot change values
-      if (req.user.role === "admin" && req.body.preco_unitario !== undefined) {
-        updateData.preco_unitario = Number(req.body.preco_unitario);
-      }
-
-      const { error } = await supabase.from("pedido_itens").update(updateData).eq("id", req.params.itemId);
+      const { error } = await supabase.from("pedido_itens").update(req.body).eq("id", req.params.itemId);
       if (error) throw error;
-
-      // Recalculate order total
-      const { data: allItems } = await supabase.from("pedido_itens").select("quantidade, preco_unitario").eq("pedido_id", req.params.orderId);
-      const newTotal = (allItems || []).reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
-      await supabase.from("pedidos").update({ total: newTotal }).eq("id", req.params.orderId);
-
-      res.json({ success: true, total: newTotal });
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -154,13 +141,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
     try {
       const { error } = await supabase.from("pedido_itens").delete().eq("id", req.params.itemId);
       if (error) throw error;
-
-      // Recalculate order total
-      const { data: allItems } = await supabase.from("pedido_itens").select("quantidade, preco_unitario").eq("pedido_id", req.params.orderId);
-      const newTotal = (allItems || []).reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
-      await supabase.from("pedidos").update({ total: newTotal }).eq("id", req.params.orderId);
-
-      res.json({ success: true, total: newTotal });
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -168,28 +149,14 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.post("/api/pedidos/:orderId/itens", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
-      let precoUnitario = req.body.preco_unitario;
-      if (precoUnitario === undefined || precoUnitario === null || isNaN(Number(precoUnitario)) || Number(precoUnitario) <= 0) {
-        const { data: prod } = await supabase.from("produtos").select("preco").eq("id", req.body.produto_id).single();
-        precoUnitario = prod && prod.preco != null ? Number(prod.preco) : 0;
-      } else {
-        precoUnitario = Number(precoUnitario);
-      }
-
-      const { data: insertedItem, error } = await supabase.from("pedido_itens").insert([{
+      const { error } = await supabase.from("pedido_itens").insert([{
           pedido_id: req.params.orderId,
           produto_id: req.body.produto_id,
           quantidade: req.body.quantidade,
-          preco_unitario: precoUnitario
-      }]).select().single();
+          preco_unitario: req.body.preco_unitario || 0
+      }]);
       if (error) throw error;
-
-      // Recalculate order total
-      const { data: allItems } = await supabase.from("pedido_itens").select("quantidade, preco_unitario").eq("pedido_id", req.params.orderId);
-      const newTotal = (allItems || []).reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
-      await supabase.from("pedidos").update({ total: newTotal }).eq("id", req.params.orderId);
-
-      res.json({ success: true, item: insertedItem, total: newTotal, preco_unitario: precoUnitario });
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -198,21 +165,33 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
   app.get("/api/admin/analytics/consumo", authenticateToken, async (req: any, res: any) => {
       if (!["admin", "armazem"].includes(req.user.role)) return res.sendStatus(403);
 
-      const month = req.query.month !== undefined ? String(req.query.month) : "";
-      const year = req.query.year !== undefined ? String(req.query.year) : "";
+      const month = req.query.month || "";
+      const year = req.query.year || "";
       const cacheKey = `admin_analytics_consumo_${month}_${year}`;
       const cached = cache.get(cacheKey);
       if (cached) return res.json(cached);
 
       try {
+        const { data: stores } = await supabase
+          .from("users")
+          .select("id, name")
+          .eq("role", "loja");
+          
+        const { data: orders, error } = await supabase
+          .from("pedidos")
+          .select("*, user:users(name), pedido_itens(*, produto:produtos(iva))")
+          .in("status", ["pronto", "entregue", "concluido"])
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+
         const agora = new Date();
-        agora.setHours(0, 0, 0, 0);
+        agora.setHours(0,0,0,0);
 
         const startOfDay = new Date(agora);
         
         const startOfWeek = new Date(agora);
         const day = startOfWeek.getDay();
-        const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
+        const diff = startOfWeek.getDate() - day + (day == 0 ? -6 : 1);
         startOfWeek.setDate(diff);
 
         let startOfMonth = new Date(agora.getFullYear(), agora.getMonth(), 1);
@@ -223,39 +202,14 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
            endOfMonth = new Date(Number(req.query.year), Number(req.query.month) + 1, 1);
         }
 
+        const { data: faturas } = await supabase
+          .from("faturas")
+          .select("*")
+          .gte("data_emissao", startOfMonth.toISOString().split("T")[0])
+          .lt("data_emissao", endOfMonth.toISOString().split("T")[0]);
+
         if (startOfWeek < startOfMonth) startOfWeek.setTime(startOfMonth.getTime());
-        const startOfPreviousMonth = new Date(startOfMonth.getFullYear(), startOfMonth.getMonth() - 1, 1);
-
-        // Calculate exact minimal date window needed (only current month, previous month, and today)
-        const earliestDate = new Date(Math.min(startOfMonth.getTime(), startOfPreviousMonth.getTime(), startOfWeek.getTime(), startOfDay.getTime()));
-        const latestDate = new Date(Math.max(endOfMonth.getTime(), agora.getTime() + 86400000));
-
-        // Fetch stores, orders (with targeted date filter & lean columns) and faturas in parallel
-        const [storesRes, ordersRes, faturasRes] = await Promise.all([
-          supabase
-            .from("users")
-            .select("id, name")
-            .eq("role", "loja"),
-          supabase
-            .from("pedidos")
-            .select("id, user_id, total, created_at, pedido_itens(quantidade, preco_unitario, produto:produtos(iva))")
-            .in("status", ["pronto", "entregue", "concluido"])
-            .gte("created_at", earliestDate.toISOString())
-            .lt("created_at", latestDate.toISOString())
-            .order("created_at", { ascending: false }),
-          supabase
-            .from("faturas")
-            .select("tipo, descrição, valor_total")
-            .gte("data_emissao", startOfMonth.toISOString().split("T")[0])
-            .lt("data_emissao", endOfMonth.toISOString().split("T")[0])
-        ]);
-
-        if (ordersRes.error) throw ordersRes.error;
-        if (storesRes.error) throw storesRes.error;
-
-        const stores = storesRes.data || [];
-        const orders = ordersRes.data || [];
-        const faturas = faturasRes.data || [];
+        const startOfPreviousMonth = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
 
         const consumption: any = {};
         
@@ -276,10 +230,26 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
         (orders || []).forEach((order: any) => {
           const storeId = order.user_id;
+          const storeName = order.user?.name || "Loja Desconhecida";
+          const originalDate = new Date(order.created_at);
+          
+          const orderDate = new Date(originalDate);
+          
+          let total = Number(order.total);
+          let sumIva = 0;
+          (order.pedido_itens || []).forEach((item: any) => {
+              const qty = Number(item.quantidade) || 0;
+              const preco = Number(item.preco_unitario || 0);
+              const liq = qty * preco;
+              const ivaPerc = Number(item.produto?.iva || 0);
+              sumIva += liq * (ivaPerc / 100);
+          });
+          total += sumIva;
+
           if (!consumption[storeId]) {
             consumption[storeId] = {
               id: storeId,
-              name: "Loja " + storeId,
+              name: storeName,
               diario: 0,
               semanal: 0,
               mensal: 0,
@@ -291,20 +261,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
             };
           }
 
-          const orderDate = new Date(order.created_at);
-          
-          let total = Number(order.total) || 0;
-          let sumIva = 0;
-          (order.pedido_itens || []).forEach((item: any) => {
-              const qty = Number(item.quantidade) || 0;
-              const preco = Number(item.preco_unitario || 0);
-              const liq = qty * preco;
-              const ivaPerc = Number(item.produto?.iva || 0);
-              sumIva += liq * (ivaPerc / 100);
-          });
-          total += sumIva;
-
-          const totalSemIva = Number(order.total) || 0;
+          const totalSemIva = Number(order.total);
           
           if (orderDate >= startOfDay) consumption[storeId].diario += total;
           if (orderDate >= startOfWeek) consumption[storeId].semanal += total;
@@ -316,10 +273,10 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
               consumption[storeId].numPedidos += 1;
           }
           
-          // Total historico
+          // Total historico is always total
           consumption[storeId].totalHistorico += total;
 
-          if (orderDate >= startOfPreviousMonth && orderDate < startOfMonth) {
+          if (orderDate >= startOfPreviousMonth && orderDate < new Date(agora.getFullYear(), agora.getMonth(), 1)) {
               consumption[storeId].mesAnterior += total;
           }
         });
@@ -327,8 +284,8 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
         (faturas || []).forEach((f: any) => {
           if (f.tipo && f.tipo.startsWith("despesa_") && f.descrição) {
             try {
-              const desc = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
-              if (desc?.loja_id) {
+              const desc = JSON.parse(f.descrição);
+              if (desc.loja_id) {
                 const storeId = desc.loja_id;
                 if (consumption[storeId]) {
                    consumption[storeId].despesasMensal += Number(f.valor_total || 0);
@@ -343,10 +300,8 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
           mediaPedido: c.numPedidos > 0 ? (c.mensal / c.numPedidos).toFixed(2) : 0,
         }));
 
-        cache.set(cacheKey, result, 60); // Cache for 60 seconds
         res.json(result);
       } catch (error: any) {
-        console.error("Erro ao processar consumo:", error);
         res.status(500).json({ error: error.message });
       }
   });
