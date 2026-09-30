@@ -22,6 +22,10 @@ export default function LoginPage() {
         email,
         password,
       });
+      if (!response.data || !response.data.user) {
+        throw new Error("Resposta do servidor inválida: dados do utilizador em falta.");
+      }
+
       login(response.data.token, response.data.user);
 
       Swal.fire({
@@ -44,7 +48,8 @@ export default function LoginPage() {
           popup: "border border-black rounded-[2rem] shadow-2xl",
         }
       }).then(() => {
-        if (response.data.user.role === "admin") {
+        const userRole = response.data?.user?.role;
+        if (userRole === "admin") {
           navigate("/admin");
         } else {
           navigate("/store");
@@ -64,7 +69,7 @@ export default function LoginPage() {
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
             </div>
             <h2 class="text-lg font-medium text-white m-0">Erro no Login</h2>
-            <p class="text-xs text-slate-400 m-0">${error.response?.data?.message || "Ocorreu um erro inesperado."}</p>
+            <p class="text-xs text-slate-400 m-0">${error.response?.data?.message || error.response?.data?.error || error.message || "Ocorreu um erro inesperado."}</p>
           </div>
         `,
         customClass: {
