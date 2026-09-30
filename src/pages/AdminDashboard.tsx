@@ -6,7 +6,6 @@ const AdminHomeComponent = lazy(() => import("./admin/AdminHome"));
 const AdminOrders = lazy(() => import("./admin/AdminOrders"));
 const AdminWarehousePicking = lazy(() => import("./admin/AdminWarehousePicking"));
 const AdminProducts = lazy(() => import("./admin/AdminProducts"));
-const AdminWarehouseMap = lazy(() => import("./admin/AdminWarehouseMap"));
 const AdminStores = lazy(() => import("./admin/AdminStores"));
 const AdminGiro = lazy(() => import("./admin/AdminGiro"));
 const AdminUsers = lazy(() => import("./admin/AdminUsers"));
@@ -20,6 +19,7 @@ const AdminFinancial = lazy(() => import("./admin/AdminFinancial"));
 const AdminProductsPricing = lazy(() => import("./admin/AdminProductsPricing"));
 const AdminWarehouseConfig = lazy(() => import("./admin/AdminWarehouseConfig"));
 const AdminGlobalStock = lazy(() => import("./admin/AdminGlobalStock"));
+const AdminFleet = lazy(() => import("./admin/AdminFleet"));
 
 import {
   Routes,
@@ -31,7 +31,7 @@ import {
 } from "react-router-dom";
 import { BrandName } from "../components/Logo";
 import {
-  Package, Map,
+  Package,
   ShoppingCart,
   Users,
   Settings,
@@ -53,6 +53,7 @@ import {
   ChevronDown,
   Layers,
   Banknote,
+  Car,
   Truck,
   CreditCard,
   Tags,
@@ -277,7 +278,6 @@ export default function AdminDashboard() {
         { to: "/admin/armazem/pedidos", label: "Pedidos", icon: <Truck size={18} /> },
         { to: "/admin/estoque-global", label: "Armazém", icon: <Layers size={18} /> },
         { to: "/admin/armazem/produtos", label: "Produtos", icon: <Package size={18} /> },
-        { to: "/admin/mapa", label: "Mapa", icon: <Map size={18} /> },
         ...(["admin", "armazem"].includes(user?.role) ? [{ to: "/admin/fornecedores", label: "Fornecedores", icon: <Users size={18} /> }] : []),
       ]
     },
@@ -287,7 +287,8 @@ export default function AdminDashboard() {
          items: [
            { to: "/admin/relatorios", icon: <FileText size={18} />, label: "Relatórios" },
            { to: "/admin/financeiro", icon: <Banknote size={18} />, label: "Financeiro" },
-                      { to: "/admin/precos", icon: <Tags size={18} />, label: "Margens / Preços" },
+           { to: "/admin/frotas", icon: <Car size={18} />, label: "Frotas" },
+           { to: "/admin/precos", icon: <Tags size={18} />, label: "Margens / Preços" },
            { to: "/admin/consumo", icon: <PieChart size={18} />, label: "Consumo" },
            { to: "/admin/giro", icon: <History size={18} />, label: "Média de Consumo" },
            {
@@ -600,6 +601,7 @@ export default function AdminDashboard() {
                     <Route path="/vendas-lojas" element={<AdminStoreSales />} />
                     <Route path="/fechos" element={<AdminFechos />} />
                     <Route path="/utilizadores" element={<AdminUsers />} />
+                    <Route path="/frotas" element={<AdminFleet />} />
                     
                     <Route path="/precos" element={<AdminProductsPricing />} />
                     <Route path="/giro" element={<AdminGiro />} />
@@ -609,7 +611,6 @@ export default function AdminDashboard() {
                 <Route path="/fornecedores" element={<AdminSuppliers />} />
                 <Route path="/financeiro" element={<AdminFinancial />} />
                 <Route path="/produtos" element={<AdminProducts />} />
-                <Route path="/mapa" element={<AdminWarehouseMap />} />
                 <Route path="/pedidos" element={<AdminOrders />} />
                 <Route path="/lojas" element={<AdminStores />} />
                 <Route path="/estoque-global" element={<AdminGlobalStock />} />

@@ -21,6 +21,7 @@ import { setupProductsRoutes } from "./src/routes/products";
 import { setupOrdersRoutes } from "./src/routes/orders";
 import { setupWmsRoutes } from "./src/routes/wms";
 import { setupConfigRoutes } from "./src/routes/config";
+import { setupFleetRoutes } from "./src/routes/fleet";
 
 const cache = new NodeCache({ stdTTL: 60 }); // 60 seconds default cache
 
@@ -199,6 +200,7 @@ async function startServer() {
   setupOrdersRoutes(routeDependencies);
   setupWmsRoutes(routeDependencies);
   setupConfigRoutes(routeDependencies);
+  setupFleetRoutes(routeDependencies);
 
   // --- VITE MIDDLEWARE ---
   const distPath = path.join(process.cwd(), "dist");
