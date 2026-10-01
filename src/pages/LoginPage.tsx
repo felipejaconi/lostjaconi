@@ -108,7 +108,7 @@ export default function LoginPage() {
             <div className="space-y-4 sm:space-y-6">
               <div className="space-y-2">
                 <label className="block text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-1">
-                  Acesso Restrito
+                  E-mail
                 </label>
                 <div className="relative group/input">
                   <Mail

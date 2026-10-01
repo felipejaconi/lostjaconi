@@ -19,7 +19,6 @@ const AdminFinancial = lazy(() => import("./admin/AdminFinancial"));
 const AdminProductsPricing = lazy(() => import("./admin/AdminProductsPricing"));
 const AdminWarehouseConfig = lazy(() => import("./admin/AdminWarehouseConfig"));
 const AdminGlobalStock = lazy(() => import("./admin/AdminGlobalStock"));
-const AdminFleet = lazy(() => import("./admin/AdminFleet"));
 
 import {
   Routes,
@@ -53,7 +52,6 @@ import {
   ChevronDown,
   Layers,
   Banknote,
-  Car,
   Truck,
   CreditCard,
   Tags,
@@ -287,8 +285,7 @@ export default function AdminDashboard() {
          items: [
            { to: "/admin/relatorios", icon: <FileText size={18} />, label: "Relatórios" },
            { to: "/admin/financeiro", icon: <Banknote size={18} />, label: "Financeiro" },
-           { to: "/admin/frotas", icon: <Car size={18} />, label: "Frotas" },
-           { to: "/admin/precos", icon: <Tags size={18} />, label: "Margens / Preços" },
+                      { to: "/admin/precos", icon: <Tags size={18} />, label: "Margens / Preços" },
            { to: "/admin/consumo", icon: <PieChart size={18} />, label: "Consumo" },
            { to: "/admin/giro", icon: <History size={18} />, label: "Média de Consumo" },
            {
@@ -601,7 +598,6 @@ export default function AdminDashboard() {
                     <Route path="/vendas-lojas" element={<AdminStoreSales />} />
                     <Route path="/fechos" element={<AdminFechos />} />
                     <Route path="/utilizadores" element={<AdminUsers />} />
-                    <Route path="/frotas" element={<AdminFleet />} />
                     
                     <Route path="/precos" element={<AdminProductsPricing />} />
                     <Route path="/giro" element={<AdminGiro />} />

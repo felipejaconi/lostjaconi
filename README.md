@@ -78,4 +78,4 @@ Para instruções detalhadas de deploy na Hostinger, consulte o ficheiro [README
 - **Admin:** `admin@lostwind.com` / `admin123` (ou a senha que definir no script de setup)
 
 ---
-Desenvolvido por LOST WIND LDA © 2026
+Desenvolvido por LOST WIND LDA © 2026 • *Sync Test: OK*

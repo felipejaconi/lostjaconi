@@ -29,6 +29,7 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
   const [parcelas, setParcelas] = useState(1);
 
   const CATEGORIAS_DESPESA = [
+    { id: "frota_veiculos", nome: "Frota de Veículos" },
     { id: "luz", nome: "Luz / Eletricidade" },
     { id: "agua", nome: "Água" },
     { id: "aluguel", nome: "Aluguel / Renda" },

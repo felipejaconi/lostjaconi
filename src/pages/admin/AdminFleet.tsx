@@ -138,6 +138,8 @@ export default function AdminFleet() {
   const [kmTargetVehicle, setKmTargetVehicle] = useState<Veiculo | null>(null);
   const [quickKmInput, setQuickKmInput] = useState<number>(0);
 
+
+
   // Forms State
   const [formData, setFormData] = useState({
     matricula: "",
@@ -193,7 +195,7 @@ export default function AdminFleet() {
     try {
       const [fleetRes, usersRes] = await Promise.all([
         api.get("/admin/fleet"),
-        api.get("/admin/users").catch(() => ({ data: [] }))
+        api.get("/admin/users").catch(() => ({ data: [] })),
       ]);
 
       setVehicles(fleetRes.data || []);
