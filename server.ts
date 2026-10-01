@@ -12,18 +12,27 @@ import "dotenv/config";
 import NodeCache from "node-cache";
 import compression from "compression";
 
-import { setupAuthRoutes } from "./src/routes/auth";
-import { setupStatsRoutes } from "./src/routes/stats";
-import { setupUsersRoutes } from "./src/routes/users";
-import { setupStockRoutes } from "./src/routes/stock";
-import { setupFinanceRoutes } from "./src/routes/finance";
-import { setupProductsRoutes } from "./src/routes/products";
-import { setupOrdersRoutes } from "./src/routes/orders";
-import { setupWmsRoutes } from "./src/routes/wms";
-import { setupConfigRoutes } from "./src/routes/config";
-import { setupFleetRoutes } from "./src/routes/fleet";
+import { setupAuthRoutes } from "./src/routes/auth.ts";
+import { setupStatsRoutes } from "./src/routes/stats.ts";
+import { setupUsersRoutes } from "./src/routes/users.ts";
+import { setupStockRoutes } from "./src/routes/stock.ts";
+import { setupFinanceRoutes } from "./src/routes/finance.ts";
+import { setupProductsRoutes } from "./src/routes/products.ts";
+import { setupOrdersRoutes } from "./src/routes/orders.ts";
+import { setupWmsRoutes } from "./src/routes/wms.ts";
+import { setupConfigRoutes } from "./src/routes/config.ts";
+import { setupFleetRoutes } from "./src/routes/fleet.ts";
 
 const cache = new NodeCache({ stdTTL: 60 }); // 60 seconds default cache
+
+// Global process resilience guards to prevent 503 / crashes
+process.on("uncaughtException", (err) => {
+  console.error("⚠️ Uncaught Exception intercepted:", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("⚠️ Unhandled Rejection intercepted:", reason);
+});
 
 // Ensure uploads directory exists
 const uploadDir = path.join(process.cwd(), "uploads");
@@ -202,11 +211,16 @@ async function startServer() {
   setupConfigRoutes(routeDependencies);
   setupFleetRoutes(routeDependencies);
 
-  // --- VITE MIDDLEWARE ---
+  // --- STATIC OR VITE MIDDLEWARE ---
   const distPath = path.join(process.cwd(), "dist");
-  const isProd = process.env.NODE_ENV === "production";
+  const indexHtmlPath = path.join(distPath, "index.html");
+  const hasDist = fs.existsSync(indexHtmlPath);
 
-  if (!isProd) {
+  // Use pre-built static files if dist/index.html is ready and not explicitly in live development
+  const isDev = process.env.NODE_ENV === "development" && process.env.npm_lifecycle_event === "dev";
+  const useStatic = hasDist && !isDev;
+
+  if (!useStatic) {
     try {
       const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
@@ -215,17 +229,21 @@ async function startServer() {
       });
       app.use(vite.middlewares);
     } catch (e) {
-      console.warn("Vite not found, voltando para dist estático...");
+      console.warn("Vite not found or unavailable, falling back to static dist...", e);
       app.use(express.static(distPath));
       app.get("*", (_req, res) => {
-        res.sendFile(path.join(distPath, "index.html"));
+        if (hasDist) {
+          res.sendFile(indexHtmlPath);
+        } else {
+          res.status(503).send("Building application, please wait a moment...");
+        }
       });
     }
   } else {
-    console.log("[Production] Configurando express.static para servir a pasta dist com compressão...");
+    console.log("[Production] Servindo aplicação estática com cache otimizado...");
     
-    // Definir cabeçalhos de cache: ativos estáticos dentro de ativos/ são imutáveis (Vite os hashes)
-    // index.html NUNCA deve ser armazenado em cache para garantir que os utilizadores obtenham sempre a versão mais recente
+    // Set caching headers: static assets inside assets/ are immutable (Vite hashes them)
+    // index.html must NEVER be cached to ensure users always get the latest version
     app.use(express.static(distPath, {
       etag: false,
       lastModified: false,
@@ -244,7 +262,7 @@ async function startServer() {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
-      res.sendFile(path.join(distPath, "index.html"));
+      res.sendFile(indexHtmlPath);
     });
   }
 

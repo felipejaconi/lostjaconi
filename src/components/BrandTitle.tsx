@@ -7,7 +7,7 @@ interface BrandTitleProps {
   hideUnderline?: boolean;
 }
 
-export function BrandTitle({ title = "Estatísticas e Gestão", subtitle, titleClassName = "", hideUnderline = false }: BrandTitleProps) {
+export function BrandTitle({ title = "A Arte do Bom Grelhado", subtitle, titleClassName = "", hideUnderline = false }: BrandTitleProps) {
   return (
     <div className="relative py-2 max-w-full w-fit mx-auto md:mx-0">
       <h1 

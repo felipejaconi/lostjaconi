@@ -565,38 +565,57 @@ export default function AdminOrders() {
 
   const handleUpdateOrderItem = async (orderId: number, itemId: number, newQuantity: number, newPrice?: number) => {
     try {
+      const isAdmin = user?.role === "admin";
+      const safePrice = (isAdmin && newPrice !== undefined && !isNaN(newPrice)) ? Number(newPrice) : undefined;
+
+      const updateList = (items: any[]) => {
+        if (newQuantity <= 0) {
+          return items.filter((i: any) => i.id !== itemId);
+        }
+        return items.map((i: any) => {
+          if (i.id === itemId) {
+            return {
+              ...i,
+              quantidade: newQuantity,
+              ...(safePrice !== undefined && { preco_unitario: safePrice })
+            };
+          }
+          return i;
+        });
+      };
+
       // Optimistic Update
       setOrders(prev => prev.map(o => {
         if (o.id === orderId) {
-          if (newQuantity <= 0) {
-            return { ...o, pedido_itens: o.pedido_itens?.filter((i:any) => i.id !== itemId) };
-          } else {
-             return {
-                ...o,
-                pedido_itens: o.pedido_itens?.map((i:any) => 
-                   i.id === itemId 
-                   ? { ...i, quantidade: newQuantity, ...(newPrice !== undefined && { preco_unitario: newPrice }) } 
-                   : i
-                )
-             };
-          }
+          const updatedItems = updateList(o.pedido_itens || []);
+          const newTotal = updatedItems.reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
+          return { ...o, pedido_itens: updatedItems, total: newTotal };
         }
         return o;
       }));
+
+      if (editingOrder?.id === orderId) {
+        setEditingOrder((prev: any) => {
+          if (!prev) return null;
+          const updatedItems = updateList(prev.pedido_itens || []);
+          const newTotal = updatedItems.reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
+          return { ...prev, pedido_itens: updatedItems, total: newTotal };
+        });
+      }
 
       if (newQuantity <= 0) {
         await api.delete(`/pedidos/${orderId}/itens/${itemId}`);
       } else {
         const payload: any = { quantidade: newQuantity };
-        if (newPrice !== undefined) payload.preco_unitario = newPrice;
+        if (safePrice !== undefined) payload.preco_unitario = safePrice;
         await api.put(`/pedidos/${orderId}/itens/${itemId}`, payload);
       }
       
-      // Removed fetchOrders() for immediate UI response. Realtime channel will fetch anyway.
-      
       if (editingOrder?.id === orderId) {
          const updatedRes = await api.get(`/pedidos/${orderId}`);
-         setEditingOrder(updatedRes.data);
+         if (updatedRes?.data) {
+           setEditingOrder(updatedRes.data);
+         }
       }
     } catch (error) {
       fetchOrders();
@@ -607,29 +626,53 @@ export default function AdminOrders() {
   const handleAddOrderItem = async (orderId: number) => {
     if (!newItemProductId || newItemQuantity <= 0) return Swal.fire("Aviso", "Selecione um produto e uma quantidade válida", "warning");
     try {
-      const prod = products.find(p => p.id === newItemProductId);
+      const prod = products.find(p => String(p.id) === String(newItemProductId));
+      const itemPrice = Number(prod?.preco != null ? prod.preco : 0);
+
+      const optimisticItem = {
+         id: Date.now(),
+         produto_id: newItemProductId,
+         quantidade: newItemQuantity,
+         preco_unitario: itemPrice,
+         produto: prod
+      };
+
       // Optimistic Update
       setOrders(prev => prev.map(o => {
         if (o.id === orderId) {
-          const newItem = {
-             id: Math.random(), // fake id for optimistic
-             produto_id: newItemProductId,
-             quantidade: newItemQuantity,
-             preco_unitario: Number(prod?.preco || 0),
-             produto: prod
-          };
-          return { ...o, pedido_itens: [...(o.pedido_itens || []), newItem] };
+          const currentItems = o.pedido_itens || [];
+          const updatedItems = [...currentItems, optimisticItem];
+          const newTotal = updatedItems.reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
+          return { ...o, pedido_itens: updatedItems, total: newTotal };
         }
         return o;
       }));
 
-      await api.post(`/pedidos/${orderId}/itens`, { produto_id: newItemProductId, quantidade: newItemQuantity });
-      setNewItemProductId(""); setNewItemQuantity(1);
-      // Let realtime/refetch handle true data
-      // fetchOrders();
+      if (editingOrder?.id === orderId) {
+        setEditingOrder((prev: any) => {
+          if (!prev) return null;
+          const currentItems = prev.pedido_itens || [];
+          const updatedItems = [...currentItems, optimisticItem];
+          const newTotal = updatedItems.reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
+          return { ...prev, pedido_itens: updatedItems, total: newTotal };
+        });
+      }
+
+      await api.post(`/pedidos/${orderId}/itens`, {
+        produto_id: newItemProductId,
+        quantidade: newItemQuantity,
+        preco_unitario: itemPrice
+      });
+
+      setNewItemProductId("");
+      setAddProdSearch("");
+      setNewItemQuantity(1);
+
       if (editingOrder?.id === orderId) {
         const updatedRes = await api.get(`/pedidos/${orderId}`);
-        setEditingOrder(updatedRes.data);
+        if (updatedRes?.data) {
+          setEditingOrder(updatedRes.data);
+        }
       }
       Swal.fire({ title: "Inserido!", text: "Produto adicionado com sucesso.", icon: "success", timer: 1500, showConfirmButton: false, toast: true, position: 'bottom-end' });
     } catch (error: any) {
@@ -1478,17 +1521,38 @@ export default function AdminOrders() {
                                       <input 
                                          type="number" min="0" step="0.001"
                                          defaultValue={item.quantidade}
-                                         onBlur={(e) => handleUpdateOrderItem(editingOrder.id, item.id, parseFloat(e.target.value), item.preco_unitario)}
+                                         key={`qty-${item.id}-${item.quantidade}`}
+                                         onBlur={(e) => {
+                                            const val = parseFloat(e.target.value);
+                                            if (!isNaN(val) && val !== item.quantidade) {
+                                               handleUpdateOrderItem(editingOrder.id, item.id, val, item.preco_unitario);
+                                            }
+                                         }}
                                          className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
                                       />
                                    </td>
                                    <td className="px-5 py-4 text-center">
-                                      <input 
-                                         type="number" min="0" step="0.01"
-                                         defaultValue={item.preco_unitario}
-                                         onBlur={(e) => handleUpdateOrderItem(editingOrder.id, item.id, item.quantidade, parseFloat(e.target.value))}
-                                         className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
-                                      />
+                                      {user?.role === "admin" ? (
+                                         <input 
+                                            type="number" min="0" step="0.01"
+                                            defaultValue={item.preco_unitario}
+                                            key={`price-${item.id}-${item.preco_unitario}`}
+                                            onBlur={(e) => {
+                                               const val = parseFloat(e.target.value);
+                                               if (!isNaN(val) && val !== item.preco_unitario) {
+                                                  handleUpdateOrderItem(editingOrder.id, item.id, item.quantidade, val);
+                                               }
+                                            }}
+                                            className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
+                                         />
+                                      ) : (
+                                         <div 
+                                            title="Apenas administradores podem alterar valores"
+                                            className="w-full h-10 bg-zinc-900/50 border border-zinc-800/60 rounded-lg px-3 flex items-center justify-center text-sm font-semibold text-zinc-400 select-none cursor-not-allowed"
+                                         >
+                                            € {Number(item.preco_unitario || 0).toFixed(2)}
+                                         </div>
+                                      )}
                                    </td>
                                    <td className="px-5 py-4 text-right">
                                       <button 
@@ -1553,7 +1617,7 @@ export default function AdminOrders() {
                                   className="px-4 py-3 flex justify-between items-center text-sm text-zinc-300 hover:bg-emerald-500/20 hover:text-emerald-400 cursor-pointer border-b border-zinc-800/50 last:border-0"
                                 >
                                   <span className="font-medium">{p.nome}</span>
-                                  <span className="text-zinc-500 text-xs px-2 py-1 bg-zinc-950 rounded">€{Number(p.preco).toFixed(2)}</span>
+                                  <span className="text-zinc-500 text-xs px-2 py-1 bg-zinc-950 rounded">€{Number(p.preco || 0).toFixed(2)}</span>
                                 </div>
                              ))}
                              {products.filter(p => !addProdSearch || p.nome.toLowerCase().includes(addProdSearch.toLowerCase())).length === 0 && (

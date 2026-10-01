@@ -1,0 +1,31 @@
+{
+  "name": "lost-wind-pos",
+  "version": "1.0.0",
+  "description": "Sistema de Armazém e POS - Lost Wind",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "author": "Lost Wind",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "pt.lostwind.logistica",
+    "productName": "Lost Wind Logística",
+    "win": {
+      "target": "nsis",
+      "icon": "icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Lost Wind POS"
+    }
+  }
+}
