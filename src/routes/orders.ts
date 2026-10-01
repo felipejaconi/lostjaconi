@@ -129,22 +129,9 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.put("/api/pedidos/:orderId/itens/:itemId", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
-      const updateData: any = {};
-      if (req.body.quantidade !== undefined) updateData.quantidade = req.body.quantidade;
-      // Only admin can change preco_unitario; armazem cannot change values
-      if (req.user.role === "admin" && req.body.preco_unitario !== undefined) {
-        updateData.preco_unitario = Number(req.body.preco_unitario);
-      }
-
-      const { error } = await supabase.from("pedido_itens").update(updateData).eq("id", req.params.itemId);
+      const { error } = await supabase.from("pedido_itens").update(req.body).eq("id", req.params.itemId);
       if (error) throw error;
-
-      // Recalculate order total
-      const { data: allItems } = await supabase.from("pedido_itens").select("quantidade, preco_unitario").eq("pedido_id", req.params.orderId);
-      const newTotal = (allItems || []).reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
-      await supabase.from("pedidos").update({ total: newTotal }).eq("id", req.params.orderId);
-
-      res.json({ success: true, total: newTotal });
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -154,13 +141,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
     try {
       const { error } = await supabase.from("pedido_itens").delete().eq("id", req.params.itemId);
       if (error) throw error;
-
-      // Recalculate order total
-      const { data: allItems } = await supabase.from("pedido_itens").select("quantidade, preco_unitario").eq("pedido_id", req.params.orderId);
-      const newTotal = (allItems || []).reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
-      await supabase.from("pedidos").update({ total: newTotal }).eq("id", req.params.orderId);
-
-      res.json({ success: true, total: newTotal });
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -168,28 +149,14 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.post("/api/pedidos/:orderId/itens", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
-      let precoUnitario = req.body.preco_unitario;
-      if (precoUnitario === undefined || precoUnitario === null || isNaN(Number(precoUnitario)) || Number(precoUnitario) <= 0) {
-        const { data: prod } = await supabase.from("produtos").select("preco").eq("id", req.body.produto_id).single();
-        precoUnitario = prod && prod.preco != null ? Number(prod.preco) : 0;
-      } else {
-        precoUnitario = Number(precoUnitario);
-      }
-
-      const { data: insertedItem, error } = await supabase.from("pedido_itens").insert([{
+      const { error } = await supabase.from("pedido_itens").insert([{
           pedido_id: req.params.orderId,
           produto_id: req.body.produto_id,
           quantidade: req.body.quantidade,
-          preco_unitario: precoUnitario
-      }]).select().single();
+          preco_unitario: req.body.preco_unitario || 0
+      }]);
       if (error) throw error;
-
-      // Recalculate order total
-      const { data: allItems } = await supabase.from("pedido_itens").select("quantidade, preco_unitario").eq("pedido_id", req.params.orderId);
-      const newTotal = (allItems || []).reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
-      await supabase.from("pedidos").update({ total: newTotal }).eq("id", req.params.orderId);
-
-      res.json({ success: true, item: insertedItem, total: newTotal, preco_unitario: precoUnitario });
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

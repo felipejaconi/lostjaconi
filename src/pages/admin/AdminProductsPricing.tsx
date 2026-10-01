@@ -190,6 +190,7 @@ export default function AdminProductsPricing() {
                         <tr key={p.id} className="border-b border-white/5 hover:bg-white/[0.01]">
                            <td className="p-4">
                               <p className="text-sm font-bold text-white leading-tight uppercase">{p.nome}</p>
+                              {p.barcode_ean && <p className="text-[10px] text-slate-500 mt-1 uppercase font-bold">EAN: {p.barcode_ean}</p>}
                            </td>
                            <td className="p-4">
                               <select
