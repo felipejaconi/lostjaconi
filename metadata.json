@@ -1,5 +1,5 @@
 {
-  "name": "LOST WIND LDA",
-  "description": "Sistema de gestão de armazém e (franquias).",
+  "name": "Estatísticas, Metas e Financeiro",
+  "description": "Estatísticas, metas e financeiro.",
   "requestFramePermissions": ["camera"]
 }

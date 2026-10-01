@@ -215,7 +215,7 @@ async function startServer() {
       });
       app.use(vite.middlewares);
     } catch (e) {
-      console.warn("Vite not found, falling back to static dist...");
+      console.warn("Vite not found, voltando para dist estático...");
       app.use(express.static(distPath));
       app.get("*", (_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
@@ -224,8 +224,8 @@ async function startServer() {
   } else {
     console.log("[Production] Configurando express.static para servir a pasta dist com compressão...");
     
-    // Set caching headers: static assets inside assets/ are immutable (Vite hashes them)
-    // index.html must NEVER be cached to ensure users always get the latest version
+    // Definir cabeçalhos de cache: ativos estáticos dentro de ativos/ são imutáveis (Vite os hashes)
+    // index.html NUNCA deve ser armazenado em cache para garantir que os utilizadores obtenham sempre a versão mais recente
     app.use(express.static(distPath, {
       etag: false,
       lastModified: false,
