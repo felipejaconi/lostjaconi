@@ -31,7 +31,8 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
 
-const PORT = 3000;
+const rawPort = process.env.PORT;
+const PORT = rawPort && !isNaN(Number(rawPort)) ? Number(rawPort) : (rawPort || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || "36A9F865-02E5-4196-8718-3B1CF25627B6";
 
 // Supabase Configuration
@@ -48,15 +49,14 @@ const supabase = createClient(
   supabaseServiceKey || supabaseAnonKey || "placeholder",
 );
 
-async function startServer() {
-  const app = express();
-  
-  // Enable Gzip/Brotli compression for all HTTP responses
-  app.use(compression());
-  
-  app.use(cors());
-  app.use(express.json());
-  app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
+export const app = express();
+
+// Enable Gzip/Brotli compression for all HTTP responses
+app.use(compression());
+
+app.use(cors());
+app.use(express.json());
+app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
   // Cache uploads forever since they have unique names usually
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads"), { maxAge: "1d" }));
 
@@ -202,7 +202,8 @@ async function startServer() {
   setupConfigRoutes(routeDependencies);
   setupFleetRoutes(routeDependencies);
 
-  // --- VITE MIDDLEWARE ---
+  // --- VITE / STATIC MIDDLEWARE & SERVER STARTUP ---
+export async function startServer() {
   const distPath = path.join(process.cwd(), "dist");
   const isProd = process.env.NODE_ENV === "production";
 
@@ -215,7 +216,7 @@ async function startServer() {
       });
       app.use(vite.middlewares);
     } catch (e) {
-      console.warn("Vite not found, voltando para dist estático...");
+      console.warn("Vite not found, falling back to static dist...");
       app.use(express.static(distPath));
       app.get("*", (_req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
@@ -224,8 +225,8 @@ async function startServer() {
   } else {
     console.log("[Production] Configurando express.static para servir a pasta dist com compressão...");
     
-    // Definir cabeçalhos de cache: ativos estáticos dentro de ativos/ são imutáveis (Vite os hashes)
-    // index.html NUNCA deve ser armazenado em cache para garantir que os utilizadores obtenham sempre a versão mais recente
+    // Set caching headers: static assets inside assets/ are immutable (Vite hashes them)
+    // index.html must NEVER be cached to ensure users always get the latest version
     app.use(express.static(distPath, {
       etag: false,
       lastModified: false,
@@ -248,14 +249,24 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
-  });
+  const server = typeof PORT === "number"
+    ? app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://0.0.0.0:${PORT}`);
+        console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
+      })
+    : app.listen(PORT, () => {
+        console.log(`Server running on socket ${PORT}`);
+        console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
+      });
+
+  return server;
 }
 
+// Inicia automaticamente o servidor se executado diretamente
 startServer().catch((err) => {
   console.error("❌ Ocorreu um erro FATAL ao iniciar o servidor:");
   console.error(err);
   process.exit(1);
 });
+
+export default app;
