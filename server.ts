@@ -31,8 +31,7 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
 
-const rawPort = process.env.PORT;
-const PORT = rawPort && !isNaN(Number(rawPort)) ? Number(rawPort) : (rawPort || 3000);
+const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "36A9F865-02E5-4196-8718-3B1CF25627B6";
 
 // Supabase Configuration
@@ -49,14 +48,15 @@ const supabase = createClient(
   supabaseServiceKey || supabaseAnonKey || "placeholder",
 );
 
-export const app = express();
-
-// Enable Gzip/Brotli compression for all HTTP responses
-app.use(compression());
-
-app.use(cors());
-app.use(express.json());
-app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
+async function startServer() {
+  const app = express();
+  
+  // Enable Gzip/Brotli compression for all HTTP responses
+  app.use(compression());
+  
+  app.use(cors());
+  app.use(express.json());
+  app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
   // Cache uploads forever since they have unique names usually
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads"), { maxAge: "1d" }));
 
@@ -202,8 +202,7 @@ app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
   setupConfigRoutes(routeDependencies);
   setupFleetRoutes(routeDependencies);
 
-  // --- VITE / STATIC MIDDLEWARE & SERVER STARTUP ---
-export async function startServer() {
+  // --- VITE MIDDLEWARE ---
   const distPath = path.join(process.cwd(), "dist");
   const isProd = process.env.NODE_ENV === "production";
 
@@ -249,24 +248,14 @@ export async function startServer() {
     });
   }
 
-  const server = typeof PORT === "number"
-    ? app.listen(PORT, "0.0.0.0", () => {
-        console.log(`Server running on http://0.0.0.0:${PORT}`);
-        console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
-      })
-    : app.listen(PORT, () => {
-        console.log(`Server running on socket ${PORT}`);
-        console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
-      });
-
-  return server;
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
+  });
 }
 
-// Inicia automaticamente o servidor se executado diretamente
 startServer().catch((err) => {
   console.error("❌ Ocorreu um erro FATAL ao iniciar o servidor:");
   console.error(err);
   process.exit(1);
 });
-
-export default app;

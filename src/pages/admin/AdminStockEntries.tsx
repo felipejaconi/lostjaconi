@@ -665,12 +665,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
       </Modal>
 
       <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-4 -mt-2 md:-mt-4 mb-10 w-full flex flex-col sm:flex-row sm:items-center justify-between gap-4 max-w-full">
-        <BrandTitle 
-          title="Registro de Faturas" 
-          titleClassName="-mt-7 pl-0 pt-0 ml-0 w-[361.882355px]" 
-          titleStyle={{ width: "361.882355px" }}
-          hideUnderline 
-        />
+        <BrandTitle title="Registro de Faturas" titleClassName="-mt-7 pl-0 pt-0 ml-0" hideUnderline />
         <div className="flex items-center gap-3 -mt-6 sm:mt-0">
           {user?.role === 'admin' && (
             <button onClick={handleOpenCheckoutList} className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">

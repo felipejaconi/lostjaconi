@@ -160,7 +160,7 @@ export default function AdminHome() {
   return (
     <div className="pt-2 px-4 md:pt-4 md:px-6 lg:px-8 pb-10">
       <div className="flex flex-col mb-4 items-center md:items-start w-full">
-        <BrandTitle titleClassName="-mt-[14.992646px]" titleStyle={{ marginTop: "-14.992646px" }} />
+        <BrandTitle />
         <h2 className="text-lg sm:text-xl mt-2 ml-[89px] flex items-center gap-2 text-[#facc15] tracking-wider leading-tight" style={{ fontFamily: "'Yellowtail', cursive", textShadow: "2px 2px 4px rgba(0,0,0,0.5)" }}>
           <span className="truncate">
             Logística e Financeiro

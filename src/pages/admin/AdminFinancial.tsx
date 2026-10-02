@@ -988,7 +988,7 @@ export default function AdminFinancial() {
                                           <div>
                                              <p className="text-sm font-bold text-zinc-100">{f.numero_fatura}</p>
                                              <p className={cn("text-[10px] font-bold uppercase tracking-wider mt-0.5", f.tipo === 'compra' ? "text-blue-500" : "text-rose-500")}>
-                                                {f.tipo === 'despesa_frota_veiculos' ? 'Despesa: Frota de Veículos' : f.tipo?.replace('despesa_', 'Despesa: ')} {f.isGroup && <span className="text-zinc-500 ml-1">({f.totalInstallments} parcelas)</span>}
+                                                {f.tipo?.replace('despesa_', 'Despesa: ')} {f.isGroup && <span className="text-zinc-500 ml-1">({f.totalInstallments} parcelas)</span>}
                                              </p>
                                           </div>
                                        </div>

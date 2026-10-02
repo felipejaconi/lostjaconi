@@ -16,8 +16,8 @@ export interface PrintGenericOptions {
 export function printGenericDocument({
   title,
   docNumber,
-  CompanyName = "Estatísticas, Metas e Financeiro",
-  CompanyAddress = "Sistema de Gestão",
+  CompanyName = "Lost Wind Unipessoal, Lda.",
+  CompanyAddress = "Rua Azinhaga Porto de Areia, 19.",
   origemArmazem = "Armazém Central",
   recipientName,
   recipientEmail,
@@ -155,11 +155,11 @@ export function printGenericDocument({
         <div class="header-compact">
           <!-- Armazém / Empresa -->
           <div class="company-details">
-            <img src="${import.meta.env?.VITE_SUPABASE_URL || 'https://ybaoaskddcmwoincsnwm.supabase.co'}/storage/v1/object/public/uploads/icon.png" alt="Estatísticas Icon" class="logo-img" crossorigin="anonymous" />
+            <img src="${import.meta.env?.VITE_SUPABASE_URL || 'https://ybaoaskddcmwoincsnwm.supabase.co'}/storage/v1/object/public/uploads/icon.png" alt="Lost Wind Icon" class="logo-img" crossorigin="anonymous" />
             <div class="brand-text-container">
               <div class="brand-text">
                 <span class="brand-grupo">GRUPO</span>
-                <span class="brand-name-logo">ESTATÍSTICAS</span>
+                <span class="brand-name-logo">LOST WIND</span>
               </div>
               <div class="company-info">
                 <div class="company-name-text">${CompanyName}</div>

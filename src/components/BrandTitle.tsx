@@ -5,18 +5,16 @@ interface BrandTitleProps {
   subtitle?: React.ReactNode;
   titleClassName?: string;
   hideUnderline?: boolean;
-  titleStyle?: React.CSSProperties;
 }
 
-export function BrandTitle({ title = "A Arte do Bom Grelhado", subtitle, titleClassName = "", hideUnderline = false, titleStyle }: BrandTitleProps) {
+export function BrandTitle({ title = "A Arte do Bom Grelhado", subtitle, titleClassName = "", hideUnderline = false }: BrandTitleProps) {
   return (
     <div className="relative py-2 max-w-full w-fit mx-auto md:mx-0">
       <h1 
         className={`text-[clamp(1.8rem,5vw,3.75rem)] text-center md:text-left text-[#facc15] tracking-wider leading-tight ${titleClassName}`} 
         style={{ 
           fontFamily: "'Yellowtail', cursive",
-          textShadow: "2px 2px 4px rgba(0,0,0,0.5)",
-          ...titleStyle
+          textShadow: "2px 2px 4px rgba(0,0,0,0.5)"
         }}
       >
         {title}

@@ -15,7 +15,7 @@ export const Logo: React.FC<LogoProps> = ({ size = 40, className = "", imgStyle 
     >
       <img 
         src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/uploads/icon.png`} 
-        alt="Estatísticas" 
+        alt="Lost Wind Lda" 
         className="w-full h-full object-contain"
         crossOrigin="anonymous"
         style={imgStyle}
@@ -35,7 +35,7 @@ export const LoginLogo: React.FC<LogoProps> = ({
     >
       <img 
         src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/uploads/icon.png`} 
-        alt="Estatísticas" 
+        alt="Lost Wind Lda" 
         className="w-full h-full object-contain drop-shadow-2xl"
         crossOrigin="anonymous"
       />
@@ -69,7 +69,7 @@ export const BrandName: React.FC<{
         GRUPO
       </span>
       <span
-        className="tracking-tighter notranslate text-center"
+        className="tracking-tighter notranslate"
         translate="no"
         style={{
           fontSize: "1.1em",
@@ -82,7 +82,7 @@ export const BrandName: React.FC<{
           marginTop: "-0.1em",
         }}
       >
-        ESTATÍSTICAS
+        LOST WIND
       </span>
     </div>
   </Link>

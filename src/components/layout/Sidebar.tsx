@@ -82,11 +82,11 @@ export function Sidebar({ links, userName, userInitials, userRole, isOpen, onClo
       <div className="p-6 border-t border-white/5 flex justify-center shrink-0">
         {!isCollapsed ? (
           <p className="text-[10px] text-slate-500 text-center uppercase tracking-widest font-bold">
-            ESTATÍSTICAS © 2026
+            LOST WIND © 2026
           </p>
         ) : (
-          <p className="text-[10px] text-slate-500 text-center uppercase tracking-widest font-bold" title="ESTATÍSTICAS © 2026">
-            EMF
+          <p className="text-[10px] text-slate-500 text-center uppercase tracking-widest font-bold" title="LOST WIND © 2026">
+            LW
           </p>
         )}
       </div>
