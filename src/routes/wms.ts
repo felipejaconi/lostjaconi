@@ -135,8 +135,7 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
             .from("pedidos")
             .update({ 
               status: "pronto", 
-              total: newTotal,
-              created_at: new Date().toISOString()
+              total: newTotal
             })
             .eq("id", pId);
         }));

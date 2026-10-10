@@ -178,11 +178,16 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
       if (!currentOrder) return res.status(404).json({ error: "Pedido não encontrado" });
 
       const storeName = (currentOrder as any).user?.name || "Loja";
-      const movementMotivo = `Entrega de Pedido para ${storeName} (#${pedidoId})`;
+      const movementMotivo = `Entrega de Pedido para ${storeName}`;
 
       const updateData: any = { status };
-      if (req.body.created_at && !req.body.keep_date && status !== "concluido") {
-        updateData.created_at = req.body.created_at;
+      
+      // ONLY change date/time when marking as "entregue" or "concluido" for the first time
+      const wasDelivered = ["entregue", "concluido"].includes(currentOrder.status);
+      const isNowDelivered = ["entregue", "concluido"].includes(status);
+
+      if (isNowDelivered && !wasDelivered) {
+        updateData.created_at = new Date().toISOString();
       }
 
       // 2. Perform status update
@@ -197,9 +202,6 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
       // 3. LOGIC: ONLY deduct from armazem and ADD to store stock when marked as "entregue"
       // CRITICAL: Must not have been delivered or concluded before
-      const wasDelivered = ["entregue", "concluido"].includes(currentOrder.status);
-      const isNowDelivered = ["entregue", "concluido"].includes(status);
-
       if (isNowDelivered && !wasDelivered) {
         // Double check against movimentacoes_stock to be absolutely sure we don't deduct twice
         // Use LIKE to find both old and new motif patterns

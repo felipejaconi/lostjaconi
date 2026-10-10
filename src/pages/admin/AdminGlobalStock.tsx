@@ -77,25 +77,34 @@ export default function AdminGlobalStock() {
     const groups: Record<string, any> = {};
     
     movements.forEach(m => {
-       // Determine a group key.
-       let groupKey = String(m.id);
-       let isGroup = false;
-       let displayTitle = m.motivo || "Ajuste / Outros";
-       
-       if (m.motivo && (m.motivo.includes("Pedido #") || m.motivo.includes("Fatura #"))) {
-          groupKey = m.motivo + "_" + new Date(m.created_at).toDateString();
-          isGroup = true;
-          // If the motif follows the new pattern "Entrega de Pedido para ... (#ID)",
-          // we can optionally clean it for the title, but keeping it full is safer.
-          // Let's just make sure it looks good.
-          if (m.motivo.includes(" (#")) {
-             displayTitle = m.motivo.split(" (#")[0];
+       const date = new Date(m.created_at).toDateString();
+       let groupKey = "";
+       let displayTitle = "";
+       let isGroup = true;
+
+       if (m.tipo === "entrada") {
+          // Group entries by invoice if present, otherwise individual/reason
+          const faturaMatch = m.motivo?.match(/Fatura\s*#?\s*([^\s,)]+)/i);
+          if (faturaMatch) {
+             const faturaNum = faturaMatch[1];
+             groupKey = `entrada_fatura_${faturaNum}_${date}`;
+             displayTitle = `Entrada Fatura #${faturaNum}`;
+          } else {
+             groupKey = `entrada_outros_${m.id}`;
+             displayTitle = m.motivo || "Entrada de Stock";
+             isGroup = false;
           }
-       } else if (m.user_target_id) {
-          groupKey = `store_${m.user_target_id}_${new Date(m.created_at).toDateString()}`;
-          isGroup = true;
-          const storeName = stores.find(s => s.id === m.user_target_id)?.name || "Loja";
-          displayTitle = `Saída para ${storeName}`;
+       } else {
+          // Group exits by store
+          if (m.user_target_id) {
+             const storeName = stores.find(s => s.id === m.user_target_id)?.name || "Loja";
+             groupKey = `saida_loja_${m.user_target_id}_${date}`;
+             displayTitle = `Saída para ${storeName}`;
+          } else {
+             groupKey = `saida_outros_${m.id}`;
+             displayTitle = m.motivo || "Saída de Stock";
+             isGroup = false;
+          }
        }
 
        if (!groups[groupKey]) {
@@ -577,7 +586,7 @@ export default function AdminGlobalStock() {
                                        {group.totalItems} {group.totalItems === 1 ? "artigo" : "artigos"}
                                      </span>
                                    </td>
-                                </tr>
+                                 </tr>
                                 
                                 {expandedMoveGroups[group.id] && (
                                    <tr>
@@ -587,7 +596,12 @@ export default function AdminGlobalStock() {
                                                <div key={m.id} className="flex items-center justify-between py-2 border-b border-zinc-800/50 last:border-0 hover:bg-white/5 px-4 rounded-lg transition-colors">
                                                   <div className="flex flex-col">
                                                      <span className="text-sm font-bold text-zinc-200">{m.produto?.nome || m.produto_nome || "Desconhecido"}</span>
-                                                     <span className="text-[10px] text-zinc-500 uppercase font-mono">{m.created_at ? new Date(m.created_at).toLocaleTimeString("pt-PT") : ""}</span>
+                                                     <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] text-zinc-500 uppercase font-mono">{m.created_at ? new Date(m.created_at).toLocaleTimeString("pt-PT") : ""}</span>
+                                                        {m.motivo && group.isGroup && (
+                                                           <span className="text-[9px] text-zinc-600 italic">({m.motivo})</span>
+                                                        )}
+                                                     </div>
                                                   </div>
                                                   <div className="flex items-center gap-6">
                                                      <div className="text-right">

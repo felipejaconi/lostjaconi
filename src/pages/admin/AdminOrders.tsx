@@ -530,9 +530,6 @@ export default function AdminOrders() {
 
     try {
       const payload: any = { status };
-      if (status === 'entregue') {
-        payload.created_at = nowIso;
-      }
       await api.put(`/pedidos/${id}/status`, payload);
       // Remove fetchOrders() here, rely on realtime or let optimistic be enough for now.
     } catch (error) {
