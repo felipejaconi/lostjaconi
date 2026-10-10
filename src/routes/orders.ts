@@ -88,7 +88,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
           user:users(id, name),
           pedido_itens(
             id, produto_id, quantidade, preco_unitario, display_qty,
-            produto:produtos(id, nome, imagem_url, unidade_base, categoria:categorias(nome))
+            produto:produtos(id, nome, imagem_url, unidade_base, iva, categoria:categorias(nome))
           )
         `)
         .order("created_at", { ascending: false });
@@ -169,13 +169,18 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
         .select(`
           status, user_id, total, 
           user:users(name),
-          pedido_itens(*, produto:produtos(id, stock_armazem, fator_conversao_venda, unidade_base))
+          pedido_itens(*, produto:produtos(id, stock_armazem, fator_conversao_venda, unidade_base, iva))
         `)
         .eq("id", pedidoId)
         .single();
       
       if (fetchErr) throw fetchErr;
       if (!currentOrder) return res.status(404).json({ error: "Pedido não encontrado" });
+      
+      // Block non-admins from changing status of already delivered orders
+      if (req.user.role !== "admin" && (currentOrder.status === "entregue" || currentOrder.status === "concluido")) {
+        return res.status(403).json({ error: "Este pedido já foi entregue e só pode ser alterado por um administrador." });
+      }
 
       const storeName = (currentOrder as any).user?.name || "Loja";
       const movementMotivo = `Entrega de Pedido para ${storeName}`;
@@ -280,6 +285,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.delete("/api/pedidos/:id", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
+      // Check if order is delivered before deleting
+      const { data: order } = await supabase.from("pedidos").select("status").eq("id", req.params.id).single();
+      if (order && (order.status === "entregue" || order.status === "concluido") && req.user.role !== "admin") {
+        return res.status(403).json({ error: "Pedidos entregues só podem ser excluídos por administradores." });
+      }
       const { error } = await supabase.from("pedidos").delete().eq("id", req.params.id);
       if (error) throw error;
       res.json({ success: true });
@@ -290,6 +300,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.put("/api/pedidos/:orderId/itens/:itemId", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
+      // Check if order is delivered before updating item
+      const { data: order } = await supabase.from("pedidos").select("status").eq("id", req.params.orderId).single();
+      if (order && (order.status === "entregue" || order.status === "concluido") && req.user.role !== "admin") {
+        return res.status(403).json({ error: "Pedidos entregues só podem ser editados por administradores." });
+      }
       const updateData: any = {};
       if (req.body.quantidade !== undefined) updateData.quantidade = req.body.quantidade;
       // Only admin can change item price manually
@@ -334,6 +349,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.delete("/api/pedidos/:orderId/itens/:itemId", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
+      // Check if order is delivered before deleting item
+      const { data: order } = await supabase.from("pedidos").select("status").eq("id", req.params.orderId).single();
+      if (order && (order.status === "entregue" || order.status === "concluido") && req.user.role !== "admin") {
+        return res.status(403).json({ error: "Não é possível remover itens de um pedido já entregue." });
+      }
       const { error } = await supabase.from("pedido_itens").delete().eq("id", req.params.itemId);
       if (error) throw error;
 
@@ -358,6 +378,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.post("/api/pedidos/:orderId/itens", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
+      // Check if order is delivered before adding item
+      const { data: order } = await supabase.from("pedidos").select("status").eq("id", req.params.orderId).single();
+      if (order && (order.status === "entregue" || order.status === "concluido") && req.user.role !== "admin") {
+        return res.status(403).json({ error: "Não é possível adicionar itens a um pedido já entregue." });
+      }
       let precoUnitario = req.body.preco_unitario !== undefined ? req.body.preco_unitario : req.body.preco;
       
       // If price is not provided, 0, or user is not admin, ensure default catalogue price from produtos
@@ -567,7 +592,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
           loja:users(name), 
           created_at, 
           status,
-          pedido_itens (produto_id, quantidade, produto:produtos(nome, imagem_url, unidade_base))
+          pedido_itens (produto_id, quantidade, produto:produtos(nome, imagem_url, unidade_base, iva))
         `)
         .in("status", ["pendente", "processando", "entregue_parcial", "entregue", "cancelado", "concluido"])
         .order("created_at", { ascending: false })

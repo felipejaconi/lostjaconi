@@ -1367,7 +1367,7 @@ export default function AdminOrders() {
                        <CheckCircle2 className="w-4 h-4" /> 3. Marcar Entregue
                    </button>
                  )}
-                 { order.status !== 'cancelado' && (
+                 { order.status !== 'cancelado' && !( (order.status === 'entregue' || order.status === 'concluido') && user?.role === 'armazem' ) && (
                    <button onClick={() => setEditingOrder(order)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 font-bold rounded-xl text-sm transition-all shadow-md">
                       <Edit className="w-4 h-4" /> Editar
                    </button>

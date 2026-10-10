@@ -58,6 +58,16 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
     const { loja_id, pedidos_ids, itens_conferidos } = req.body;
 
     try {
+      // Check if any of the orders are already delivered
+      const { data: currentPedidos } = await supabase
+        .from("pedidos")
+        .select("status")
+        .in("id", pedidos_ids);
+      
+      if (currentPedidos?.some((p: any) => p.status === 'entregue' || p.status === 'concluido') && req.user.role !== 'admin') {
+        return res.status(403).json({ error: "Não é possível processar saída de pedidos já entregues." });
+      }
+
       if (!itens_conferidos || itens_conferidos.length === 0) {
         return res.status(400).json({ error: "Nenhum item conferido" });
       }
@@ -151,6 +161,12 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
   app.post("/api/wms/pedidos/:id/rascunho", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
+
+      const { data: order } = await supabase.from("pedidos").select("status").eq("id", id).single();
+      if (order && (order.status === 'entregue' || order.status === 'concluido') && req.user.role !== 'admin') {
+        return res.status(403).json({ error: "Não é possível salvar rascunho de pedidos já entregues." });
+      }
+
       const { itens_conferidos } = req.body;
       
       if (!itens_conferidos || !Array.isArray(itens_conferidos)) {
