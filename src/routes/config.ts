@@ -1,0 +1,243 @@
+
+import fs from "fs";
+import path from "path";
+
+const configPath = path.join(process.cwd(), "armazem_config.json");
+
+export function setupConfigRoutes({ app, supabase, authenticateToken }: any) {
+  app.get("/api/admin/config/armazem", authenticateToken, (req: any, res: any) => {
+    try {
+      if (fs.existsSync(configPath)) {
+        const data = fs.readFileSync(configPath, "utf8");
+        return res.json(JSON.parse(data));
+      }
+      return res.json(null);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/admin/config/armazem", authenticateToken, (req: any, res: any) => {
+    try {
+      if (req.user.role !== "admin" && req.user.role !== "armazem") {
+         return res.status(403).json({ error: "Unauthorized" });
+      }
+      const newConfig = req.body;
+      fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), "utf8");
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/admin/vendas_lojas", authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.query.month !== undefined && req.query.year !== undefined) {
+         const month = parseInt(req.query.month);
+         const year = parseInt(req.query.year);
+
+         const startDate = new Date(year, month, 1).toISOString().split('T')[0];
+         const endDate = new Date(year, month + 1, 0).toISOString().split('T')[0];
+
+         const { data, error } = await supabase
+           .from("fechos_caixa")
+           .select("loja_id, real_total")
+           .gte('data', startDate)
+           .lte('data', endDate);
+           
+         if (error && error.code === '42P01') {
+           return res.json({});
+         } else if (error) {
+           throw error;
+         }
+         
+         const result: Record<string, number> = {};
+         data?.forEach((row: any) => {
+           const val = Number(row.real_total || 0);
+           result[row.loja_id] = (result[row.loja_id] || 0) + val;
+         });
+         
+         return res.json(result);
+      }
+      return res.json({});
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+  app.put("/api/admin/vendas_lojas", authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== "admin" && req.user.role !== "armazem") {
+         return res.status(403).json({ error: "Unauthorized" });
+      }
+      
+      if (req.query.month !== undefined && req.query.year !== undefined) {
+         const mes = parseInt(req.query.month);
+         const ano = parseInt(req.query.year);
+         const vendas = req.body;
+         
+         const upserts = Object.keys(vendas).map(store_id => ({
+           store_id,
+           mes,
+           ano,
+           valor: vendas[store_id]
+         }));
+         
+         if (upserts.length > 0) {
+           const { error } = await supabase
+             .from("vendas_lojas")
+             .upsert(upserts, { onConflict: 'store_id, mes, ano' });
+             
+           if (error && error.code === '42P01') {
+             return res.status(400).json({ error: "Tabela vendas_lojas não existe no Supabase. Por favor, crie a tabela primeiro." });
+           } else if (error) {
+             throw error;
+           }
+         }
+      }
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  
+  // --- DRE MENSAL LOJAS ---
+  app.get("/api/loja/dre", authenticateToken, async (req: any, res: any) => {
+    try {
+      const storeId = req.query.store_id || req.user.id;
+      const month = parseInt(req.query.month);
+      const year = parseInt(req.query.year);
+      
+      const { data, error } = await supabase
+        .from('dre_lojas')
+        .select('dados')
+        .eq('store_id', storeId)
+        .eq('mes', month)
+        .eq('ano', year)
+        .single();
+        
+      if (error && error.code !== 'PGRST116') { // PGRST116 is 'not found'
+        throw error;
+      }
+      
+      return res.json(data?.dados || {});
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/loja/dre", authenticateToken, async (req: any, res: any) => {
+    try {
+      const storeId = req.body.store_id || req.user.id;
+      const month = parseInt(req.body.month);
+      const year = parseInt(req.body.year);
+      const values = req.body.values;
+      
+      const { error } = await supabase
+        .from('dre_lojas')
+        .upsert({
+           store_id: storeId,
+           mes: month,
+           ano: year,
+           dados: values,
+           updated_at: new Date().toISOString()
+        }, {
+           onConflict: 'store_id, mes, ano'
+        });
+        
+      if (error) throw error;
+      
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- FECHOS DE CAIXA ---
+  app.get("/api/admin/fechos", authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== "admin" && req.user.role !== "loja") return res.sendStatus(403);
+    const monthStr = req.query.month as string;
+    const yearStr = req.query.year as string;
+    
+    try {
+      let query = supabase.from('fechos_caixa').select('*');
+      if (req.user.role === 'loja') {
+         query = query.eq('loja_id', req.user.id);
+      }
+      
+      if (monthStr && yearStr) {
+          const month = parseInt(monthStr);
+          const year = parseInt(yearStr);
+          if (!isNaN(month) && !isNaN(year)) {
+              const startDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
+              const endDate = new Date(year, month, 0).toISOString().split('T')[0];
+              query = query.gte('data', startDate).lte('data', endDate);
+          }
+      }
+      
+      const { data, error } = await query;
+        
+      if (error) {
+         if (error.code === '42P01') {
+            return res.status(400).json({ error: "Tabela fechos_caixa não existe no Supabase. Execute o script SQL fornecido." });
+         }
+         throw error;
+      }
+      res.json(data);
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/admin/fechos", authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    const { data, loja_id, sys_mb, sys_dinheiro, sys_mesa,
+      sys_uber, real_mb, real_dinheiro, real_mesa,
+      real_uber, despesas } = req.body;
+    
+    if (!data || !loja_id) return res.status(400).json({ error: "Data e Loja são obrigatórios." });
+    
+    const sys_total = (sys_mb || 0) + (sys_dinheiro || 0) + (sys_mesa || 0) + (sys_uber || 0);
+    const real_total = (real_mb || 0) + (real_dinheiro || 0) + (real_mesa || 0) + (real_uber || 0);
+    const dif_sis_apre = (real_total + (despesas || 0)) - sys_total;
+    
+    const payload = {
+      loja_id,
+      data,
+      sys_mb,
+      sys_dinheiro,
+      sys_mesa,
+      sys_uber,
+      sys_total,
+      real_mb,
+      real_dinheiro,
+      real_mesa,
+      real_uber,
+      real_total,
+      despesas,
+      dif_sis_apre,
+      created_by: req.user.id
+    };
+    
+    try {
+       // Upsert (update if data and loja_id matches)
+       const { data: result, error } = await supabase
+         .from('fechos_caixa')
+         .upsert(payload, { onConflict: 'loja_id, data' })
+         .select()
+         .single();
+         
+       if (error) {
+         if (error.code === '42P01') {
+            return res.status(400).json({ error: "Tabela fechos_caixa não existe no Supabase. Execute o script SQL fornecido." });
+         }
+         throw error;
+       }
+       res.json(result);
+    } catch(e: any) {
+       console.error(e);
+       res.status(500).json({ error: e.message });
+    }
+  });
+}
