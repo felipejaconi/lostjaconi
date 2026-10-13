@@ -1,0 +1,479 @@
+import express from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+
+export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
+  // ERP Financeiro - Fornecedores
+  app.get("/api/admin/fornecedores", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const cached = cache.get("admin_fornecedores");
+      if (cached) return res.json(cached);
+      const { data, error } = await supabase.from("fornecedores").select("*").order("nome");
+      if (error) {
+         if (error.code === '42P01') {
+            // Table doesn't exist yet, return empty array safely
+            return res.json([]);
+         }
+         throw error;
+      }
+      cache.set("admin_fornecedores", data);
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/fornecedores", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      let result = await supabase.from("fornecedores").insert([req.body]).select().single();
+      if (result.error && result.error.code === 'PGRST204') {
+         const safeBody = { ...req.body };
+         delete safeBody.morada;
+         delete safeBody.codigo_postal;
+         delete safeBody.localidade;
+         delete safeBody.iban;
+         delete safeBody.banco;
+         delete safeBody.swift_bic;
+         delete safeBody.condicoes_pagamento;
+         console.warn("Algumas colunas de fornecedores não existem, a omitir campos novos.");
+         result = await supabase.from("fornecedores").insert([safeBody]).select().single();
+      }
+      if (result.error) throw result.error;
+      res.json(result.data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/admin/fornecedores/:id", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      let result = await supabase.from("fornecedores").update(req.body).eq("id", req.params.id).select().single();
+      if (result.error && result.error.code === 'PGRST204') {
+         const safeBody = { ...req.body };
+         delete safeBody.morada;
+         delete safeBody.codigo_postal;
+         delete safeBody.localidade;
+         delete safeBody.iban;
+         delete safeBody.banco;
+         delete safeBody.swift_bic;
+         delete safeBody.condicoes_pagamento;
+         console.warn("Algumas colunas de fornecedores não existem, a omitir campos novos no update.");
+         result = await supabase.from("fornecedores").update(safeBody).eq("id", req.params.id).select().single();
+      }
+      if (result.error) throw result.error;
+      res.json(result.data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ERP Financeiro - Faturas e Despesas
+  app.get("/api/admin/fornecedores/:id/produtos", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const { period, month, year } = req.query;
+      let query = supabase
+        .from('fatura_itens')
+        .select(`
+          produto_id,
+          quantidade,
+          preco_custo,
+          produtos ( nome, imagem_url ),
+          faturas!inner (
+             fornecedor_id,
+             data_emissao
+          )
+        `)
+        .eq('faturas.fornecedor_id', req.params.id);
+
+      if (period !== 'todos') {
+         const m = month ? Number(month) : new Date().getMonth();
+         const y = year ? Number(year) : new Date().getFullYear();
+         const startDate = new Date(y, m, 1).toISOString();
+         const endDate = new Date(y, m + 1, 0, 23, 59, 59).toISOString();
+         query = query.gte("faturas.data_emissao", startDate).lte("faturas.data_emissao", endDate);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      // Group by produto_id to get aggregated stats (e.g. latest price, total quantity bought)
+      const productsMap = new Map();
+      for (const item of (data || [])) {
+         if (!item.produto_id) continue;
+         const pid = item.produto_id;
+         if (!productsMap.has(pid)) {
+            productsMap.set(pid, {
+               produto_id: pid,
+               nome: item.produtos?.nome || "Produto Desconhecido",
+               quantidade_total: 0,
+               ultimo_preco: item.preco_custo,
+               ultima_compra: Array.isArray(item.faturas) ? item.faturas[0]?.data_emissao : item.faturas?.data_emissao
+            });
+         }
+         const p = productsMap.get(pid);
+         p.quantidade_total += Number(item.quantidade);
+         
+         const currentItemDate = Array.isArray(item.faturas) ? item.faturas[0]?.data_emissao : item.faturas?.data_emissao;
+         if (currentItemDate && (!p.ultima_compra || new Date(currentItemDate) > new Date(p.ultima_compra))) {
+            p.ultima_compra = currentItemDate;
+            p.ultimo_preco = item.preco_custo;
+         }
+      }
+
+      const productsArray = Array.from(productsMap.values());
+      res.json(productsArray);
+    } catch (error: any) {
+      console.error(error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ERP Financeiro - Produto Fornecedores (Relatorio)
+  app.get("/api/admin/produtos/:id/fornecedores", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const { period, month, year } = req.query;
+      let query = supabase
+        .from('fatura_itens')
+        .select(`
+          preco_custo,
+          quantidade,
+          faturas!inner (
+             fornecedor_id,
+             data_emissao,
+             fornecedores ( nome )
+          )
+        `)
+        .eq('produto_id', req.params.id);
+
+      if (period !== 'todos') {
+         const m = month ? Number(month) : new Date().getMonth();
+         const y = year ? Number(year) : new Date().getFullYear();
+         const startDate = new Date(y, m, 1).toISOString();
+         const endDate = new Date(y, m + 1, 0, 23, 59, 59).toISOString();
+         query = query.gte("faturas.data_emissao", startDate).lte("faturas.data_emissao", endDate);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      // Group by fornecedor_id
+      const suppliersMap = new Map();
+      for (const item of (data || [])) {
+         let faturasObj = item.faturas;
+         if (Array.isArray(faturasObj)) faturasObj = faturasObj[0]; // Just in case
+         
+         if (!faturasObj || !faturasObj.fornecedor_id) continue;
+         
+         const fid = faturasObj.fornecedor_id;
+         if (!suppliersMap.has(fid)) {
+            suppliersMap.set(fid, {
+               fornecedor_id: fid,
+               nome: faturasObj.fornecedores?.nome || "Fornecedor Desconhecido",
+               quantidade_total: 0,
+               ultimo_preco: item.preco_custo,
+               ultima_compra: faturasObj.data_emissao
+            });
+         }
+         
+         const s = suppliersMap.get(fid);
+         s.quantidade_total += Number(item.quantidade);
+         
+         const itemDate = new Date(faturasObj.data_emissao);
+         const sDate = s.ultima_compra ? new Date(s.ultima_compra) : null;
+         
+         if (itemDate && (!sDate || itemDate > sDate)) {
+            s.ultima_compra = faturasObj.data_emissao;
+            s.ultimo_preco = item.preco_custo;
+         } else if (itemDate && sDate && itemDate.getTime() === sDate.getTime()) {
+            // Se for na mesma data, podemos manter o preco mais recente que apareceu, ou fazer uma média. Mantemos o que tá lá.
+         }
+      }
+
+      const suppliersArray = Array.from(suppliersMap.values());
+      res.json(suppliersArray);
+    } catch (error: any) {
+      console.error(error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  const clearFinanceCache = () => {
+    cache.del("admin_faturas");
+    cache.del("admin_financial_pedidos");
+    cache.del("admin_stats");
+  };
+
+  app.get("/api/admin/financial/pedidos", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const cached = cache.get("admin_financial_pedidos");
+      if (cached) return res.json(cached);
+
+      const { data, error } = await supabase
+        .from("pedidos")
+        .select("id, user_id, total, status, created_at, user:users(name), pedido_itens(quantidade, preco_unitario, produto:produtos(iva))")
+        .in("status", ["pronto", "entregue", "concluido"])
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      const mapped = (data || []).map((p: any) => {
+        let sumSubtotal = 0;
+        let sumIva = 0;
+        (p.pedido_itens || []).forEach((item: any) => {
+          const qty = Number(item.quantidade) || 0;
+          const preco = Number(item.preco_unitario) || 0;
+          const liq = qty * preco;
+          const ivaPerc = Number(item.produto?.iva) || 0;
+          sumSubtotal += liq;
+          sumIva += liq * (ivaPerc / 100);
+        });
+        const totalComIva = sumSubtotal + sumIva;
+        return {
+          id: p.id,
+          user_id: p.user_id,
+          loja_nome: p.user?.name || "Loja Desconhecida",
+          created_at: p.created_at,
+          status: p.status,
+          total_subtotal: sumSubtotal,
+          total_iva: sumIva,
+          total_com_iva: totalComIva,
+          pedido_itens: p.pedido_itens
+        };
+      });
+
+      cache.set("admin_financial_pedidos", mapped, 60);
+      res.json(mapped);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/admin/faturas", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const cached = cache.get("admin_faturas");
+      if (cached) return res.json(cached);
+      const { data, error } = await supabase
+        .from("faturas")
+        .select("*, fornecedor:fornecedores(id, nome, iban, contribuinte, tipo), fatura_itens(id, fatura_id, quantidade, preco_custo, iva, valor_liquido, valor_iva, valor_total, produto:produtos(nome, unidade_base, iva)), user:created_by(id, name, email), movimentos_financeiros(*)")
+        .order("data_emissao", { ascending: false });
+      if (error) {
+         if (error.code === '42P01') return res.json([]);
+         throw error;
+      }
+      const mapped = (data || []).map((f: any) => {
+        if (f.fornecedor) {
+          f.fornecedor.nif = f.fornecedor.contribuinte || "";
+        }
+        return f;
+      });
+      cache.set("admin_faturas", mapped, 60);
+      res.json(mapped);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  
+  app.post("/api/admin/faturas/despesas", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    
+    try {
+      const isArray = Array.isArray(req.body);
+      const items = isArray ? req.body : [req.body];
+      
+      let createdFornecedorId: any = null;
+      let createdFornecedorName: any = null;
+      
+      const dataToInsert = [];
+      
+      for (const item of items) {
+          let finalFornecedorId = item.fornecedor_id;
+          
+          if (!finalFornecedorId && item.novo_fornecedor_nome) {
+             if (createdFornecedorName === item.novo_fornecedor_nome) {
+                finalFornecedorId = createdFornecedorId;
+             } else {
+                const { data: newForn, error: fornError } = await supabase
+                  .from("fornecedores")
+                  .insert([{ nome: item.novo_fornecedor_nome }])
+                  .select()
+                  .single();
+                  
+                if (fornError) throw fornError;
+                finalFornecedorId = newForn.id;
+                createdFornecedorId = newForn.id;
+                createdFornecedorName = item.novo_fornecedor_nome;
+             }
+          }
+          
+          dataToInsert.push({
+            fornecedor_id: finalFornecedorId,
+            numero_fatura: item.numero_fatura,
+            data_emissao: item.data_fatura,
+            data_vencimento: item.data_vencimento,
+            valor_total: item.valor_total,
+            valor_pendente: item.valor_total,
+            tipo: 'despesa_' + item.categoria_despesa,
+            created_by: req.user.id,
+            descrição: item.loja_id ? JSON.stringify({ loja_id: item.loja_id }) : null
+          });
+      }
+      
+      const { data, error } = await supabase.from("faturas").insert(dataToInsert).select();
+      
+      if (error) throw error;
+      clearFinanceCache();
+      res.json(isArray ? data : data[0]);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/faturas", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const isArray = Array.isArray(req.body);
+      const dataToInsert = isArray 
+        ? req.body.map((item: any) => ({ ...item, created_by: req.user.id }))
+        : [{ ...req.body, created_by: req.user.id }];
+        
+      const { data, error } = await supabase.from("faturas").insert(dataToInsert).select();
+      if (error) throw error;
+      clearFinanceCache();
+      res.json(isArray ? data : data[0]);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/admin/faturas/:id/checkout", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    const faturaId = req.params.id;
+    const { numero_fatura, data_emissao, data_vencimento, fornecedor_id, valor_liquido, valor_iva, valor_total, itens } = req.body;
+    
+    try {
+      // 1. Update the Fatura header
+      const updatePayload: any = {
+         numero_fatura,
+         data_emissao,
+         data_vencimento,
+         fornecedor_id,
+         valor_liquido,
+         valor_iva,
+         valor_total,
+         valor_pendente: valor_total,
+         status_pagamento: "pendente"
+      };
+      
+      const { error: headerError } = await supabase.from("faturas").update(updatePayload).eq("id", faturaId);
+      
+      if (headerError) throw headerError;
+      
+      // 2. Update the Fatura Items
+      if (itens && Array.isArray(itens)) {
+         for (const item of itens) {
+            if (item.id) {
+               // Update each item
+               let updatePayload: any = {
+                  iva: item.iva,
+                  valor_liquido: item.valor_liquido,
+                  valor_iva: item.valor_iva,
+                  valor_total: item.valor_total
+               };
+               
+               // Try to set preco_custo
+               updatePayload.preco_custo = item.preco_unitario;
+               
+               const { error: itemErr } = await supabase.from("fatura_itens").update(updatePayload).eq("id", item.id);
+               
+               if (itemErr) {
+                  // Fallback to preco_unitario
+                  delete updatePayload.preco_custo;
+                  updatePayload.preco_unitario = item.preco_unitario;
+                  await supabase.from("fatura_itens").update(updatePayload).eq("id", item.id);
+               }
+            }
+         }
+      }
+      
+      clearFinanceCache();
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Erro no checkout fatura:", error);
+      res.status(500).json({ error: error.message || "Erro no checkout da fatura" });
+    }
+  });
+
+  app.delete("/api/admin/faturas/:id", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    const faturaId = req.params.id;
+    try {
+      await supabase.from("fatura_itens").delete().eq("fatura_id", faturaId);
+      await supabase.from("movimentos_financeiros").delete().eq("fatura_id", faturaId);
+      const { error } = await supabase.from("faturas").delete().eq("id", faturaId);
+      if (error) throw error;
+      clearFinanceCache();
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/admin/faturas/:id", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    const faturaId = req.params.id;
+    const { valor_liquido, valor_iva, valor_total, status_pagamento } = req.body;
+    try {
+      const { data, error } = await supabase.from("faturas").update({
+         valor_liquido,
+         valor_iva,
+         valor_total,
+         valor_pendente: valor_total, // Reset pendente na aprovação
+         status_pagamento
+      }).eq("id", faturaId).select();
+      if (error) throw error;
+      clearFinanceCache();
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/faturas/:id/pagar", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    const { valor, data_pagamento, metodo } = req.body;
+    try {
+      const faturaId = req.params.id;
+      const { data: fatura } = await supabase.from("faturas").select("valor_pendente").eq("id", faturaId).single();
+      if (!fatura) return res.status(404).json({ error: "Fatura não encontrada" });
+
+      const newPendente = Number(fatura.valor_pendente) - Number(valor);
+      const status = newPendente <= 0 ? 'pago' : 'parcial';
+
+      await supabase.from("movimentos_financeiros").insert([{
+         fatura_id: faturaId,
+         valor: Number(valor),
+         data_pagamento,
+         metodo,
+         created_by: req.user.id
+      }]);
+
+      await supabase.from("faturas").update({ valor_pendente: Math.max(0, newPendente), status_pagamento: status }).eq("id", faturaId);
+
+      clearFinanceCache();
+      res.json({ message: "Pagamento registado com sucesso" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+}
