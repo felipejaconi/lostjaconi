@@ -19,6 +19,7 @@ const AdminFinancial = lazy(() => import("./admin/AdminFinancial"));
 const AdminProductsPricing = lazy(() => import("./admin/AdminProductsPricing"));
 const AdminWarehouseConfig = lazy(() => import("./admin/AdminWarehouseConfig"));
 const AdminGlobalStock = lazy(() => import("./admin/AdminGlobalStock"));
+const AdminFleet = lazy(() => import("./admin/AdminFleet"));
 
 import {
   Routes,
@@ -58,7 +59,8 @@ import {
   History,
   FileCode2,
   PackageSearch,
-  Receipt
+  Receipt,
+  Car
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import api from "../lib/api";
@@ -287,6 +289,7 @@ export default function AdminDashboard() {
            { to: "/admin/financeiro", icon: <Banknote size={18} />, label: "Financeiro" },
                       { to: "/admin/precos", icon: <Tags size={18} />, label: "Margens / Preços" },
            { to: "/admin/consumo", icon: <PieChart size={18} />, label: "Consumo" },
+           { to: "/admin/frotas", label: "Frotas", icon: <Car size={18} /> },
            { to: "/admin/giro", icon: <History size={18} />, label: "Média de Consumo" },
            {
              id: "configuracoes",
@@ -609,6 +612,7 @@ export default function AdminDashboard() {
                 <Route path="/produtos" element={<AdminProducts />} />
                 <Route path="/pedidos" element={<AdminOrders />} />
                 <Route path="/lojas" element={<AdminStores />} />
+                <Route path="/frotas" element={<AdminFleet />} />
                 <Route path="/estoque-global" element={<AdminGlobalStock />} />
                 <Route path="/armazem/:tab?" element={<AdminWarehousePicking />} />
                 <Route path="/relatorios" element={<AdminReportsComponent />} />
