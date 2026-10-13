@@ -338,7 +338,16 @@ export default function StoreOrder({ cart, setCart }: { cart: any[]; setCart: an
   }, [products, deferredSearchTerm, activeCategory, mostOrderedIds]);
 
   const cartTotalItems = React.useMemo(() => cart.reduce((acc, item) => acc + item.quantity, 0), [cart]);
-  const cartTotalPrice = React.useMemo(() => cart.reduce((acc, item) => acc + item.preco * item.quantity, 0), [cart]);
+  const cartTotalPrice = React.useMemo(() => {
+    return cart.reduce((acc, item) => {
+      const price = Number(item.preco || 0);
+      const qty = Number(item.quantity || 0);
+      const subtotal = price * qty;
+      const ivaPerc = Number(item.iva || 0);
+      const ivaVal = subtotal * (ivaPerc / 100);
+      return acc + subtotal + ivaVal;
+    }, 0);
+  }, [cart]);
 
   const getGroupedItems = React.useCallback((items: any[]) => {
     return items.reduce((acc, item) => {
@@ -576,7 +585,13 @@ export default function StoreOrder({ cart, setCart }: { cart: any[]; setCart: an
               <CheckSquare size={32} />
             </div>
             <h2 className="text-xl font-black text-white mb-2">Finalizar Pedido?</h2>
-            <p className="text-sm text-slate-400 mb-8">Tem certeza que deseja registrar este pedido com {cartTotalItems} itens?</p>
+            <p className="text-sm text-slate-400 mb-8">
+              Tem certeza que deseja registrar este pedido com {cartTotalItems} itens?
+              <br />
+              <span className="text-emerald-400 font-black block mt-2 text-lg">
+                Valor aprox: € {cartTotalPrice.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </p>
             
             <div className="flex w-full gap-3">
               <button 
