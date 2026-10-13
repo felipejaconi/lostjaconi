@@ -294,10 +294,54 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       }
 
       const chartData = Object.values(chartDataMap);
+
+      // --- FOOD COST CALCULATION ---
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+
+      const [
+        { data: monthOrders },
+        { data: monthSales }
+      ] = await Promise.all([
+        supabase.from("pedidos")
+          .select("total, pedido_itens(quantidade, preco_unitario, produto:produtos(iva))")
+          .eq("user_id", req.user.id)
+          .gte("created_at", startOfMonth.toISOString())
+          .in("status", ["entregue", "concluido"]),
+        supabase.from("fechos_caixa")
+          .select("real_total")
+          .eq("loja_id", req.user.id)
+          .gte("data", startOfMonth.toISOString().split('T')[0])
+      ]);
+
+      const totalCompras = (monthOrders || []).reduce((acc, o) => {
+        let orderTotal = 0;
+        if (o.pedido_itens && o.pedido_itens.length > 0) {
+          o.pedido_itens.forEach((item: any) => {
+            const qty = Number(item.quantidade) || 0;
+            const price = Number(item.preco_unitario || 0);
+            const iva = Number(item.produto?.iva || 0);
+            orderTotal += (qty * price) * (1 + iva / 100);
+          });
+        } else {
+          orderTotal = Number(o.total) || 0;
+        }
+        return acc + orderTotal;
+      }, 0);
+
+      const totalVendas = (monthSales || []).reduce((acc, s) => acc + (Number(s.real_total) || 0), 0);
+      const foodCostRatio = totalVendas > 0 ? (totalCompras / totalVendas) * 100 : 0;
+
       res.json({
         ultimoPedido: ultimoPedido?.[0] || null,
         notificacoesAtivas: notificacoesCount || 0,
-        chartData
+        chartData,
+        foodCost: {
+          ratio: foodCostRatio,
+          totalCompras,
+          totalVendas
+        }
       });
     } catch (error) {
       console.error("Erro ao buscar stats da loja:", error);

@@ -164,9 +164,18 @@ export default function StoreHome() {
               <ShoppingCart className="text-blue-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
             </div>
             <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight">Pedido Diário</h3>
-            <p className="text-slate-400 text-[10px] sm:text-[11px] lg:text-sm leading-snug line-clamp-2 max-w-[180px]">
-              Faça a reposição obrigatória diária de produtos.
-            </p>
+            
+            {stats?.foodCost && (
+              <div className="mt-2 flex flex-col items-center">
+
+                <p className="text-xl sm:text-2xl font-black text-white tabular-nums">
+                  {stats.foodCost.ratio.toFixed(1)}%
+                </p>
+                <p className={`text-[10px] font-bold ${stats.foodCost.ratio < 35 ? 'text-emerald-500' : stats.foodCost.ratio < 45 ? 'text-amber-500' : 'text-rose-500'} ${stats.foodCost.ratio >= 45 ? 'animate-pulse' : ''}`}>
+                  {stats.foodCost.ratio < 35 ? '(Excelente)' : stats.foodCost.ratio < 45 ? '(Aceitável)' : '(Atenção)'}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-blue-500 mt-2 transition-colors w-full justify-center shrink-0">
@@ -207,9 +216,7 @@ export default function StoreHome() {
               <Clock className="text-emerald-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
             </div>
             <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight">Histórico</h3>
-            <p className="text-slate-400 text-[10px] sm:text-[11px] lg:text-sm leading-snug line-clamp-2 max-w-[180px]">
-              Visualize todos os seus pedidos anteriores.
-            </p>
+
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-emerald-500 mt-2 transition-colors w-full justify-center shrink-0">
