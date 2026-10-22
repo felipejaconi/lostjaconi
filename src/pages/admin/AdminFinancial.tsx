@@ -171,15 +171,25 @@ export default function AdminFinancial() {
   const fetchSummary = async () => {
     try {
       if (!summaryCache) setIsLoading(true);
-      const [summaryRes, usersRes] = await Promise.all([
-        api.get("/admin/financial/summary"),
-        api.get("/admin/users")
-      ]);
+      
+      const summaryPromise = api.get("/admin/financial/summary").catch(e => {
+        console.error("Summary fetch error:", e);
+        return { data: summaryCache || {} };
+      });
+      
+      const usersPromise = api.get("/admin/users").catch(e => {
+        console.error("Users fetch error:", e);
+        return { data: financialCache?.stores || [] };
+      });
+
+      const [summaryRes, usersRes] = await Promise.all([summaryPromise, usersPromise]);
       
       summaryCache = summaryRes.data;
       setSummaryData(summaryRes.data);
       
-      const storesData = ((usersRes.data as any[]) || []).filter((u: any) => u.role === 'loja');
+      const storesData = (Array.isArray(usersRes.data) ? usersRes.data : [])
+        .filter((u: any) => u.role === 'loja');
+      
       setStores(storesData);
       
       // Update cache
@@ -189,7 +199,7 @@ export default function AdminFinancial() {
       } as any;
 
     } catch (err) {
-      console.error(err);
+      console.error("fetchSummary general error:", err);
     } finally {
       setIsLoading(false);
     }
@@ -749,53 +759,51 @@ export default function AdminFinancial() {
       <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-2 -mt-2 md:-mt-4 mb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
         <BrandTitle title="Financeiro" titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0" hideUnderline />
            
-                {!isArmazem && (
-              <div className="flex bg-[#0a0a0a] p-1.5 rounded-2xl border border-white/5 w-full sm:w-auto overflow-x-auto no-scrollbar gap-1 shadow-inner items-center">
-              <button 
-                 onClick={() => setActiveTab("dashboard")}
-                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-2 text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap h-[44px] ${
-                    activeTab === "dashboard" ? "bg-amber-500 text-black shadow-[0_0_20px_-5px_rgba(245,158,11,0.4)]" : "text-zinc-400 hover:text-amber-400 hover:bg-white/5"
-                 }`}
-              >
-                 <LayoutDashboard size={14} className={activeTab === "dashboard" ? "text-black" : ""} />
-                 Dashboard
-              </button>
-              <button 
-                 onClick={() => setActiveTab("faturas_compras")}
-                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-1 text-xs flex flex-col items-center justify-center font-bold tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap h-[44px] leading-tight ${
-                    activeTab === "faturas_compras" ? "bg-blue-600 text-white shadow-[0_0_20px_-5px_rgba(37,99,235,0.4)]" : "text-zinc-400 hover:text-blue-400 hover:bg-white/5"
-                 }`}
-              >
-                 <span className="flex items-center gap-1.5 uppercase text-[11px]">
-                    <Receipt size={13} />
-                    Faturas a Pagar
-                 </span>
-                 <span className="text-[10px] font-semibold text-blue-200/90 lowercase">(compras)</span>
-              </button>
-              <button 
-                 onClick={() => setActiveTab("faturas_despesas")}
-                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-1 text-xs flex flex-col items-center justify-center font-bold tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap h-[44px] leading-tight ${
-                    activeTab === "faturas_despesas" ? "bg-rose-600 text-white shadow-[0_0_20px_-5px_rgba(225,29,72,0.4)]" : "text-zinc-400 hover:text-rose-400 hover:bg-white/5"
-                 }`}
-              >
-                 <span className="flex items-center gap-1.5 uppercase text-[11px]">
-                    <TrendingDown size={13} />
-                    Faturas a Pagar
-                 </span>
-                 <span className="text-[10px] font-semibold text-rose-200/90 lowercase">(despesas)</span>
-              </button>
-              <button 
-                 onClick={() => setActiveTab("fornecedores")}
-                 className={`shrink-0 sm:flex-none px-4 sm:px-5 py-2 text-xs flex items-center justify-center gap-2 font-bold uppercase tracking-wider rounded-xl transition-all duration-300 whitespace-nowrap h-[44px] ${
-                    activeTab === "fornecedores" ? "bg-emerald-600 text-white shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]" : "text-zinc-400 hover:text-emerald-400 hover:bg-white/5"
-                 }`}
-              >
-                 <ShoppingCart size={14} />
-                 Faturas a Receber
-              </button>
-           </div>
-           )}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-1.5 min-w-max mt-2">
+          <button
+            onClick={() => setActiveTab("dashboard")}
+            className={cn(
+              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
+              activeTab === "dashboard"
+                ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
+                : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+            )}
+          >
+            DASHBOARD
+          </button>
+          <button
+            onClick={() => setActiveTab("faturas_compras")}
+            className={cn(
+              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
+              activeTab === "faturas_compras"
+                ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
+                : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+            )}
+          >
+            FATURAS A PAGAR (compras)
+          </button>
+          <button
+            onClick={() => setActiveTab("faturas_despesas")}
+            className={cn(
+              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
+              activeTab === "faturas_despesas"
+                ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
+                : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+            )}
+          >
+            FATURAS A PAGAR (despesas)
+          </button>
+          <button
+            onClick={() => setActiveTab("fornecedores")}
+            className={cn(
+              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
+              activeTab === "fornecedores"
+                ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
+                : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+            )}
+          >
+            FATURAS A RECEBER
+          </button>
         </div>
       </div>
 

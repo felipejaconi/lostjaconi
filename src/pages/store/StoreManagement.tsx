@@ -523,7 +523,7 @@ export default function StoreManagement() {
                        {/* KPI: Rácio */}
                        <div className="bg-black/40 border border-white/5 rounded-2xl p-5 flex flex-col justify-center items-start relative overflow-hidden group">
                           <div className="absolute top-0 right-0 w-16 h-16 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-colors" />
-                          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Rácio Mensal (Food Cost)</p>
+                          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Pedido Diário</p>
                           <div className="flex items-end gap-3">
                              <p className="text-2xl font-black text-blue-400">{totalPct.toFixed(1)}%</p>
                              <div className={`text-xs font-bold mb-1 ${totalPct < 35 ? 'text-emerald-500' : totalPct < 45 ? 'text-amber-500' : 'text-rose-500'}`}>
