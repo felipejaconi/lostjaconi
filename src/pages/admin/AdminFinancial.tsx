@@ -205,7 +205,7 @@ export default function AdminFinancial() {
     }
   };
 
-  const lazyLoadTab = async (tab: string) => {
+  const lazyLoadTab = async (tab: string, forcePeriod?: string) => {
      if (financialCache && tab === "dashboard") return;
      
      setIsTabLoading(true);
@@ -234,9 +234,10 @@ export default function AdminFinancial() {
               } as any;
            }
         } else if (tab === "fornecedores") { // Actually "Faturas a Receber"
-           if (pedidos.length === 0) {
+           const targetPeriod = forcePeriod || filterDataAReceber.periodo;
+           if (pedidos.length === 0 || forcePeriod) {
               const [pedRes, usersRes] = await Promise.all([
-                 api.get("/admin/financial/pedidos"),
+                 api.get(`/admin/financial/pedidos?period=${targetPeriod}`),
                  api.get("/admin/users")
               ]);
               const pedData = pedRes.data || [];
@@ -1314,7 +1315,10 @@ export default function AdminFinancial() {
                   <div className="flex flex-nowrap sm:flex-wrap items-center gap-2 w-full sm:w-auto overflow-x-auto no-scrollbar pb-1 sm:pb-0">
                   <div className="inline-flex bg-black/40 p-1 rounded-lg border border-white/5 shadow-inner w-full sm:w-auto h-[38px]">
                      <button 
-                        onClick={() => setFilterDataAReceber({...filterDataAReceber, periodo: 'mes'})}
+                        onClick={() => {
+                           setFilterDataAReceber({...filterDataAReceber, periodo: 'mes'});
+                           lazyLoadTab("fornecedores", "mes");
+                        }}
                         className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
                           filterDataAReceber.periodo === 'mes' ? 'bg-amber-600 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
                         }`}
@@ -1322,7 +1326,10 @@ export default function AdminFinancial() {
                         Mensal
                      </button>
                      <button 
-                        onClick={() => setFilterDataAReceber({...filterDataAReceber, periodo: 'ano'})}
+                        onClick={() => {
+                           setFilterDataAReceber({...filterDataAReceber, periodo: 'ano'});
+                           lazyLoadTab("fornecedores", "ano");
+                        }}
                         className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
                           filterDataAReceber.periodo === 'ano' ? 'bg-amber-600 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
                         }`}
@@ -1330,7 +1337,10 @@ export default function AdminFinancial() {
                         Anual
                      </button>
                      <button 
-                        onClick={() => setFilterDataAReceber({...filterDataAReceber, periodo: 'todos'})}
+                        onClick={() => {
+                           setFilterDataAReceber({...filterDataAReceber, periodo: 'todos'});
+                           lazyLoadTab("fornecedores", "todos");
+                        }}
                         className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
                           filterDataAReceber.periodo === 'todos' ? 'bg-amber-600 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
                         }`}

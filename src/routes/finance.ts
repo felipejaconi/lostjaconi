@@ -214,14 +214,27 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
   app.get("/api/admin/financial/pedidos", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     try {
-      const cached = cache.get("admin_financial_pedidos");
+      const { period } = req.query;
+      const cacheKey = `admin_financial_pedidos_${period || 'all'}`;
+      const cached = cache.get(cacheKey);
       if (cached) return res.json(cached);
 
-      const { data, error } = await supabase
+      let query = supabase
         .from("pedidos")
-        .select("id, user_id, total, status, created_at, user:users(name), pedido_itens(quantidade, preco_unitario, produto:produtos(iva))")
-        .in("status", ["pronto", "entregue", "concluido"])
-        .order("created_at", { ascending: false });
+        .select("id, user_id, status, created_at, user:users(name), pedido_itens(quantidade, preco_unitario, produto:produtos(iva))")
+        .in("status", ["pronto", "entregue", "concluido"]);
+
+      if (period === 'mes') {
+         const now = new Date();
+         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+         query = query.gte("created_at", startOfMonth);
+      } else if (period === 'ano') {
+         const now = new Date();
+         const startOfYear = new Date(now.getFullYear(), 0, 1).toISOString();
+         query = query.gte("created_at", startOfYear);
+      }
+
+      const { data, error } = await query.order("created_at", { ascending: false });
 
       if (error) throw error;
 
@@ -245,12 +258,11 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
           status: p.status,
           total_subtotal: sumSubtotal,
           total_iva: sumIva,
-          total_com_iva: totalComIva,
-          pedido_itens: p.pedido_itens
+          total_com_iva: totalComIva
         };
       });
 
-      cache.set("admin_financial_pedidos", mapped, 60);
+      cache.set(cacheKey, mapped, 60);
       res.json(mapped);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
