@@ -795,10 +795,12 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                )}
             </button>
           )}
-          <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
-             <Receipt size={16} />
-             Registrar Despesa
-          </button>
+          {user?.role === 'admin' && (
+            <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
+               <Receipt size={16} />
+               Registrar Despesa
+            </button>
+          )}
         </div>
       </div>
 
@@ -875,15 +877,17 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all [color-scheme:dark]"
                 />
                </div>
-              <div className="md:col-span-2 space-y-2">
-                <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">Observações (Opcional)</label>
-                <textarea 
-                  value={observacoes}
-                  onChange={e => setObservacoes(e.target.value)}
-                  placeholder="Ex: Teve taxa de urgência, desconto por volume, etc..."
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all placeholder:text-zinc-600 min-h-[80px] resize-none"
-                />
-              </div>
+              {user?.role === 'admin' && (
+                <div className="md:col-span-2 space-y-2">
+                  <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">Observações (Opcional)</label>
+                  <textarea 
+                    value={observacoes}
+                    onChange={e => setObservacoes(e.target.value)}
+                    placeholder="Ex: Teve taxa de urgência, desconto por volume, etc..."
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all placeholder:text-zinc-600 min-h-[80px] resize-none"
+                  />
+                </div>
+              )}
             </div>
           </section>
 

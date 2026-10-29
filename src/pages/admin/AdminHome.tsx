@@ -346,26 +346,30 @@ export default function AdminHome() {
           </div>
         </div>
 
-        <div
-          className="bg-[#0a0a0a]/80 backdrop-blur-md p-3 sm:p-4 rounded-2xl border border-red-500/10 shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer group hover:border-red-500/20 transition-all"
-          onClick={() => navigate("/admin/financeiro")}
-        >
-          <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full blur-3xl -mr-10 -mt-10 transition-all group-hover:bg-red-500/10"></div>
-          <div className="flex items-center justify-between mb-1 sm:mb-2 relative z-10">
-            <h3 className="text-[9px] sm:text-[11px] font-bold text-slate-400 group-hover:text-red-400 transition-colors uppercase tracking-widest line-clamp-1">
-              Financeiro
-            </h3>
-            <Banknote className="text-red-500 w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 transition-transform group-hover:scale-110" />
+        {isAdmin && (
+          <div
+            className="bg-[#0a0a0a]/80 backdrop-blur-md p-3 sm:p-4 rounded-2xl border border-red-500/10 shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer group hover:border-red-500/20 transition-all"
+            onClick={() => navigate("/admin/financeiro")}
+          >
+            <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full blur-3xl -mr-10 -mt-10 transition-all group-hover:bg-red-500/10"></div>
+            <div className="flex items-center justify-between mb-1 sm:mb-2 relative z-10">
+              <h3 className="text-[9px] sm:text-[11px] font-bold text-slate-400 group-hover:text-red-400 transition-colors uppercase tracking-widest line-clamp-1">
+                Financeiro
+              </h3>
+              <button className="text-red-500 w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 transition-transform group-hover:scale-110">
+                <Banknote size={16} />
+              </button>
+            </div>
+            <div className="flex items-end justify-between mt-1 relative z-10">
+              <p className="text-lg sm:text-2xl font-black text-white group-hover:text-red-50 transition-colors">
+                Gerir
+              </p>
+              <span className="text-[10px] sm:text-[11px] text-red-600/70 group-hover:text-red-500 font-bold flex items-center transition-colors">
+                Acessar <ArrowRight className="w-3 h-3 ml-1" />
+              </span>
+            </div>
           </div>
-          <div className="flex items-end justify-between mt-1 relative z-10">
-            <p className="text-lg sm:text-2xl font-black text-white group-hover:text-red-50 transition-colors">
-              Gerir
-            </p>
-            <span className="text-[10px] sm:text-[11px] text-red-600/70 group-hover:text-red-500 font-bold flex items-center transition-colors">
-              Acessar <ArrowRight className="w-3 h-3 ml-1" />
-            </span>
-          </div>
-        </div>
+        )}
       </div>
 
       {isAdmin && (
