@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
-  Car, Fuel, Wrench, AlertTriangle, Plus, Search, RefreshCw, X, Gauge
+  Car, Fuel, Wrench, AlertTriangle, Plus, Search, RefreshCw, Gauge
 } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
 import Swal from "sweetalert2";
 import api from "../../lib/api";
 import { Modal } from "../../components/ui/Modal";
@@ -71,7 +70,9 @@ export default function AdminFleet() {
   };
 
   useEffect(() => {
+    console.log("AdminFleet mounted");
     fetchData();
+    return () => console.log("AdminFleet unmounted");
   }, []);
 
   // Summary Metrics
@@ -119,7 +120,7 @@ export default function AdminFleet() {
   }, [vehicles, search, filterStore, filterStatus, filterOnlyAlerts]);
 
   // Save Vehicle
-  const handleSaveVehicle = async (data: any) => {
+  const handleSaveVehicle = useCallback(async (data: any) => {
     try {
       if (editingVehicle) {
         const res = await api.put(`/admin/fleet/${editingVehicle.id}`, data);
@@ -136,9 +137,9 @@ export default function AdminFleet() {
     } catch (e: any) {
       Swal.fire({ icon: "error", title: "Erro ao salvar", text: e.response?.data?.error || "Ocorreu um erro.", background: "#18181b", color: "#fff" });
     }
-  };
+  }, [editingVehicle]);
 
-  const handleDeleteVehicle = async (v: Veiculo) => {
+  const handleDeleteVehicle = useCallback(async (v: Veiculo) => {
     const result = await Swal.fire({
       title: `Eliminar viatura ${v.matricula}?`,
       text: "Esta ação é irreversível.",
@@ -159,9 +160,9 @@ export default function AdminFleet() {
         Swal.fire({ icon: "error", title: "Erro ao eliminar", background: "#18181b", color: "#fff" });
       }
     }
-  };
+  }, []);
 
-  const handleSaveFuel = async (data: any) => {
+  const handleSaveFuel = useCallback(async (data: any) => {
     if (!fuelTargetVehicle) return;
     try {
       const res = await api.post(`/admin/fleet/${fuelTargetVehicle.id}/abastecimento`, data);
@@ -172,9 +173,9 @@ export default function AdminFleet() {
     } catch (e: any) {
       Swal.fire({ icon: "error", title: "Erro", text: e.response?.data?.error || "Falha.", background: "#18181b", color: "#fff" });
     }
-  };
+  }, [fuelTargetVehicle]);
 
-  const handleSaveMaint = async (data: any) => {
+  const handleSaveMaint = useCallback(async (data: any) => {
     if (!maintTargetVehicle) return;
     try {
       const res = await api.post(`/admin/fleet/${maintTargetVehicle.id}/manutencao`, data);
@@ -185,9 +186,9 @@ export default function AdminFleet() {
     } catch (e: any) {
       Swal.fire({ icon: "error", title: "Erro", background: "#18181b", color: "#fff" });
     }
-  };
+  }, [maintTargetVehicle]);
 
-  const handleSaveKm = async (e: React.FormEvent) => {
+  const handleSaveKm = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!kmTargetVehicle) return;
     try {
@@ -199,14 +200,12 @@ export default function AdminFleet() {
     } catch (e: any) {
       Swal.fire({ icon: "error", title: "Erro", background: "#18181b", color: "#fff" });
     }
-  };
+  }, [kmTargetVehicle, quickKmInput]);
 
   if (loading) return (
-    <ContentViewport>
-      <div className="h-[60vh] flex items-center justify-center">
-        <RefreshCw className="w-8 h-8 animate-spin text-amber-500" />
-      </div>
-    </ContentViewport>
+    <div className="h-screen w-full flex items-center justify-center bg-[#050505]">
+      <RefreshCw className="w-8 h-8 animate-spin text-amber-500" />
+    </div>
   );
 
   return (

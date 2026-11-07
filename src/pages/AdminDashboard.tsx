@@ -19,7 +19,7 @@ const AdminFinancial = lazy(() => import("./admin/AdminFinancial"));
 const AdminProductsPricing = lazy(() => import("./admin/AdminProductsPricing"));
 const AdminWarehouseConfig = lazy(() => import("./admin/AdminWarehouseConfig"));
 const AdminGlobalStock = lazy(() => import("./admin/AdminGlobalStock"));
-import AdminFleet from "./admin/AdminFleet";
+const AdminFleet = lazy(() => import("./admin/AdminFleet"));
 
 import {
   Routes,
