@@ -1,0 +1,5 @@
+{
+  "name": "GRUPO LOST WIND",
+  "description": "Sistema de gestão integrada do Grupo Lost Wind.",
+  "requestFramePermissions": ["camera"]
+}
