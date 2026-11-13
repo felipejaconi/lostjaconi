@@ -281,6 +281,16 @@ export default function AdminFinancial() {
     await lazyLoadTab(activeTab);
   };
 
+  const refreshSummaryOnly = async () => {
+    try {
+      const summaryRes = await api.get("/admin/financial/summary");
+      summaryCache = summaryRes.data;
+      setSummaryData(summaryRes.data);
+    } catch (err) {
+      console.error("refreshSummaryOnly error:", err);
+    }
+  };
+
   const handleMarcarRecebido = async (pedido: any) => {
     try {
       const { isConfirmed } = await Swal.fire({
@@ -298,16 +308,16 @@ export default function AdminFinancial() {
 
       await api.put(`/pedidos/${pedido.id}/status`, { status: "concluido", keep_date: true });
       
-      // Update local state immediately
+      // Update local state immediately preserving original created_at
       setPedidos(prev => prev.map(p => p.id === pedido.id ? { ...p, status: "concluido" } : p));
       
-      // Update cache
+      // Update cache preserving original created_at
       if (financialCache) {
          financialCache.pedidos = financialCache.pedidos.map(p => p.id === pedido.id ? { ...p, status: "concluido" } : p);
       }
       
-      // Refresh summary stats without clearing lists
-      fetchSummary();
+      // Refresh summary KPIs without overwriting the active pedidos list/period
+      refreshSummaryOnly();
 
       Swal.fire({
         title: "Sucesso",
@@ -339,16 +349,16 @@ export default function AdminFinancial() {
 
       await api.put(`/pedidos/${pedido.id}/status`, { status: "entregue", keep_date: true });
       
-      // Update local state immediately
+      // Update local state immediately preserving original created_at
       setPedidos(prev => prev.map(p => p.id === pedido.id ? { ...p, status: "entregue" } : p));
       
-      // Update cache
+      // Update cache preserving original created_at
       if (financialCache) {
          financialCache.pedidos = financialCache.pedidos.map(p => p.id === pedido.id ? { ...p, status: "entregue" } : p);
       }
       
-      // Refresh summary stats without clearing lists
-      fetchSummary();
+      // Refresh summary KPIs without overwriting the active pedidos list/period
+      refreshSummaryOnly();
 
       Swal.fire({
         title: "Sucesso",

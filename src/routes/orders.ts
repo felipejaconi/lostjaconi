@@ -7,11 +7,14 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
   
   const clearPedidosCache = (req: any, res: any, next: any) => {
     const keys = cache.keys();
-    const orderKeys = keys.filter((k: string) => k.startsWith("pedidos_") || k.startsWith("admin_analytics_consumo_"));
+    const orderKeys = keys.filter((k: string) =>
+      k.startsWith("pedidos_") ||
+      k.startsWith("admin_analytics_consumo_") ||
+      k.startsWith("admin_financial_pedidos")
+    );
     cache.del(orderKeys);
     cache.del("admin_stats");
     cache.del("admin_dashboard_extended");
-    cache.del("admin_financial_pedidos");
     next();
   };
 
@@ -131,14 +134,14 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.put("/api/pedidos/:id/status", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
-      const { status } = req.body;
+      const { status, keep_date } = req.body;
       const pedidoId = req.params.id;
 
       // 1. Fetch current order with items AND PRODUCT DETAILS
       const { data: currentOrder, error: fetchErr } = await supabase
         .from("pedidos")
         .select(`
-          status, user_id, total, 
+          status, user_id, total, created_at,
           user:users(name),
           pedido_itens(*, produto:produtos(id, stock_armazem, fator_conversao_venda, unidade_base, iva))
         `)
@@ -160,7 +163,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
       const wasDelivered = ["entregue", "concluido"].includes(currentOrder.status);
       const isNowDelivered = ["entregue", "concluido"].includes(status);
 
-      if (isNowDelivered && !wasDelivered) {
+      if (isNowDelivered && !wasDelivered && !keep_date && status !== "concluido") {
         updateData.created_at = new Date().toISOString();
       }
 

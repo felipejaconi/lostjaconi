@@ -205,8 +205,10 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
   });
 
   const clearFinanceCache = () => {
+    const keys = cache.keys();
+    const finPedidosKeys = keys.filter((k: string) => k.startsWith("admin_financial_pedidos"));
+    cache.del(finPedidosKeys);
     cache.del("admin_faturas");
-    cache.del("admin_financial_pedidos");
     cache.del("admin_stats");
     cache.del("admin_produtos");
   };

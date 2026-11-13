@@ -99,29 +99,6 @@ export default function AdminDashboard() {
   const [activeToasts, setActiveToasts] = useState<{id: string, title: string, body: string}[]>([]);
 
   useEffect(() => {
-    // One-time fix for orders with overwritten dates
-    const fixSpecificOrders = async () => {
-      const fixedKey = "fixed_specific_orders_nov08_v2";
-      if (localStorage.getItem(fixedKey)) return;
-      
-      try {
-        console.log("Executando restauro automático de datas de pedidos...");
-        const res = await api.post("/admin/fix-order-dates");
-        if (res.data && res.data.success) {
-          localStorage.setItem(fixedKey, "true");
-          console.log("Restauro de datas concluído:", res.data.fixed_count, "pedidos restaurados.");
-        }
-      } catch (e) {
-        console.error("Falha ao executar restauro automático de datas:", e);
-      }
-    };
-
-    if (user?.role === "admin") {
-      fixSpecificOrders();
-    }
-  }, [user]);
-
-  useEffect(() => {
     // Auto-expand submenus if current path matches a subitem
     sidebarGroups.forEach(group => {
       group.items.forEach(item => {
