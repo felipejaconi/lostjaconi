@@ -926,7 +926,7 @@ export default function AdminFinancial() {
 
           {activeTab === "dashboard" && (
             <div className="space-y-6 mt-6">
-               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   {/* 1. Faturas a Pagar (Compras) */}
                   <div 
                      onClick={() => setActiveTab("faturas_compras")}
@@ -983,34 +983,6 @@ export default function AdminFinancial() {
                      <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider mb-1 relative z-10">Crédito IVA (Compras)</p>
                      <p className="text-xl font-bold text-emerald-400 relative z-10">€ {stats.totalIvaCredito.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
                      <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-emerald-500/5 blur-2xl rounded-full group-hover:bg-emerald-500/10 transition-colors"></div>
-                  </div>
-
-                  {/* 3.5. Debito IVA */}
-                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-sm relative overflow-hidden group">
-                     <div className="flex items-center justify-between mb-3 relative z-10">
-                        <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-500 border border-rose-500/20">
-                           <Receipt className="w-4 h-4" />
-                        </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-rose-500 bg-rose-500/10 px-2 py-0.5 rounded">A Pagar (Vendas)</span>
-                     </div>
-                     <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider mb-1 relative z-10">Débito de IVA</p>
-                     <p className="text-xl font-bold text-rose-400 relative z-10">€ {stats.totalIvaDebito.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
-                     <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-rose-500/5 blur-2xl rounded-full group-hover:bg-rose-500/10 transition-colors"></div>
-                  </div>
-
-                  {/* 5. Contas a Receber */}
-                  <div 
-                     onClick={() => setActiveTab("fornecedores")}
-                     className="bg-zinc-950 border border-zinc-800 hover:border-emerald-500/50 rounded-xl p-4 shadow-sm cursor-pointer transition-all hover:bg-zinc-900/40 group"
-                  >
-                     <div className="flex items-center justify-between mb-3">
-                        <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-300 border border-zinc-700 group-hover:scale-105 transition-transform">
-                           <Store className="w-4 h-4" />
-                        </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300 bg-zinc-800 px-2 py-0.5 rounded">A Receber</span>
-                     </div>
-                     <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider mb-1">Contas a Receber</p>
-                     <p className="text-xl font-bold text-zinc-100">€ {stats.totalReceber.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
                   </div>
                </div>
 
