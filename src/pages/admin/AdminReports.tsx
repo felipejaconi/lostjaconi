@@ -37,6 +37,14 @@ type ReportType =
   | "despesas"
   | "fechos";
 
+interface AppliedSearchFilters {
+  reportType: ReportType;
+  startDate: string;
+  endDate: string;
+  status: string;
+  entity: string;
+}
+
 interface QuickSuggestion {
   id: string;
   label: string;
@@ -54,16 +62,16 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const [status, setStatus] = useState("todos");
   const [entity, setEntity] = useState("todos");
 
-  // Bottom interactive preview & suggestions state (starts empty until user touches any filter)
-  const [hasInteracted, setHasInteracted] = useState(false);
+  // Bottom box state — starts empty and ONLY queries DB when clicking "Pesquisar"
+  const [appliedSearch, setAppliedSearch] = useState<AppliedSearchFilters | null>(null);
   const [quickSearch, setQuickSearch] = useState("");
   const [visibleLimit, setVisibleLimit] = useState(50);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  // Cached raw datasets for instant filtering & smart suggestions
-  const [rawFaturas, setRawFaturas] = useState<any[] | null>(null);
-  const [rawPedidos, setRawPedidos] = useState<any[] | null>(null);
-  const [rawFechos, setRawFechos] = useState<any[] | null>(null);
+  // Datasets fetched ONLY when user clicks "Pesquisar" (or "Baixar Relatório")
+  const [searchedFaturas, setSearchedFaturas] = useState<any[]>([]);
+  const [searchedPedidos, setSearchedPedidos] = useState<any[]>([]);
+  const [searchedFechos, setSearchedFechos] = useState<any[]>([]);
 
   const [fornecedores, setFornecedores] = useState<any[]>([]);
   const [lojas, setLojas] = useState<any[]>([]);
@@ -103,76 +111,18 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     fetchGlobalMetrics();
   }, []);
 
-  // Reset pagination when filters change
-  useEffect(() => {
-    setVisibleLimit(50);
-  }, [reportType, startDate, endDate, status, entity, quickSearch]);
-
-  // Lazy-load the required datasets once the user starts selecting filters
-  useEffect(() => {
-    if (!hasInteracted) return;
-
-    let cancelled = false;
-    const loadNeededData = async () => {
-      const needsFaturas = ["pagar", "faturas_pagas", "iva_credito", "despesas", "consumo_lojas", "fornecedores"].includes(reportType);
-      const needsPedidos = ["receber", "debito_iva", "consumo_lojas"].includes(reportType);
-      const needsFechos = reportType === "fechos";
-
-      const tasks: PromiseLike<void>[] = [];
-
-      if (needsFaturas && rawFaturas === null) {
-        tasks.push(
-          api
-            .get("/admin/faturas")
-            .then((res) => {
-              if (!cancelled) setRawFaturas(Array.isArray(res.data) ? res.data : []);
-            })
-            .catch(() => {
-              if (!cancelled) setRawFaturas([]);
-            })
-        );
-      }
-
-      if (needsPedidos && rawPedidos === null) {
-        tasks.push(
-          api
-            .get("/pedidos?all=true")
-            .then((res) => {
-              if (!cancelled) setRawPedidos(Array.isArray(res.data) ? res.data : []);
-            })
-            .catch(() => {
-              if (!cancelled) setRawPedidos([]);
-            })
-        );
-      }
-
-      if (needsFechos && rawFechos === null) {
-        tasks.push(
-          api
-            .get("/admin/fechos")
-            .then((res) => {
-              if (!cancelled) setRawFechos(Array.isArray(res.data) ? res.data : []);
-            })
-            .catch(() => {
-              if (!cancelled) setRawFechos([]);
-            })
-        );
-      }
-
-      if (tasks.length > 0) {
-        setPreviewLoading(true);
-        await Promise.all(tasks);
-        if (!cancelled) setPreviewLoading(false);
-      }
-    };
-
-    loadNeededData();
-    return () => {
-      cancelled = true;
-    };
-  }, [hasInteracted, reportType, rawFaturas, rawPedidos, rawFechos]);
-
   const normalizedEntity = !entity || entity === "todos" ? "todos" : entity;
+
+  const isDirtySinceLastSearch = useMemo(() => {
+    if (!appliedSearch) return false;
+    return (
+      appliedSearch.reportType !== reportType ||
+      appliedSearch.startDate !== startDate ||
+      appliedSearch.endDate !== endDate ||
+      appliedSearch.status !== status ||
+      appliedSearch.entity !== normalizedEntity
+    );
+  }, [appliedSearch, reportType, startDate, endDate, status, normalizedEntity]);
 
   const parseRecordDate = (dateString: string): Date | null => {
     if (!dateString) return null;
@@ -184,7 +134,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     return isNaN(dt.getTime()) ? null : dt;
   };
 
-  const filterByDateRange = (dateString: string, customStart = startDate, customEnd = endDate) => {
+  const filterByDateRange = (dateString: string, customStart: string, customEnd: string) => {
     if (!customStart && !customEnd) return true;
     const dt = parseRecordDate(dateString);
     if (!dt) return false;
@@ -267,7 +217,93 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const formatCurrency = (val: number) =>
     `€ ${val.toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+  const fetchDatasetsForType = async (targetType: ReportType, targetStartDate: string) => {
+    const needsFaturas = ["pagar", "faturas_pagas", "iva_credito", "despesas", "consumo_lojas", "fornecedores"].includes(targetType);
+    const needsPedidos = ["receber", "debito_iva", "consumo_lojas"].includes(targetType);
+    const needsFechos = targetType === "fechos";
+
+    let faturasData: any[] = [];
+    let pedidosData: any[] = [];
+    let fechosData: any[] = [];
+
+    const tasks: PromiseLike<void>[] = [];
+
+    if (needsFaturas) {
+      tasks.push(
+        api
+          .get("/admin/faturas")
+          .then((res) => {
+            faturasData = Array.isArray(res.data) ? res.data : [];
+          })
+          .catch(() => {
+            faturasData = [];
+          })
+      );
+    }
+
+    if (needsPedidos) {
+      const pedidosUrl = targetStartDate
+        ? `/pedidos?all=true&startDate=${encodeURIComponent(targetStartDate)}`
+        : "/pedidos?all=true";
+      tasks.push(
+        api
+          .get(pedidosUrl)
+          .then((res) => {
+            pedidosData = Array.isArray(res.data) ? res.data : [];
+          })
+          .catch(() => {
+            pedidosData = [];
+          })
+      );
+    }
+
+    if (needsFechos) {
+      tasks.push(
+        api
+          .get("/admin/fechos")
+          .then((res) => {
+            fechosData = Array.isArray(res.data) ? res.data : [];
+          })
+          .catch(() => {
+            fechosData = [];
+          })
+      );
+    }
+
+    await Promise.all(tasks);
+    return { faturasData, pedidosData, fechosData };
+  };
+
+  // Explicit search handler — ONLY called when clicking the "Pesquisar" button
+  const handleSearch = async () => {
+    const nextFilters: AppliedSearchFilters = {
+      reportType,
+      startDate,
+      endDate,
+      status,
+      entity: normalizedEntity
+    };
+
+    setPreviewLoading(true);
+    setVisibleLimit(50);
+    setQuickSearch("");
+    setAppliedSearch(nextFilters);
+
+    try {
+      const { faturasData, pedidosData, fechosData } = await fetchDatasetsForType(nextFilters.reportType, nextFilters.startDate);
+      setSearchedFaturas(faturasData);
+      setSearchedPedidos(pedidosData);
+      setSearchedFechos(fechosData);
+    } catch (err) {
+      console.error("Erro ao pesquisar relatórios:", err);
+      Swal.fire("Erro", "Falha ao consultar os dados do relatório.", "error");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const computeReportResult = (
+    activeFilters: AppliedSearchFilters,
     faturasInput: any[],
     pedidosInput: any[],
     fechosInput: any[],
@@ -281,6 +317,14 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     summaryLabel: string;
     numericColumns: number[];
   } => {
+    const {
+      reportType: rType,
+      startDate: sDate,
+      endDate: eDate,
+      status: stFilter,
+      entity: entFilter
+    } = activeFilters;
+
     let rows: string[][] = [];
     let totalRow: string[] | null = null;
     let headers: string[] = [];
@@ -289,20 +333,20 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     let summaryLabel = "Total";
     let numericColumns: number[] = [];
 
-    if (reportType === "pagar" || reportType === "faturas_pagas") {
+    if (rType === "pagar" || rType === "faturas_pagas") {
       const filtered = faturasInput.filter((f) => {
-        const periodMatch = filterByDateRange(f.data_emissao);
-        const statusMatch = reportType === "pagar" ? f.status_pagamento !== "pago" : f.status_pagamento === "pago";
+        const periodMatch = filterByDateRange(f.data_emissao, sDate, eDate);
+        const statusMatch = rType === "pagar" ? f.status_pagamento !== "pago" : f.status_pagamento === "pago";
 
         let entityMatch = true;
-        if (normalizedEntity !== "todos") {
-          if (normalizedEntity.startsWith("fornecedor_")) {
-            entityMatch = String(f.fornecedor_id) === normalizedEntity.replace("fornecedor_", "");
-          } else if (normalizedEntity.startsWith("loja_")) {
+        if (entFilter !== "todos") {
+          if (entFilter.startsWith("fornecedor_")) {
+            entityMatch = String(f.fornecedor_id) === entFilter.replace("fornecedor_", "");
+          } else if (entFilter.startsWith("loja_")) {
             const lojaId = getFaturaLojaId(f);
-            entityMatch = lojaId === normalizedEntity.replace("loja_", "");
+            entityMatch = lojaId === entFilter.replace("loja_", "");
           } else {
-            entityMatch = String(f.fornecedor_id) === normalizedEntity;
+            entityMatch = String(f.fornecedor_id) === entFilter;
           }
         }
         return periodMatch && statusMatch && entityMatch;
@@ -310,7 +354,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
       headers = ["Data Emissão", "Vencimento", "Fornecedor", "Loja", "Nº Fatura", "Total (€)", "Pendente (€)", "Status"];
       numericColumns = [5, 6];
-      title = reportType === "faturas_pagas" ? "Relatório de Faturas Pagas" : "Relatório de Faturas a Pagar";
+      title = rType === "faturas_pagas" ? "Relatório de Faturas Pagas" : "Relatório de Faturas a Pagar";
 
       let totalValor = 0;
       let totalPendente = 0;
@@ -343,13 +387,13 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         ];
       });
 
-      summaryTotal = reportType === "pagar" ? totalPendente : totalValor;
-      summaryLabel = reportType === "pagar" ? "Total Pendente" : "Total Pago";
+      summaryTotal = rType === "pagar" ? totalPendente : totalValor;
+      summaryLabel = rType === "pagar" ? "Total Pendente" : "Total Pago";
       totalRow = ["", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""];
-    } else if (reportType === "iva_credito") {
+    } else if (rType === "iva_credito") {
       const filtered = faturasInput.filter((f) => {
-        const periodMatch = filterByDateRange(f.data_emissao);
-        const entityMatch = normalizedEntity === "todos" || String(f.fornecedor_id) === normalizedEntity;
+        const periodMatch = filterByDateRange(f.data_emissao, sDate, eDate);
+        const entityMatch = entFilter === "todos" || String(f.fornecedor_id) === entFilter;
         return periodMatch && entityMatch;
       });
 
@@ -376,16 +420,16 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       summaryTotal = totalIvaResultante;
       summaryLabel = "IVA Recuperável";
       totalRow = ["", "", "TOTAL IVA CRÉDITO", "", totalIvaResultante.toFixed(2), ""];
-    } else if (reportType === "debito_iva") {
+    } else if (rType === "debito_iva") {
       const filtered = pedidosInput.filter((p) => {
         const isValidState = ["pronto", "entregue", "concluido"].includes(p.status?.toLowerCase());
-        const periodMatch = filterByDateRange(p.created_at);
-        const lojaMatch = normalizedEntity === "todos" || String(p.user_id) === normalizedEntity;
+        const periodMatch = filterByDateRange(p.created_at, sDate, eDate);
+        const lojaMatch = entFilter === "todos" || String(p.user_id) === entFilter;
 
         let statusMatch = true;
-        if (status !== "todos") {
-          if (status === "pago") statusMatch = p.status?.toLowerCase() === "concluido";
-          if (status === "nao_pago") statusMatch = ["pronto", "entregue"].includes(p.status?.toLowerCase());
+        if (stFilter !== "todos") {
+          if (stFilter === "pago") statusMatch = p.status?.toLowerCase() === "concluido";
+          if (stFilter === "nao_pago") statusMatch = ["pronto", "entregue"].includes(p.status?.toLowerCase());
         }
         return isValidState && periodMatch && lojaMatch && statusMatch;
       });
@@ -412,18 +456,18 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       summaryTotal = totalIvaDebito;
       summaryLabel = "Total IVA Débito";
       totalRow = ["", "TOTAL IVA DÉBITO", "", totalIvaDebito.toFixed(2), ""];
-    } else if (reportType === "receber") {
+    } else if (rType === "receber") {
       const filtered = pedidosInput.filter((p) => {
         const isReceberBase = ["pronto", "entregue", "concluido"].includes(p.status?.toLowerCase());
-        const periodMatch = filterByDateRange(p.created_at);
+        const periodMatch = filterByDateRange(p.created_at, sDate, eDate);
 
         let statusMatch = true;
-        if (status !== "todos") {
-          if (status === "pago") statusMatch = p.status?.toLowerCase() === "concluido";
-          if (status === "nao_pago") statusMatch = ["pronto", "entregue"].includes(p.status?.toLowerCase());
+        if (stFilter !== "todos") {
+          if (stFilter === "pago") statusMatch = p.status?.toLowerCase() === "concluido";
+          if (stFilter === "nao_pago") statusMatch = ["pronto", "entregue"].includes(p.status?.toLowerCase());
         }
 
-        const lojaMatch = normalizedEntity === "todos" || String(p.user_id) === normalizedEntity;
+        const lojaMatch = entFilter === "todos" || String(p.user_id) === entFilter;
         return isReceberBase && periodMatch && statusMatch && lojaMatch;
       });
 
@@ -447,18 +491,18 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       summaryTotal = totalValor;
       summaryLabel = "Valor Total";
       totalRow = ["", "", "TOTAL CALCULADO", totalValor.toFixed(2), ""];
-    } else if (reportType === "despesas") {
+    } else if (rType === "despesas") {
       const filtered = faturasInput.filter((f) => {
         const isDespesa = f.tipo && f.tipo.startsWith("despesa");
-        const periodMatch = filterByDateRange(f.data_emissao);
+        const periodMatch = filterByDateRange(f.data_emissao, sDate, eDate);
         let statusMatch = true;
-        if (status !== "todos") {
-          if (status === "pago") statusMatch = f.status_pagamento === "pago";
-          if (status === "nao_pago") statusMatch = f.status_pagamento !== "pago";
+        if (stFilter !== "todos") {
+          if (stFilter === "pago") statusMatch = f.status_pagamento === "pago";
+          if (stFilter === "nao_pago") statusMatch = f.status_pagamento !== "pago";
         }
 
         const lojaId = getFaturaLojaId(f) || "armazem";
-        const entityMatch = normalizedEntity === "todos" || lojaId === normalizedEntity;
+        const entityMatch = entFilter === "todos" || lojaId === entFilter;
         return isDespesa && periodMatch && statusMatch && entityMatch;
       });
 
@@ -498,11 +542,11 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       summaryTotal = totalValor;
       summaryLabel = "Total Despesas";
       totalRow = ["", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""];
-    } else if (reportType === "fechos") {
+    } else if (rType === "fechos") {
       const filtered = fechosInput
         .filter((f) => {
-          const periodMatch = filterByDateRange(f.data);
-          const entityMatch = normalizedEntity === "todos" || String(f.loja_id) === normalizedEntity;
+          const periodMatch = filterByDateRange(f.data, sDate, eDate);
+          const entityMatch = entFilter === "todos" || String(f.loja_id) === entFilter;
           return periodMatch && entityMatch;
         })
         .sort((a, b) => new Date(a.data).getTime() - new Date(b.data).getTime());
@@ -563,9 +607,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         tRealMb.toFixed(2), tRealDinh.toFixed(2), tRealMesa.toFixed(2), tRealUber.toFixed(2), tTotalReal.toFixed(2),
         tDiff.toFixed(2)
       ];
-    } else if (reportType === "consumo_lojas") {
-      const pedidos = pedidosInput.filter((p: any) => filterByDateRange(p.created_at));
-      const faturas = faturasInput.filter((f: any) => filterByDateRange(f.data_emissao));
+    } else if (rType === "consumo_lojas") {
+      const pedidos = pedidosInput.filter((p: any) => filterByDateRange(p.created_at, sDate, eDate));
+      const faturas = faturasInput.filter((f: any) => filterByDateRange(f.data_emissao, sDate, eDate));
 
       const lojaStats: Record<string, { id: string; nome: string; consumo: number; compras_diretas: number; despesas: number }> = {};
 
@@ -596,8 +640,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       });
 
       let listStats = Object.values(lojaStats);
-      if (normalizedEntity !== "todos") {
-        listStats = listStats.filter((s) => s.id === normalizedEntity);
+      if (entFilter !== "todos") {
+        listStats = listStats.filter((s) => s.id === entFilter);
       }
 
       headers = ["Loja", "Consumo Armazém (€)", "Compras Diretas (€)", "Despesas (€)", "Total Gastos (€)"];
@@ -617,8 +661,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       summaryTotal = totGen;
       summaryLabel = "Total Gastos";
       totalRow = ["TOTAL", totC.toFixed(2), totDir.toFixed(2), totDesp.toFixed(2), totGen.toFixed(2)];
-    } else if (reportType === "fornecedores") {
-      const faturasPeriodo = faturasInput.filter((f: any) => filterByDateRange(f.data_emissao));
+    } else if (rType === "fornecedores") {
+      const faturasPeriodo = faturasInput.filter((f: any) => filterByDateRange(f.data_emissao, sDate, eDate));
       const statsMap = new Map<string, { count: number; total: number; pendente: number }>();
 
       faturasPeriodo.forEach((f: any) => {
@@ -632,8 +676,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       });
 
       let filteredForn = fornecedores;
-      if (normalizedEntity !== "todos") {
-        filteredForn = filteredForn.filter((fn) => String(fn.id) === normalizedEntity);
+      if (entFilter !== "todos") {
+        filteredForn = filteredForn.filter((fn) => String(fn.id) === entFilter);
       }
 
       headers = ["Fornecedor", "NIF", "Tipo", "Nº Faturas", "Total Faturado (€)", "Pendente (€)"];
@@ -673,20 +717,25 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   };
 
   const livePreview = useMemo(() => {
-    if (!hasInteracted) return null;
-    return computeReportResult(rawFaturas || [], rawPedidos || [], rawFechos || [], quickSearch);
-  }, [hasInteracted, reportType, startDate, endDate, status, normalizedEntity, quickSearch, rawFaturas, rawPedidos, rawFechos, fornecedores, lojas]);
+    if (!appliedSearch) return null;
+    return computeReportResult(appliedSearch, searchedFaturas, searchedPedidos, searchedFechos, quickSearch);
+  }, [appliedSearch, searchedFaturas, searchedPedidos, searchedFechos, quickSearch, fornecedores, lojas]);
 
-  // Dynamic contextual suggestions generated from real records as filters are selected
+  // Suggestions computed strictly in-memory over the dataset fetched by "Pesquisar" (zero extra DB calls)
   const smartSuggestions = useMemo<QuickSuggestion[]>(() => {
-    if (!hasInteracted) return [];
-    const list: QuickSuggestion[] = [];
-    const faturasArr = rawFaturas || [];
-    const pedidosArr = rawPedidos || [];
-    const fechosArr = rawFechos || [];
+    if (!appliedSearch) return [];
+    const {
+      reportType: rType,
+      startDate: sDate,
+      endDate: eDate,
+      status: stFilter,
+      entity: entFilter
+    } = appliedSearch;
 
-    // 1. Date-range suggestions (populate startDate & endDate directly from months that have records)
-    if (!startDate && !endDate) {
+    const list: QuickSuggestion[] = [];
+
+    // 1. In-memory date-range refinements when no dates were entered yet
+    if (!sDate && !eDate) {
       const monthCounts = new Map<string, { y: number; m: number; count: number }>();
       const registerDate = (dStr: string) => {
         const dt = parseRecordDate(dStr);
@@ -699,21 +748,21 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         monthCounts.set(key, cur);
       };
 
-      if (["pagar", "faturas_pagas", "iva_credito", "despesas", "fornecedores"].includes(reportType)) {
-        faturasArr.forEach((f) => {
-          if (reportType === "pagar" && f.status_pagamento === "pago") return;
-          if (reportType === "faturas_pagas" && f.status_pagamento !== "pago") return;
-          if (reportType === "despesas" && !f.tipo?.startsWith("despesa")) return;
-          if (reportType === "iva_credito" && getFaturaIva(f) <= 0) return;
+      if (["pagar", "faturas_pagas", "iva_credito", "despesas", "fornecedores"].includes(rType)) {
+        searchedFaturas.forEach((f) => {
+          if (rType === "pagar" && f.status_pagamento === "pago") return;
+          if (rType === "faturas_pagas" && f.status_pagamento !== "pago") return;
+          if (rType === "despesas" && !f.tipo?.startsWith("despesa")) return;
+          if (rType === "iva_credito" && getFaturaIva(f) <= 0) return;
           registerDate(f.data_emissao);
         });
-      } else if (["receber", "debito_iva", "consumo_lojas"].includes(reportType)) {
-        pedidosArr.forEach((p) => {
+      } else if (["receber", "debito_iva", "consumo_lojas"].includes(rType)) {
+        searchedPedidos.forEach((p) => {
           if (!["pronto", "entregue", "concluido"].includes(p.status?.toLowerCase())) return;
           registerDate(p.created_at);
         });
-      } else if (reportType === "fechos") {
-        fechosArr.forEach((f) => registerDate(f.data));
+      } else if (rType === "fechos") {
+        searchedFechos.forEach((f) => registerDate(f.data));
       }
 
       Array.from(monthCounts.entries())
@@ -730,29 +779,30 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
             apply: () => {
               setStartDate(sIso);
               setEndDate(eIso);
-              setHasInteracted(true);
+              setAppliedSearch((prev) => (prev ? { ...prev, startDate: sIso, endDate: eIso } : null));
+              setVisibleLimit(50);
             }
           });
         });
     }
 
-    // 2. Top Supplier / Store suggestions based on current report + date range when entity === "todos"
-    if (normalizedEntity === "todos") {
-      if (["pagar", "faturas_pagas", "iva_credito", "fornecedores"].includes(reportType)) {
+    // 2. Top Supplier / Store refinements within already-fetched records
+    if (entFilter === "todos") {
+      if (["pagar", "faturas_pagas", "iva_credito", "fornecedores"].includes(rType)) {
         const map = new Map<string, { nome: string; count: number; val: number; entityVal: string }>();
-        faturasArr.forEach((f) => {
-          if (!f.fornecedor_id || !filterByDateRange(f.data_emissao)) return;
-          if (reportType === "pagar" && f.status_pagamento === "pago") return;
-          if (reportType === "faturas_pagas" && f.status_pagamento !== "pago") return;
-          if (reportType === "iva_credito" && getFaturaIva(f) <= 0) return;
+        searchedFaturas.forEach((f) => {
+          if (!f.fornecedor_id || !filterByDateRange(f.data_emissao, sDate, eDate)) return;
+          if (rType === "pagar" && f.status_pagamento === "pago") return;
+          if (rType === "faturas_pagas" && f.status_pagamento !== "pago") return;
+          if (rType === "iva_credito" && getFaturaIva(f) <= 0) return;
 
           const fid = String(f.fornecedor_id);
-          const entityVal = ["pagar", "faturas_pagas"].includes(reportType) ? `fornecedor_${fid}` : fid;
+          const entityVal = ["pagar", "faturas_pagas"].includes(rType) ? `fornecedor_${fid}` : fid;
           const nome = f.fornecedor?.nome || fornecedores.find((fn) => String(fn.id) === fid)?.nome || `Fornecedor #${fid}`;
           const amount =
-            reportType === "iva_credito"
+            rType === "iva_credito"
               ? getFaturaIva(f)
-              : reportType === "pagar"
+              : rType === "pagar"
               ? Number(f.valor_pendente ?? f.valor_total ?? 0)
               : Number(f.valor_total || 0);
 
@@ -772,22 +822,23 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
               meta: `${item.count} faturas · ${formatCurrency(item.val)}`,
               apply: () => {
                 setEntity(item.entityVal);
-                setHasInteracted(true);
+                setAppliedSearch((prev) => (prev ? { ...prev, entity: item.entityVal } : null));
+                setVisibleLimit(50);
               }
             });
           });
-      } else if (["receber", "debito_iva", "consumo_lojas"].includes(reportType)) {
+      } else if (["receber", "debito_iva", "consumo_lojas"].includes(rType)) {
         const map = new Map<string, { nome: string; count: number; val: number }>();
-        pedidosArr.forEach((p) => {
+        searchedPedidos.forEach((p) => {
           if (!["pronto", "entregue", "concluido"].includes(p.status?.toLowerCase())) return;
-          if (!filterByDateRange(p.created_at)) return;
-          if (status === "pago" && p.status?.toLowerCase() !== "concluido") return;
-          if (status === "nao_pago" && !["pronto", "entregue"].includes(p.status?.toLowerCase())) return;
+          if (!filterByDateRange(p.created_at, sDate, eDate)) return;
+          if (stFilter === "pago" && p.status?.toLowerCase() !== "concluido") return;
+          if (stFilter === "nao_pago" && !["pronto", "entregue"].includes(p.status?.toLowerCase())) return;
 
           const lid = String(p.user_id);
           const nome = p.loja_nome || lojas.find((l) => String(l.id) === lid)?.name || `Loja #${lid}`;
-          const amount = reportType === "debito_iva" ? getPedidoIva(p) : getPedidoTotalComIva(p);
-          if (reportType === "debito_iva" && amount <= 0) return;
+          const amount = rType === "debito_iva" ? getPedidoIva(p) : getPedidoTotalComIva(p);
+          if (rType === "debito_iva" && amount <= 0) return;
 
           const prev = map.get(lid) || { nome, count: 0, val: 0 };
           prev.count += 1;
@@ -805,16 +856,17 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
               meta: `${info.count} ped. · ${formatCurrency(info.val)}`,
               apply: () => {
                 setEntity(lid);
-                setHasInteracted(true);
+                setAppliedSearch((prev) => (prev ? { ...prev, entity: lid } : null));
+                setVisibleLimit(50);
               }
             });
           });
-      } else if (reportType === "despesas") {
+      } else if (rType === "despesas") {
         const map = new Map<string, { nome: string; count: number; val: number }>();
-        faturasArr.forEach((f) => {
-          if (!f.tipo?.startsWith("despesa") || !filterByDateRange(f.data_emissao)) return;
-          if (status === "pago" && f.status_pagamento !== "pago") return;
-          if (status === "nao_pago" && f.status_pagamento === "pago") return;
+        searchedFaturas.forEach((f) => {
+          if (!f.tipo?.startsWith("despesa") || !filterByDateRange(f.data_emissao, sDate, eDate)) return;
+          if (stFilter === "pago" && f.status_pagamento !== "pago") return;
+          if (stFilter === "nao_pago" && f.status_pagamento === "pago") return;
 
           const lid = getFaturaLojaId(f) || "armazem";
           const nome =
@@ -837,20 +889,21 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
               meta: `${info.count} desp. · ${formatCurrency(info.val)}`,
               apply: () => {
                 setEntity(lid);
-                setHasInteracted(true);
+                setAppliedSearch((prev) => (prev ? { ...prev, entity: lid } : null));
+                setVisibleLimit(50);
               }
             });
           });
       }
     }
 
-    // 3. Payment status suggestions when status === "todos" on applicable reports
-    if (status === "todos" && ["receber", "despesas", "debito_iva"].includes(reportType)) {
-      if (reportType === "despesas") {
-        const base = faturasArr.filter((f) => {
-          if (!f.tipo?.startsWith("despesa") || !filterByDateRange(f.data_emissao)) return false;
+    // 3. Payment status refinements within already-fetched records
+    if (stFilter === "todos" && ["receber", "despesas", "debito_iva"].includes(rType)) {
+      if (rType === "despesas") {
+        const base = searchedFaturas.filter((f) => {
+          if (!f.tipo?.startsWith("despesa") || !filterByDateRange(f.data_emissao, sDate, eDate)) return false;
           const lid = getFaturaLojaId(f) || "armazem";
-          return normalizedEntity === "todos" || lid === normalizedEntity;
+          return entFilter === "todos" || lid === entFilter;
         });
         const unpaid = base.filter((f) => f.status_pagamento !== "pago").length;
         const paid = base.filter((f) => f.status_pagamento === "pago").length;
@@ -861,7 +914,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
             meta: `${unpaid} reg.`,
             apply: () => {
               setStatus("nao_pago");
-              setHasInteracted(true);
+              setAppliedSearch((prev) => (prev ? { ...prev, status: "nao_pago" } : null));
+              setVisibleLimit(50);
             }
           });
         }
@@ -872,15 +926,16 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
             meta: `${paid} reg.`,
             apply: () => {
               setStatus("pago");
-              setHasInteracted(true);
+              setAppliedSearch((prev) => (prev ? { ...prev, status: "pago" } : null));
+              setVisibleLimit(50);
             }
           });
         }
       } else {
-        const base = pedidosArr.filter((p) => {
+        const base = searchedPedidos.filter((p) => {
           if (!["pronto", "entregue", "concluido"].includes(p.status?.toLowerCase())) return false;
-          if (!filterByDateRange(p.created_at)) return false;
-          return normalizedEntity === "todos" || String(p.user_id) === normalizedEntity;
+          if (!filterByDateRange(p.created_at, sDate, eDate)) return false;
+          return entFilter === "todos" || String(p.user_id) === entFilter;
         });
         const unpaid = base.filter((p) => ["pronto", "entregue"].includes(p.status?.toLowerCase())).length;
         const paid = base.filter((p) => p.status?.toLowerCase() === "concluido").length;
@@ -891,7 +946,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
             meta: `${unpaid} ped.`,
             apply: () => {
               setStatus("nao_pago");
-              setHasInteracted(true);
+              setAppliedSearch((prev) => (prev ? { ...prev, status: "nao_pago" } : null));
+              setVisibleLimit(50);
             }
           });
         }
@@ -902,7 +958,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
             meta: `${paid} ped.`,
             apply: () => {
               setStatus("pago");
-              setHasInteracted(true);
+              setAppliedSearch((prev) => (prev ? { ...prev, status: "pago" } : null));
+              setVisibleLimit(50);
             }
           });
         }
@@ -910,32 +967,32 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     }
 
     return list;
-  }, [hasInteracted, reportType, startDate, endDate, status, normalizedEntity, rawFaturas, rawPedidos, rawFechos, fornecedores, lojas]);
+  }, [appliedSearch, searchedFaturas, searchedPedidos, searchedFechos, fornecedores, lojas]);
 
   const handleExport = async () => {
     setLoading(true);
     try {
-      let faturasData = rawFaturas;
-      let pedidosData = rawPedidos;
-      let fechosData = rawFechos;
+      const exportFilters: AppliedSearchFilters = {
+        reportType,
+        startDate,
+        endDate,
+        status,
+        entity: normalizedEntity
+      };
 
-      if (["pagar", "faturas_pagas", "iva_credito", "despesas", "consumo_lojas", "fornecedores"].includes(reportType) && faturasData === null) {
-        const res = await api.get("/admin/faturas");
-        faturasData = Array.isArray(res.data) ? res.data : [];
-        setRawFaturas(faturasData);
-      }
-      if (["receber", "debito_iva", "consumo_lojas"].includes(reportType) && pedidosData === null) {
-        const res = await api.get("/pedidos?all=true");
-        pedidosData = Array.isArray(res.data) ? res.data : [];
-        setRawPedidos(pedidosData);
-      }
-      if (reportType === "fechos" && fechosData === null) {
-        const res = await api.get("/admin/fechos");
-        fechosData = Array.isArray(res.data) ? res.data : [];
-        setRawFechos(fechosData);
+      let faturasData = searchedFaturas;
+      let pedidosData = searchedPedidos;
+      let fechosData = searchedFechos;
+
+      // Only query DB on export if we haven't already fetched for the exact current filters
+      if (!appliedSearch || isDirtySinceLastSearch) {
+        const fetched = await fetchDatasetsForType(exportFilters.reportType, exportFilters.startDate);
+        faturasData = fetched.faturasData;
+        pedidosData = fetched.pedidosData;
+        fechosData = fetched.fechosData;
       }
 
-      const computed = computeReportResult(faturasData || [], pedidosData || [], fechosData || [], quickSearch);
+      const computed = computeReportResult(exportFilters, faturasData, pedidosData, fechosData, !isDirtySinceLastSearch ? quickSearch : "");
       const exportRows = computed.totalRow ? [...computed.rows, computed.totalRow] : computed.rows;
 
       if (format === "pdf") {
@@ -994,42 +1051,45 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     { id: "fornecedores", title: "Fornecedores", icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10", border: "border-cyan-500" }
   ];
 
-  const entityOptions = useMemo(() => {
-    return [
-      { id: "todos", nome: "Todos(as)" },
-      ...(["pagar", "faturas_pagas"].includes(reportType)
-        ? [
-            ...fornecedores.map((f) => ({ id: `fornecedor_${f.id}`, nome: `${f.nome} (Fornecedor)` })),
-            ...lojas.map((l) => ({ id: `loja_${l.id}`, nome: `${l.name || l.nome} (Loja)` }))
-          ]
-        : []),
-      ...(["iva_credito", "fornecedores"].includes(reportType)
-        ? fornecedores.map((f) => ({ id: String(f.id), nome: f.nome }))
-        : []),
-      ...(["receber", "consumo_lojas", "debito_iva", "fechos"].includes(reportType)
-        ? lojas.map((l) => ({ id: String(l.id), nome: l.name || l.nome }))
-        : []),
-      ...(reportType === "despesas"
-        ? [
-            { id: "armazem", nome: "Armazém Central" },
-            ...lojas.map((l) => ({ id: String(l.id), nome: l.name || l.nome }))
-          ]
-        : [])
-    ];
-  }, [reportType, fornecedores, lojas]);
+  const getEntityOptionsForType = (rType: ReportType) => [
+    { id: "todos", nome: "Todos(as)" },
+    ...(["pagar", "faturas_pagas"].includes(rType)
+      ? [
+          ...fornecedores.map((f) => ({ id: `fornecedor_${f.id}`, nome: `${f.nome} (Fornecedor)` })),
+          ...lojas.map((l) => ({ id: `loja_${l.id}`, nome: `${l.name || l.nome} (Loja)` }))
+        ]
+      : []),
+    ...(["iva_credito", "fornecedores"].includes(rType)
+      ? fornecedores.map((f) => ({ id: String(f.id), nome: f.nome }))
+      : []),
+    ...(["receber", "consumo_lojas", "debito_iva", "fechos"].includes(rType)
+      ? lojas.map((l) => ({ id: String(l.id), nome: l.name || l.nome }))
+      : []),
+    ...(rType === "despesas"
+      ? [
+          { id: "armazem", nome: "Armazém Central" },
+          ...lojas.map((l) => ({ id: String(l.id), nome: l.name || l.nome }))
+        ]
+      : [])
+  ];
 
-  const activePeriodLabel = useMemo(() => {
-    if (startDate && endDate) return `${formatIsoInputDate(startDate)} a ${formatIsoInputDate(endDate)}`;
-    if (startDate) return `Desde ${formatIsoInputDate(startDate)}`;
-    if (endDate) return `Até ${formatIsoInputDate(endDate)}`;
+  const entityOptions = useMemo(() => getEntityOptionsForType(reportType), [reportType, fornecedores, lojas]);
+
+  const appliedPeriodLabel = useMemo(() => {
+    if (!appliedSearch) return "Todas as datas";
+    const { startDate: s, endDate: e } = appliedSearch;
+    if (s && e) return `${formatIsoInputDate(s)} a ${formatIsoInputDate(e)}`;
+    if (s) return `Desde ${formatIsoInputDate(s)}`;
+    if (e) return `Até ${formatIsoInputDate(e)}`;
     return "Todas as datas";
-  }, [startDate, endDate]);
+  }, [appliedSearch]);
 
-  const activeEntityLabel = useMemo(() => {
-    if (normalizedEntity === "todos") return "Todos(as)";
-    const found = entityOptions.find((o) => String(o.id) === String(normalizedEntity));
-    return found ? found.nome : normalizedEntity;
-  }, [normalizedEntity, entityOptions]);
+  const appliedEntityLabel = useMemo(() => {
+    if (!appliedSearch || appliedSearch.entity === "todos") return "Todos(as)";
+    const opts = getEntityOptionsForType(appliedSearch.reportType);
+    const found = opts.find((o) => String(o.id) === String(appliedSearch.entity));
+    return found ? found.nome : appliedSearch.entity;
+  }, [appliedSearch, fornecedores, lojas]);
 
   const handleResetFilters = () => {
     setStartDate("");
@@ -1037,7 +1097,10 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     setStatus("todos");
     setEntity("todos");
     setQuickSearch("");
-    setHasInteracted(false);
+    setAppliedSearch(null);
+    setSearchedFaturas([]);
+    setSearchedPedidos([]);
+    setSearchedFechos([]);
   };
 
   return (
@@ -1118,13 +1181,13 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   return (
                     <button
                       key={opt.id}
+                      type="button"
                       onClick={() => {
                         setReportType(opt.id as ReportType);
                         setEntity("todos");
                         setStatus("todos");
-                        setHasInteracted(true);
                       }}
-                      className={`flex items-center gap-2 p-2 px-2.5 rounded-lg border transition-all text-left ${
+                      className={`flex items-center gap-2 p-2 px-2.5 rounded-lg border transition-all text-left cursor-pointer ${
                         isSelected
                           ? `${opt.bg} ${opt.border} ${opt.color}`
                           : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50"
@@ -1138,13 +1201,34 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
               </div>
             </div>
 
-            <div className="pt-6 border-t border-zinc-800/50 mt-auto flex flex-col justify-end">
+            <div className="pt-6 border-t border-zinc-800/50 mt-auto grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
+                type="button"
+                onClick={handleSearch}
+                disabled={previewLoading}
+                className="w-full px-5 py-3.5 bg-zinc-100 hover:bg-white text-zinc-950 font-bold text-sm rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                {previewLoading ? (
+                  <span className="animate-pulse">A Pesquisar...</span>
+                ) : (
+                  <>
+                    <Search size={18} /> Pesquisar
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
                 onClick={handleExport}
                 disabled={loading}
-                className="w-full px-6 py-3.5 bg-blue-500 text-white font-bold text-sm rounded-xl hover:bg-blue-600 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shadow-lg shadow-blue-500/20"
+                className="w-full px-5 py-3.5 bg-blue-500 text-white font-bold text-sm rounded-xl hover:bg-blue-600 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shadow-lg shadow-blue-500/20 whitespace-nowrap shrink-0 cursor-pointer"
               >
-                {loading ? <span className="animate-pulse">A Processar...</span> : <><Download size={18} /> Baixar Relatório</>}
+                {loading ? (
+                  <span className="animate-pulse">A Processar...</span>
+                ) : (
+                  <>
+                    <Download size={18} /> Baixar Relatório
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -1160,10 +1244,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   <input
                     type="date"
                     value={startDate}
-                    onChange={(e) => {
-                      setStartDate(e.target.value);
-                      setHasInteracted(true);
-                    }}
+                    onChange={(e) => setStartDate(e.target.value)}
                     className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 transition-colors tabular-nums"
                   />
                 </div>
@@ -1172,10 +1253,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   <input
                     type="date"
                     value={endDate}
-                    onChange={(e) => {
-                      setEndDate(e.target.value);
-                      setHasInteracted(true);
-                    }}
+                    onChange={(e) => setEndDate(e.target.value)}
                     className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 transition-colors tabular-nums"
                   />
                 </div>
@@ -1196,10 +1274,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
               <div className="relative">
                 <SearchableCombobox
                   value={entity}
-                  onChange={(val) => {
-                    setEntity(val || "todos");
-                    setHasInteracted(true);
-                  }}
+                  onChange={(val) => setEntity(val || "todos")}
                   placeholder="Pesquisar..."
                   options={entityOptions}
                 />
@@ -1214,10 +1289,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                 <div className="relative">
                   <select
                     value={status}
-                    onChange={(e) => {
-                      setStatus(e.target.value);
-                      setHasInteracted(true);
-                    }}
+                    onChange={(e) => setStatus(e.target.value)}
                     className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 appearance-none transition-colors"
                   >
                     <option value="todos">Todos os Status</option>
@@ -1235,8 +1307,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
               </label>
               <div className="flex gap-4">
                 <button
+                  type="button"
                   onClick={() => setFormat("pdf")}
-                  className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl border transition-all ${
+                  className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${
                     format === "pdf"
                       ? "bg-red-500/10 border-red-500 text-red-500"
                       : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50"
@@ -1245,8 +1318,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   <FileText size={18} /> <span className="font-bold text-sm tracking-wide">PDF</span>
                 </button>
                 <button
+                  type="button"
                   onClick={() => setFormat("csv")}
-                  className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl border transition-all ${
+                  className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${
                     format === "csv"
                       ? "bg-emerald-500/10 border-emerald-500 text-emerald-500"
                       : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50"
@@ -1260,14 +1334,14 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         </div>
       </div>
 
-      {/* Bottom Interactive Preview & Smart Suggestions Box */}
+      {/* Bottom Interactive Preview & Smart Suggestions Box — Populated ONLY on "Pesquisar" click */}
       <div className="mt-6 bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden">
-        {!hasInteracted ? (
+        {!appliedSearch ? (
           <div className="px-6 py-14 text-center flex flex-col items-center justify-center">
             <Search className="w-8 h-8 text-zinc-700 mb-3" />
             <h3 className="text-sm font-semibold text-zinc-300">Caixa de Resultados e Sugestões</h3>
             <p className="text-xs text-zinc-500 mt-1 max-w-md leading-relaxed">
-              Selecione acima um tipo de relatório, período, fornecedor ou loja. Conforme ajustar os filtros, sugestões rápidas e os registos encontrados aparecerão automaticamente aqui.
+              Escolha o tipo de relatório, defina as datas ou filtros desejados acima e clique em <strong className="text-zinc-300">Pesquisar</strong> para consultar o banco de dados e exibir os resultados aqui.
             </p>
           </div>
         ) : (
@@ -1279,13 +1353,22 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   {livePreview?.title || "Resultados da Pesquisa"}
                 </h3>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400 mt-1 tabular-nums">
-                  <span>Período: {activePeriodLabel}</span>
+                  <span>Período: {appliedPeriodLabel}</span>
                   <span aria-hidden="true">·</span>
-                  <span className="truncate max-w-[240px]">Filtro: {activeEntityLabel}</span>
-                  {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar", "fechos"].includes(reportType) && status !== "todos" && (
+                  <span className="truncate max-w-[240px]">Filtro: {appliedEntityLabel}</span>
+                  {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar", "fechos"].includes(appliedSearch.reportType) && appliedSearch.status !== "todos" && (
                     <>
                       <span aria-hidden="true">·</span>
-                      <span>Estado: {status === "pago" ? (reportType === "despesas" ? "Pagos" : "Recebidos") : reportType === "despesas" ? "Pendentes" : "A Receber"}</span>
+                      <span>
+                        Estado:{" "}
+                        {appliedSearch.status === "pago"
+                          ? appliedSearch.reportType === "despesas"
+                            ? "Pagos"
+                            : "Recebidos"
+                          : appliedSearch.reportType === "despesas"
+                          ? "Pendentes"
+                          : "A Receber"}
+                      </span>
                     </>
                   )}
                   {livePreview && !previewLoading && (
@@ -1298,6 +1381,14 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                       </span>
                     </>
                   )}
+                  {isDirtySinceLastSearch && !previewLoading && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span className="text-amber-400 font-medium">
+                        Filtros alterados — clique em Pesquisar para atualizar
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -1307,8 +1398,11 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   <input
                     type="text"
                     value={quickSearch}
-                    onChange={(e) => setQuickSearch(e.target.value)}
-                    placeholder="Refinar nos resultados..."
+                    onChange={(e) => {
+                      setQuickSearch(e.target.value);
+                      setVisibleLimit(50);
+                    }}
+                    placeholder="Filtrar nos resultados carregados..."
                     className="w-full pl-8 pr-3 py-2 bg-zinc-900 border border-zinc-800 focus:border-blue-500 rounded-lg text-xs text-zinc-100 placeholder:text-zinc-500 outline-none transition-colors"
                   />
                 </div>
@@ -1324,11 +1418,11 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
               </div>
             </div>
 
-            {/* Contextual Smart Suggestions Bar */}
+            {/* Contextual Smart Suggestions Bar (operates in-memory over fetched results — zero DB calls) */}
             {!previewLoading && smartSuggestions.length > 0 && (
               <div className="px-6 py-3 border-b border-zinc-800/80 bg-zinc-900/30 flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium text-zinc-500 mr-1 whitespace-nowrap shrink-0">
-                  Sugestões para refinar:
+                  Sugestões nos resultados:
                 </span>
                 {smartSuggestions.map((sug) => (
                   <button
@@ -1362,40 +1456,17 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   Nenhum registo encontrado para esta combinação de filtros.
                 </p>
                 <p className="text-xs text-zinc-500 mt-1">
-                  Experimente alargar o período ou limpar o filtro de entidade/pesquisa.
+                  Ajuste as datas ou filtros acima e clique em Pesquisar novamente.
                 </p>
-                {((startDate !== "" || endDate !== "") || normalizedEntity !== "todos" || status !== "todos" || quickSearch !== "") && (
-                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                    {(startDate !== "" || endDate !== "") && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setStartDate("");
-                          setEndDate("");
-                        }}
-                        className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-xs font-medium text-zinc-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                      >
-                        Limpar Datas
-                      </button>
-                    )}
-                    {normalizedEntity !== "todos" && (
-                      <button
-                        type="button"
-                        onClick={() => setEntity("todos")}
-                        className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-xs font-medium text-zinc-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                      >
-                        Mostrar Todas as Entidades
-                      </button>
-                    )}
-                    {quickSearch !== "" && (
-                      <button
-                        type="button"
-                        onClick={() => setQuickSearch("")}
-                        className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-xs font-medium text-zinc-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                      >
-                        Limpar Pesquisa Rápida
-                      </button>
-                    )}
+                {quickSearch !== "" && (
+                  <div className="mt-4 flex items-center justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setQuickSearch("")}
+                      className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-xs font-medium text-zinc-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      Limpar Filtro Local
+                    </button>
                   </div>
                 )}
               </div>
