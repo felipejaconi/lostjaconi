@@ -24,6 +24,7 @@ import { sortCategories } from "../../lib/categoryUtils";
 
 export default function AdminGlobalStock() {
   const { user } = useAuth();
+  const isArmazem = user?.role === "armazem";
   const [activeTab, setActiveTab] = useState<"dashboard" | "movimentos" | "contagem">("dashboard");
   
   const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
@@ -96,16 +97,19 @@ export default function AdminGlobalStock() {
        let displayTitle = "";
        let isGroup = true;
 
+       const cleanMotivo = (m.motivo || "").replace(/\s*\[ref:[^\]]+\]/gi, "").trim();
+
        if (m.tipo === "entrada") {
           // Group entries by invoice if present, otherwise individual/reason
-          const faturaMatch = m.motivo?.match(/Fatura\s*#?\s*([^\s,)]+)/i);
+          const faturaMatch = cleanMotivo.match(/Fatura\s*#?\s*([^\s,)]+)/i);
+          const refMatch = m.motivo?.match(/\[ref:([^\]]+)\]/i);
           if (faturaMatch) {
              const faturaNum = faturaMatch[1];
-             groupKey = `entrada_fatura_${faturaNum}_${date}`;
+             groupKey = refMatch ? `entrada_fatura_ref_${refMatch[1]}` : `entrada_fatura_${faturaNum}_${date}`;
              displayTitle = `Entrada Fatura #${faturaNum}`;
           } else {
              groupKey = `entrada_outros_${m.id}`;
-             displayTitle = m.motivo || "Entrada de Stock";
+             displayTitle = cleanMotivo || "Entrada de Stock";
              isGroup = false;
           }
        } else {
@@ -116,7 +120,7 @@ export default function AdminGlobalStock() {
              displayTitle = `Saída para ${storeName}`;
           } else {
              groupKey = `saida_outros_${m.id}`;
-             displayTitle = m.motivo || "Saída de Stock";
+             displayTitle = cleanMotivo || "Saída de Stock";
              isGroup = false;
           }
        }
@@ -177,7 +181,8 @@ export default function AdminGlobalStock() {
       const produto = (m.produto?.nome || m.produto_nome || "").replace(/;/g, ",");
       const tipo = m.tipo === "entrada" ? "ENTRADA" : "SAÍDA";
       const quantidade = `${m.quantidade} ${m.unidade || m.produto?.unidade_medida}`;
-      const destino = m.user_target_id ? `LOJA: ${stores.find((s) => s.id === m.user_target_id)?.name || m.user_target_id}` : (m.motivo || "");
+      const cleanExportMotivo = (m.motivo || "").replace(/\s*\[ref:[^\]]+\]/gi, "").trim();
+      const destino = m.user_target_id ? `LOJA: ${stores.find((s) => s.id === m.user_target_id)?.name || m.user_target_id}` : cleanExportMotivo;
       
       csvContent += `${data};${produto};${tipo};${quantidade};${destino}\n`;
     });
@@ -299,61 +304,63 @@ export default function AdminGlobalStock() {
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 
                 {/* Bento Grid Stats */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Card 1 */}
-                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-sm relative overflow-hidden group">
-                     <div className="absolute -right-4 -top-4 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition-colors" />
-                     <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1 flex items-center justify-between">
-                        Valor em Armazém (Custo)
-                        <Wallet size={14} className="text-emerald-500" />
-                     </p>
-                     <p className="text-2xl font-black text-white mt-2 tracking-tight">€{valorTotalCusto.toLocaleString('pt-PT', {minimumFractionDigits: 2})}</p>
-                     <div className="mt-2 text-xs font-medium text-emerald-500 flex items-center gap-1">
-                        <TrendingUp size={12} /> Custo total imobilizado
-                     </div>
-                  </div>
+                {!isArmazem && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Card 1 */}
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-sm relative overflow-hidden group">
+                       <div className="absolute -right-4 -top-4 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition-colors" />
+                       <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1 flex items-center justify-between">
+                          Valor em Armazém (Custo)
+                          <Wallet size={14} className="text-emerald-500" />
+                       </p>
+                       <p className="text-2xl font-black text-white mt-2 tracking-tight">€{valorTotalCusto.toLocaleString('pt-PT', {minimumFractionDigits: 2})}</p>
+                       <div className="mt-2 text-xs font-medium text-emerald-500 flex items-center gap-1">
+                          <TrendingUp size={12} /> Custo total imobilizado
+                       </div>
+                    </div>
 
-                  {/* Card 2 */}
-                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-sm relative overflow-hidden group">
-                     <div className="absolute -right-4 -top-4 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-colors" />
-                     <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1 flex items-center justify-between">
-                        Capital Previsional (PVP)
-                        <TrendingUp size={14} className="text-blue-500" />
-                     </p>
-                     <p className="text-2xl font-black text-white mt-2 tracking-tight">€{valorTotalPVP.toLocaleString('pt-PT', {minimumFractionDigits: 2})}</p>
-                     <div className="mt-2 text-xs font-medium text-blue-500 flex items-center gap-1">
-                        Margem: €{(valorTotalPVP - valorTotalCusto).toLocaleString('pt-PT', {minimumFractionDigits: 2})}
-                     </div>
-                  </div>
+                    {/* Card 2 */}
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-sm relative overflow-hidden group">
+                       <div className="absolute -right-4 -top-4 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-colors" />
+                       <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1 flex items-center justify-between">
+                          Capital Previsional (PVP)
+                          <TrendingUp size={14} className="text-blue-500" />
+                       </p>
+                       <p className="text-2xl font-black text-white mt-2 tracking-tight">€{valorTotalPVP.toLocaleString('pt-PT', {minimumFractionDigits: 2})}</p>
+                       <div className="mt-2 text-xs font-medium text-blue-500 flex items-center gap-1">
+                          Margem: €{(valorTotalPVP - valorTotalCusto).toLocaleString('pt-PT', {minimumFractionDigits: 2})}
+                       </div>
+                    </div>
 
-                  {/* Card 3 */}
-                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-sm relative overflow-hidden group">
-                     <div className="absolute -right-4 -top-4 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl group-hover:bg-indigo-500/10 transition-colors" />
-                     <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1 flex items-center justify-between">
-                        Volume Físico
-                        <Package size={14} className="text-indigo-500" />
-                     </p>
-                     <p className="text-2xl font-black text-white mt-2 tracking-tight">{totalPecas.toLocaleString('pt-PT')} <span className="text-sm text-zinc-500 font-medium">unidades</span></p>
-                     <div className="mt-2 text-xs font-medium text-zinc-400">
-                        Total de itens físicos guardados
-                     </div>
-                  </div>
+                    {/* Card 3 */}
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-sm relative overflow-hidden group">
+                       <div className="absolute -right-4 -top-4 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl group-hover:bg-indigo-500/10 transition-colors" />
+                       <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1 flex items-center justify-between">
+                          Volume Físico
+                          <Package size={14} className="text-indigo-500" />
+                       </p>
+                       <p className="text-2xl font-black text-white mt-2 tracking-tight">{totalPecas.toLocaleString('pt-PT')} <span className="text-sm text-zinc-500 font-medium">unidades</span></p>
+                       <div className="mt-2 text-xs font-medium text-zinc-400">
+                          Total de itens físicos guardados
+                       </div>
+                    </div>
 
-                  {/* Card 4 */}
-                  <div className={cn("border rounded-2xl p-5 shadow-sm relative overflow-hidden group transition-colors", semMargem > 0 ? "bg-orange-500/5 border-orange-500/20" : "bg-zinc-900 border-zinc-800")}>
-                     {semMargem > 0 && <div className="absolute -right-4 -top-4 w-24 h-24 bg-orange-500/10 rounded-full blur-2xl" />}
-                     <p className={cn("text-[10px] font-black uppercase tracking-widest mb-1 flex items-center justify-between", semMargem > 0 ? "text-orange-500/80" : "text-zinc-500")}>
-                        Avisos de Rentabilidade
-                        <AlertTriangle size={14} className={semMargem > 0 ? "text-orange-500" : "text-zinc-600"} />
-                     </p>
-                     <p className={cn("text-2xl font-black mt-2 tracking-tight", semMargem > 0 ? "text-orange-500" : "text-white")}>
-                        {semMargem} <span className="text-sm font-medium opacity-70">referências</span>
-                     </p>
-                     <div className={cn("mt-2 text-xs font-medium", semMargem > 0 ? "text-orange-500/80" : "text-zinc-500")}>
-                        {semMargem > 0 ? "PVP <= Preço de Custo" : "Todas as margens saudáveis"}
-                     </div>
+                    {/* Card 4 */}
+                    <div className={cn("border rounded-2xl p-5 shadow-sm relative overflow-hidden group transition-colors", semMargem > 0 ? "bg-orange-500/5 border-orange-500/20" : "bg-zinc-900 border-zinc-800")}>
+                       {semMargem > 0 && <div className="absolute -right-4 -top-4 w-24 h-24 bg-orange-500/10 rounded-full blur-2xl" />}
+                       <p className={cn("text-[10px] font-black uppercase tracking-widest mb-1 flex items-center justify-between", semMargem > 0 ? "text-orange-500/80" : "text-zinc-500")}>
+                          Avisos de Rentabilidade
+                          <AlertTriangle size={14} className={semMargem > 0 ? "text-orange-500" : "text-zinc-600"} />
+                       </p>
+                       <p className={cn("text-2xl font-black mt-2 tracking-tight", semMargem > 0 ? "text-orange-500" : "text-white")}>
+                          {semMargem} <span className="text-sm font-medium opacity-70">referências</span>
+                       </p>
+                       <div className={cn("mt-2 text-xs font-medium", semMargem > 0 ? "text-orange-500/80" : "text-zinc-500")}>
+                          {semMargem > 0 ? "PVP <= Preço de Custo" : "Todas as margens saudáveis"}
+                       </div>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Floating Toolbar: Search, Filters & Categories */}
                 <div className="sticky top-2 z-20 flex flex-col mb-4 max-w-full pointer-events-none">
@@ -449,9 +456,13 @@ export default function AdminGlobalStock() {
                           <tr className="border-b border-zinc-800 bg-zinc-950/50">
                              <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Identificação do Artigo</th>
                              <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Arm. Central</th>
-                             <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Custo Un.</th>
+                             {!isArmazem && (
+                               <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Custo Un.</th>
+                             )}
                              <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">P.V.P Un.</th>
-                             <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Total (PVP)</th>
+                             {!isArmazem && (
+                               <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Total (PVP)</th>
+                             )}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-800/50">
@@ -500,15 +511,19 @@ export default function AdminGlobalStock() {
                                      </span>
                                    </div>
                                  </td>
-                                 <td className="p-4 text-right">
-                                   <span className="text-sm font-medium text-zinc-400">€{Number(p.preco_custo || 0).toFixed(2)}</span>
-                                 </td>
+                                 {!isArmazem && (
+                                   <td className="p-4 text-right">
+                                     <span className="text-sm font-medium text-zinc-400">€{Number(p.preco_custo || 0).toFixed(2)}</span>
+                                   </td>
+                                 )}
                                  <td className="p-4 text-right">
                                    <span className="text-sm font-medium text-blue-400">€{Number(p.preco || 0).toFixed(2)}</span>
                                  </td>
-                                 <td className="p-4 text-right">
-                                   <span className="text-sm font-black text-white">€{(Number(p.stock_armazem || 0) * Number(p.preco || 0)).toFixed(2)}</span>
-                                 </td>
+                                 {!isArmazem && (
+                                   <td className="p-4 text-right">
+                                     <span className="text-sm font-black text-white">€{(Number(p.stock_armazem || 0) * Number(p.preco || 0)).toFixed(2)}</span>
+                                   </td>
+                                 )}
                               </tr>
                            ))}
                         </tbody>
@@ -535,7 +550,7 @@ export default function AdminGlobalStock() {
          
          {activeTab === "contagem" && (
             <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}>
-               <AdminStockCounts />
+               <AdminStockCounts categories={categories} />
             </motion.div>
          )}
 
@@ -617,7 +632,7 @@ export default function AdminGlobalStock() {
                                                      <div className="flex items-center gap-2">
                                                         <span className="text-[10px] text-zinc-500 uppercase font-mono">{m.created_at ? new Date(m.created_at).toLocaleTimeString("pt-PT") : ""}</span>
                                                         {m.motivo && group.isGroup && (
-                                                           <span className="text-[9px] text-zinc-600 italic">({m.motivo})</span>
+                                                           <span className="text-[9px] text-zinc-600 italic">({String(m.motivo).replace(/\s*\[ref:[^\]]+\]/gi, "").trim()})</span>
                                                         )}
                                                      </div>
                                                   </div>
@@ -665,6 +680,7 @@ export default function AdminGlobalStock() {
         onClose={() => setSelectedProduct(null)} 
         product={selectedProduct} 
         adminMode={true}
+        hideCostAndTotal={isArmazem}
       />
     </div>
   );

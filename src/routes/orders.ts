@@ -5,16 +5,21 @@ import jwt from 'jsonwebtoken';
 export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
   // Orders
   
-  const clearPedidosCache = (req: any, res: any, next: any) => {
+  const invalidateOrderAndStockCaches = () => {
     const keys = cache.keys();
     const orderKeys = keys.filter((k: string) =>
       k.startsWith("pedidos_") ||
       k.startsWith("admin_analytics_consumo_") ||
       k.startsWith("admin_financial_pedidos")
     );
-    cache.del(orderKeys);
+    if (orderKeys.length > 0) cache.del(orderKeys);
     cache.del("admin_stats");
     cache.del("admin_dashboard_extended");
+    cache.del("admin_produtos");
+  };
+
+  const clearPedidosCache = (req: any, res: any, next: any) => {
+    invalidateOrderAndStockCaches();
     next();
   };
 
@@ -78,7 +83,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
       // Server-side status filtering
       if (status && status !== "todos" && status !== "all") {
         if (status === "entregue") {
-          query = query.in("status", ["entregue", "concluido"]);
+          query = query.in("status", ["entregue", "concluido", "pronto"]);
         } else {
           query = query.eq("status", status);
         }
@@ -294,7 +299,10 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
       if (fetchErr) throw fetchErr;
       if (!order) return res.status(404).json({ error: "Pedido não encontrado" });
 
-      if ((order.status === "entregue" || order.status === "concluido") && req.user.role !== "admin") {
+      if (req.user.role === "armazem") {
+        return res.status(403).json({ error: "Funcionários do armazém não podem excluir pedidos." });
+      }
+      if ((order.status === "entregue" || order.status === "concluido" || order.status === "pronto") && req.user.role !== "admin") {
         return res.status(403).json({ error: "Pedidos entregues só podem ser excluídos por administradores." });
       }
 
@@ -347,49 +355,144 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
     }
   });
 
+  const isOrderStockAlreadyDelivered = async (order: any, orderId: any) => {
+    if (!order) return false;
+    if (["entregue", "concluido"].includes(order.status)) return true;
+    if (order.status === "pronto") {
+      const { data: existingMov } = await supabase
+        .from("movimentacoes_stock")
+        .select("id")
+        .ilike("motivo", `%#${orderId}%`)
+        .limit(1);
+      return Boolean(existingMov && existingMov.length > 0);
+    }
+    return false;
+  };
+
   app.put("/api/pedidos/:orderId/itens/:itemId", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
+      const orderId = req.params.orderId;
+      const itemId = req.params.itemId;
+
       // Check if order is delivered before updating item
-      const { data: order } = await supabase.from("pedidos").select("status").eq("id", req.params.orderId).single();
-      if (order && (order.status === "entregue" || order.status === "concluido") && req.user.role !== "admin") {
+      const { data: order } = await supabase
+        .from("pedidos")
+        .select("status, user_id, user:users(name)")
+        .eq("id", orderId)
+        .single();
+      if (order && (order.status === "entregue" || order.status === "concluido" || order.status === "pronto") && req.user.role !== "admin") {
         return res.status(403).json({ error: "Pedidos entregues só podem ser editados por administradores." });
       }
+
+      const { data: prevItem } = await supabase
+        .from("pedido_itens")
+        .select("produto_id, quantidade, preco_unitario, produto:produtos(id, preco, stock_armazem, fator_conversao_venda, unidade_base)")
+        .eq("id", itemId)
+        .maybeSingle();
+
       const updateData: any = {};
       if (req.body.quantidade !== undefined) updateData.quantidade = req.body.quantidade;
       // Only admin can change item price manually
       if (req.user.role === "admin" && req.body.preco_unitario !== undefined) {
         updateData.preco_unitario = Number(req.body.preco_unitario) || 0;
-      } else {
-        // For non-admin (e.g. armazem), preserve existing price, or heal from catalogue if it was 0
-        const { data: currentItem } = await supabase
-          .from("pedido_itens")
-          .select("preco_unitario, produto:produtos(preco)")
-          .eq("id", req.params.itemId)
-          .maybeSingle();
-        if (currentItem && (!currentItem.preco_unitario || Number(currentItem.preco_unitario) === 0)) {
-          const catPrice = Number((currentItem as any).produto?.preco || 0);
-          if (catPrice > 0) {
-            updateData.preco_unitario = catPrice;
-          }
+      } else if (prevItem && (!prevItem.preco_unitario || Number(prevItem.preco_unitario) === 0)) {
+        const catPrice = Number((prevItem as any).produto?.preco || 0);
+        if (catPrice > 0) {
+          updateData.preco_unitario = catPrice;
         }
       }
 
-      const { error } = await supabase.from("pedido_itens").update(updateData).eq("id", req.params.itemId);
+      const { error } = await supabase.from("pedido_itens").update(updateData).eq("id", itemId);
       if (error) throw error;
+
+      // If order is already delivered and quantity changed, adjust warehouse and store stock by the delta
+      if (order && prevItem && req.body.quantidade !== undefined && (await isOrderStockAlreadyDelivered(order, orderId))) {
+        const oldQtyVenda = Number(prevItem.quantidade) || 0;
+        const newQtyVenda = Number(req.body.quantidade) || 0;
+        const diffVenda = newQtyVenda - oldQtyVenda;
+        const prodObj = (prevItem as any).produto;
+
+        if (diffVenda !== 0 && prevItem.produto_id && prodObj) {
+          const fatorVenda = Number(prodObj.fator_conversao_venda) || 1;
+          const diffBase = diffVenda * fatorVenda;
+          const nowIso = new Date().toISOString();
+          const storeName = (order as any).user?.name || "Loja";
+
+          const { data: latestProd } = await supabase
+            .from("produtos")
+            .select("stock_armazem")
+            .eq("id", prevItem.produto_id)
+            .single();
+          const currentStock = latestProd
+            ? Number(latestProd.stock_armazem)
+            : Number(prodObj.stock_armazem) || 0;
+
+          await supabase
+            .from("produtos")
+            .update({ stock_armazem: currentStock - diffBase })
+            .eq("id", prevItem.produto_id);
+
+          await supabase.from("movimentacoes_stock").insert([
+            {
+              produto_id: prevItem.produto_id,
+              user_target_id: order.user_id,
+              tipo: diffBase > 0 ? "saida" : "entrada",
+              quantidade: Math.abs(diffBase),
+              display_qty: Math.abs(diffVenda),
+              display_unit: prodObj.unidade_base || "un",
+              unidade: prodObj.unidade_base || "un",
+              motivo:
+                diffBase > 0
+                  ? `Entrega de Pedido #${orderId} para ${storeName} (Ajuste + na edição)`
+                  : `REVERSÃO PARCIAL: Ajuste - na edição do Pedido #${orderId} (${storeName})`,
+              user_id: req.user.id,
+            },
+          ]);
+
+          if (order.user_id) {
+            const { data: storeStockExisting } = await supabase
+              .from("stock_loja")
+              .select("id, quantidade")
+              .eq("user_id", order.user_id)
+              .eq("produto_id", prevItem.produto_id)
+              .maybeSingle();
+
+            if (storeStockExisting) {
+              await supabase
+                .from("stock_loja")
+                .update({
+                  quantidade: Math.max(0, Number(storeStockExisting.quantidade) + diffBase),
+                  ultima_picagem: nowIso,
+                })
+                .eq("id", storeStockExisting.id);
+            } else if (diffBase > 0) {
+              await supabase.from("stock_loja").insert([
+                {
+                  user_id: order.user_id,
+                  produto_id: prevItem.produto_id,
+                  quantidade: diffBase,
+                  ultima_picagem: nowIso,
+                },
+              ]);
+            }
+          }
+        }
+      }
 
       // Recalculate order total
       const { data: allItems } = await supabase
         .from("pedido_itens")
         .select("quantidade, preco_unitario, produto:produtos(preco)")
-        .eq("pedido_id", req.params.orderId);
+        .eq("pedido_id", orderId);
       if (allItems) {
         const newTotal = allItems.reduce((acc: number, it: any) => {
           const price = Number(it.preco_unitario) || Number(it.produto?.preco) || 0;
           return acc + (Number(it.quantidade || 0) * price);
         }, 0);
-        await supabase.from("pedidos").update({ total: newTotal }).eq("id", req.params.orderId);
+        await supabase.from("pedidos").update({ total: newTotal }).eq("id", orderId);
       }
 
+      invalidateOrderAndStockCaches();
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -398,27 +501,104 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.delete("/api/pedidos/:orderId/itens/:itemId", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
-      // Check if order is delivered before deleting item
-      const { data: order } = await supabase.from("pedidos").select("status").eq("id", req.params.orderId).single();
-      if (order && (order.status === "entregue" || order.status === "concluido") && req.user.role !== "admin") {
+      const orderId = req.params.orderId;
+      const itemId = req.params.itemId;
+
+      // Check if order is delivered or restricted for armazem before deleting item
+      const { data: order } = await supabase
+        .from("pedidos")
+        .select("status, user_id, user:users(name)")
+        .eq("id", orderId)
+        .single();
+      if (order && (order.status === "entregue" || order.status === "concluido" || order.status === "pronto") && req.user.role !== "admin") {
         return res.status(403).json({ error: "Não é possível remover itens de um pedido já entregue." });
       }
-      const { error } = await supabase.from("pedido_itens").delete().eq("id", req.params.itemId);
+      if (order && ["pendente", "processando"].includes(order.status) && req.user.role === "armazem") {
+        return res.status(403).json({ error: "Funcionários do armazém não podem remover itens do pedido." });
+      }
+
+      const { data: deletedItem } = await supabase
+        .from("pedido_itens")
+        .select("produto_id, quantidade, produto:produtos(id, stock_armazem, fator_conversao_venda, unidade_base)")
+        .eq("id", itemId)
+        .maybeSingle();
+
+      const { error } = await supabase.from("pedido_itens").delete().eq("id", itemId);
       if (error) throw error;
+
+      // If order was already delivered, return the removed item's quantity back to warehouse stock
+      if (order && deletedItem && (await isOrderStockAlreadyDelivered(order, orderId))) {
+        const qtyVenda = Number(deletedItem.quantidade) || 0;
+        const prodObj = (deletedItem as any).produto;
+        if (qtyVenda > 0 && deletedItem.produto_id && prodObj) {
+          const fatorVenda = Number(prodObj.fator_conversao_venda) || 1;
+          const qtyBase = qtyVenda * fatorVenda;
+          const nowIso = new Date().toISOString();
+          const storeName = (order as any).user?.name || "Loja";
+
+          const { data: latestProd } = await supabase
+            .from("produtos")
+            .select("stock_armazem")
+            .eq("id", deletedItem.produto_id)
+            .single();
+          const currentStock = latestProd
+            ? Number(latestProd.stock_armazem)
+            : Number(prodObj.stock_armazem) || 0;
+
+          await supabase
+            .from("produtos")
+            .update({ stock_armazem: currentStock + qtyBase })
+            .eq("id", deletedItem.produto_id);
+
+          if (order.user_id) {
+            const { data: storeStockExisting } = await supabase
+              .from("stock_loja")
+              .select("id, quantidade")
+              .eq("user_id", order.user_id)
+              .eq("produto_id", deletedItem.produto_id)
+              .maybeSingle();
+
+            if (storeStockExisting) {
+              await supabase
+                .from("stock_loja")
+                .update({
+                  quantidade: Math.max(0, Number(storeStockExisting.quantidade) - qtyBase),
+                  ultima_picagem: nowIso,
+                })
+                .eq("id", storeStockExisting.id);
+            }
+          }
+
+          await supabase.from("movimentacoes_stock").insert([
+            {
+              produto_id: deletedItem.produto_id,
+              user_target_id: order.user_id,
+              tipo: "entrada",
+              quantidade: qtyBase,
+              display_qty: qtyVenda,
+              display_unit: prodObj.unidade_base || "un",
+              unidade: prodObj.unidade_base || "un",
+              motivo: `REVERSÃO: Item removido na edição do Pedido #${orderId} (${storeName})`,
+              user_id: req.user.id,
+            },
+          ]);
+        }
+      }
 
       // Recalculate order total
       const { data: allItems } = await supabase
         .from("pedido_itens")
         .select("quantidade, preco_unitario, produto:produtos(preco)")
-        .eq("pedido_id", req.params.orderId);
+        .eq("pedido_id", orderId);
       if (allItems) {
         const newTotal = allItems.reduce((acc: number, it: any) => {
           const price = Number(it.preco_unitario) || Number(it.produto?.preco) || 0;
           return acc + (Number(it.quantidade || 0) * price);
         }, 0);
-        await supabase.from("pedidos").update({ total: newTotal }).eq("id", req.params.orderId);
+        await supabase.from("pedidos").update({ total: newTotal }).eq("id", orderId);
       }
 
+      invalidateOrderAndStockCaches();
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -427,46 +607,112 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
   app.post("/api/pedidos/:orderId/itens", authenticateToken, clearPedidosCache, async (req: any, res: any) => {
     try {
+      const orderId = req.params.orderId;
+
       // Check if order is delivered before adding item
-      const { data: order } = await supabase.from("pedidos").select("status").eq("id", req.params.orderId).single();
-      if (order && (order.status === "entregue" || order.status === "concluido") && req.user.role !== "admin") {
+      const { data: order } = await supabase
+        .from("pedidos")
+        .select("status, user_id, user:users(name)")
+        .eq("id", orderId)
+        .single();
+      if (order && (order.status === "entregue" || order.status === "concluido" || order.status === "pronto") && req.user.role !== "admin") {
         return res.status(403).json({ error: "Não é possível adicionar itens a um pedido já entregue." });
       }
+
+      const { data: prod } = await supabase
+        .from("produtos")
+        .select("id, preco, stock_armazem, fator_conversao_venda, unidade_base")
+        .eq("id", req.body.produto_id)
+        .maybeSingle();
+
       let precoUnitario = req.body.preco_unitario !== undefined ? req.body.preco_unitario : req.body.preco;
       
       // If price is not provided, 0, or user is not admin, ensure default catalogue price from produtos
       if (precoUnitario === undefined || precoUnitario === null || Number(precoUnitario) === 0 || req.user.role !== "admin") {
-        const { data: prod } = await supabase
-          .from("produtos")
-          .select("preco")
-          .eq("id", req.body.produto_id)
-          .maybeSingle();
         if (prod && prod.preco !== undefined && prod.preco !== null) {
           precoUnitario = Number(prod.preco);
         }
       }
 
       const finalPrice = Number(precoUnitario) || 0;
+      const qtyAdded = Number(req.body.quantidade) || 0;
 
       const { error } = await supabase.from("pedido_itens").insert([{
-          pedido_id: req.params.orderId,
+          pedido_id: orderId,
           produto_id: req.body.produto_id,
-          quantidade: req.body.quantidade,
+          quantidade: qtyAdded,
           preco_unitario: finalPrice
       }]);
       if (error) throw error;
+
+      // If order is already delivered, deduct the newly added item from warehouse stock and add to store stock
+      if (order && prod && qtyAdded > 0 && (await isOrderStockAlreadyDelivered(order, orderId))) {
+        const fatorVenda = Number(prod.fator_conversao_venda) || 1;
+        const qtyBase = qtyAdded * fatorVenda;
+        const currentStock = Number(prod.stock_armazem) || 0;
+        const nowIso = new Date().toISOString();
+        const storeName = (order as any).user?.name || "Loja";
+
+        await supabase
+          .from("produtos")
+          .update({ stock_armazem: currentStock - qtyBase })
+          .eq("id", req.body.produto_id);
+
+        await supabase.from("movimentacoes_stock").insert([
+          {
+            produto_id: req.body.produto_id,
+            user_target_id: order.user_id,
+            tipo: "saida",
+            quantidade: qtyBase,
+            display_qty: qtyAdded,
+            display_unit: prod.unidade_base || "un",
+            unidade: prod.unidade_base || "un",
+            motivo: `Entrega de Pedido #${orderId} para ${storeName} (Item adicionado na edição)`,
+            user_id: req.user.id,
+          },
+        ]);
+
+        if (order.user_id) {
+          const { data: storeStockExisting } = await supabase
+            .from("stock_loja")
+            .select("id, quantidade")
+            .eq("user_id", order.user_id)
+            .eq("produto_id", req.body.produto_id)
+            .maybeSingle();
+
+          if (storeStockExisting) {
+            await supabase
+              .from("stock_loja")
+              .update({
+                quantidade: Number(storeStockExisting.quantidade) + qtyBase,
+                ultima_picagem: nowIso,
+              })
+              .eq("id", storeStockExisting.id);
+          } else {
+            await supabase.from("stock_loja").insert([
+              {
+                user_id: order.user_id,
+                produto_id: req.body.produto_id,
+                quantidade: qtyBase,
+                ultima_picagem: nowIso,
+              },
+            ]);
+          }
+        }
+      }
 
       // Recalculate order total
       const { data: allItems } = await supabase
         .from("pedido_itens")
         .select("quantidade, preco_unitario")
-        .eq("pedido_id", req.params.orderId);
+        .eq("pedido_id", orderId);
         
       if (allItems) {
         const newTotal = allItems.reduce((acc: number, it: any) => acc + (Number(it.quantidade || 0) * Number(it.preco_unitario || 0)), 0);
-        await supabase.from("pedidos").update({ total: newTotal }).eq("id", req.params.orderId);
+        await supabase.from("pedidos").update({ total: newTotal }).eq("id", orderId);
       }
 
+      invalidateOrderAndStockCaches();
       res.json({ success: true, preco_unitario: finalPrice });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

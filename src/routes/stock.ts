@@ -29,20 +29,6 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
          }
       }
 
-      // 1. UNIQUE INVOICE VALIDATION
-      if (fornecedor_id && numero_fatura) {
-         const { data: existingFatura } = await supabase
-            .from('faturas')
-            .select('id')
-            .eq('fornecedor_id', fornecedor_id)
-            .eq('numero_fatura', numero_fatura)
-            .maybeSingle();
-
-         if (existingFatura) {
-            return res.status(400).json({ error: "Esta fatura já foi registada para este fornecedor." });
-         }
-      }
-
       // If no valor_final passed, recalculate totals fallback
       if (!totalDaFatura) {
         for (const item of items) {
@@ -59,7 +45,7 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
          const { data: newFatura, error: fatError } = await supabase.from('faturas').insert([{
            numero_fatura,
            fornecedor_id,
-           tipo: 'compra',
+           tipo: 'entrada_stock',
            valor_liquido: req.body.valor_liquido || 0,
            valor_iva: req.body.credito_iva || 0,
            valor_total: totalDaFatura,
@@ -67,6 +53,7 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
            status_pagamento: 'em_conferencia',
            data_emissao: data,
            data_vencimento: data_vencimento || null,
+           observacoes: req.body.observacoes || null,
            created_by: req.user.id
          }]).select('id').single();
          if (fatError) {
@@ -75,7 +62,7 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
              const dbb = await supabase.from('faturas').insert([{
                numero_fatura,
                fornecedor_id,
-               tipo: 'compra',
+               tipo: 'entrada_stock',
                valor_total: totalDaFatura,
                valor_pendente: totalDaFatura,
                status_pagamento: 'em_conferencia',
@@ -92,176 +79,105 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
          console.error("Fatura table missing, silently ignoring invoice logging:", e);
       }
 
-      // Process each item
+      // Regista apenas os itens da fatura para conferência no Check de Faturas
+      // (O stock do armazém e os custos/margens/preços só são atualizados quando o Admin aprovar no Check de Faturas)
       for (const item of items) {
-        console.log("Processando item: ", item)
         if (!item.produto_id || !item.quantidade) continue;
-        // --- NOVO FLUXO V4 (BASEADO EM UNIDADE DE COMPRA) ---
-        const { data: prodData } = await supabase.from("produtos").select("unidade_base, iva").eq("id", item.produto_id).single();
-        const fatorConversao = item.fator_conversao || 1;
-        const unidadeBase = prodData?.unidade_base || "un";
 
-        const qtdeRecebidaBase = Number(item.quantidade) * fatorConversao;
-        
-        // Register Fatura Item if fatura was created
-        // IVA logic: if explicitly provided (including 0), use it. If missing/null, fallback to product's default.
-        let iva_percent = 23;
-        if (item.iva !== undefined && item.iva !== null) {
-           iva_percent = Number(item.iva);
-        } else if (prodData && prodData.iva !== undefined && prodData.iva !== null) {
-           iva_percent = Number(prodData.iva);
-        }
-
-        // Register Fatura Item if fatura was created
-        let c_unitario = Number(item.custo_unitario) || 0;
-        let q_item = Number(item.quantidade) || 0;
-        let vLiquido_item = 0;
-        let vIva_item = 0;
-        let vTotal_item = 0;
-
-        if (fatura_id) {
-           vLiquido_item = item.valor_liquido !== undefined ? Number(item.valor_liquido) : q_item * c_unitario;
-           vIva_item = item.valor_iva !== undefined ? Number(item.valor_iva) : vLiquido_item * (iva_percent / 100);
-           vTotal_item = item.valor_total !== undefined ? Number(item.valor_total) : vLiquido_item + vIva_item;
-
-           const baseItem = {
-             fatura_id,
-             produto_id: item.produto_id,
-             quantidade: Math.round(q_item),
-             iva: iva_percent,
-             valor_liquido: vLiquido_item,
-             valor_iva: vIva_item,
-             valor_total: vTotal_item
-           };
-
-           // Try with all new columns and preco_custo
-           let { error: fError } = await supabase.from('fatura_itens').insert([{
-               ...baseItem,
-               preco_custo: c_unitario,
-                descricao: item.descricao || null,
-                fator_conversao: item.fator_conversao || 1,
-                unidade_entrada: item.unidade_entrada || "un"
-           }]);
-
-           if (fError) {
-               // Try with preco_unitario instead of preco_custo
-               const { error: err2 } = await supabase.from('fatura_itens').insert([{
-                   ...baseItem,
-                   preco_unitario: c_unitario
-               }]);
-               fError = err2;
-           }
-
-           if (fError) {
-              console.error("Error creating fatura item with new columns, trying legacy fallbacks:", fError.message || fError);
-              
-              // Fallback 1: Só preco_custo legados (no new columns)
-              const { error: fError3 } = await supabase.from('fatura_itens').insert([{
-                 fatura_id,
-                 produto_id: item.produto_id,
-                 quantidade: Math.round(q_item), 
-                 preco_custo: c_unitario,
-                 iva: iva_percent
-              }]);
-              
-              if (fError3) {
-                 console.error("Error with preco_custo legacy, trying preco_unitario legacy:", fError3.message || fError3);
-                 // Fallback 2: Só preco_unitario legados (no new columns)
-                 const { error: fError4 } = await supabase.from('fatura_itens').insert([{
-                    fatura_id,
-                    produto_id: item.produto_id,
-                    quantidade: Math.round(q_item), 
-                    preco_unitario: c_unitario,
-                    iva: iva_percent
-                 }]);
-                 
-                 if (fError4) {
-                    console.error("All fallbacks failed for fatura_itens!", fError4.message || fError4);
-                 }
-              }
-           }
-        }
-
-        // 1. Get current stock
-        const { data: prod, error: errProd } = await supabase
+        const { data: prodData } = await supabase
           .from("produtos")
-          .select("stock_armazem, preco_custo, preco, iva")
+          .select("unidade_base, iva")
           .eq("id", item.produto_id)
           .single();
-          
-        if (errProd) {
-             console.error(`Erro ao buscar produto ${item.produto_id}:`, errProd);
+
+        let iva_percent = 23;
+        if (item.iva !== undefined && item.iva !== null) {
+          iva_percent = Number(item.iva);
+        } else if (prodData && prodData.iva !== undefined && prodData.iva !== null) {
+          iva_percent = Number(prodData.iva);
         }
 
-        if (prod) {
-          const newStock = (Number(prod.stock_armazem) || 0) + qtdeRecebidaBase;
-          console.log(`Atualizando produto ${item.produto_id} para novo stock (unidade base): ${newStock}`);
-          
-          // 2. Prepare update data
-          // Automatically update base cost (preco_custo) and IVA
-          const newPrecoCusto = Number(item.custo_unitario) / (Number(item.fator_conversao) || 1);
-          const updateData: any = { 
-            stock_armazem: Math.max(0, newStock),
-            preco_custo: newPrecoCusto,
-            iva: iva_percent
+        const c_unitario = Number(item.custo_unitario) || 0;
+        const q_item = Number(item.quantidade) || 0;
+
+        if (fatura_id) {
+          const vLiquido_item = item.valor_liquido !== undefined ? Number(item.valor_liquido) : q_item * c_unitario;
+          const vIva_item = item.valor_iva !== undefined ? Number(item.valor_iva) : vLiquido_item * (iva_percent / 100);
+          const vTotal_item = item.valor_total !== undefined ? Number(item.valor_total) : vLiquido_item + vIva_item;
+
+          const baseItem = {
+            fatura_id,
+            produto_id: item.produto_id,
+            quantidade: q_item,
+            preco_custo: c_unitario,
+            iva: iva_percent,
+            valor_liquido: vLiquido_item,
+            valor_iva: vIva_item,
+            valor_total: vTotal_item,
           };
 
-          // 3. Logic to preserve margin: update final consumer price (preco) automatically
-          const oldCusto = Number(prod.preco_custo) || 0;
-          const currentPreco = Number(prod.preco) || 0;
-          const currentIva = Number(prod.iva) || 0;
+          // 1. Tenta com todas as colunas reais de fatura_itens (incluindo fator_conversao e unidade_entrada)
+          let { error: fError } = await supabase.from("fatura_itens").insert([
+            {
+              ...baseItem,
+              fator_conversao: item.fator_conversao || 1,
+              unidade_entrada: item.unidade_entrada || prodData?.unidade_base || "un",
+            },
+          ]);
 
-          if (oldCusto > 0 && newPrecoCusto > 0 && currentPreco > 0) {
-              const ivaRatio = 1 + (currentIva / 100);
-              const pvpSemIva = currentPreco / ivaRatio;
-              
-              // Margin percentage relative to cost
-              const marginPct = (pvpSemIva - oldCusto) / oldCusto;
-              
-              // Apply the same margin to the new cost
-              const newPvpSemIva = newPrecoCusto * (1 + marginPct);
-              const newIvaRatio = 1 + (iva_percent / 100);
-              const newPvp = newPvpSemIva * newIvaRatio;
-              
-              updateData.preco = Number(newPvp.toFixed(2));
-              console.log(`Preço atualizado para manter margem: ${currentPreco} -> ${updateData.preco}`);
-          }
-          
-          const { error: updateError } = await supabase
-            .from("produtos")
-            .update(updateData)
-            .eq("id", item.produto_id);
-            
-          if(updateError) {
-             console.error(`Erro ao atualizar produto ${item.produto_id}:`, updateError);
-             throw updateError;
+          // 2. Fallback preservando valor_liquido, valor_iva, valor_total e preco_custo
+          if (fError) {
+            const { error: err2 } = await supabase.from("fatura_itens").insert([baseItem]);
+            fError = err2;
           }
 
-          // Register warehouse movement for the invoice entry with UoM details
-          const { error: movError } = await supabase.from("movimentacoes_stock").insert({
-            produto_id: item.produto_id,
-            tipo: "entrada",
-            quantidade: qtdeRecebidaBase,
-            display_qty: Number(item.quantidade),
-            display_unit: item.unidade_entrada,
-            unidade: unidadeBase,
-            motivo: `Fatura #${numero_fatura} orig: ${item.quantidade} ${item.unidade_entrada}`,
-            user_id: req.user.id
-          });
-          if(movError) console.error("Erro ao registrar movimentacao: ", movError);
-        } else {
-            console.warn(`Produto nao encontrado para atualizar stock (id=${item.produto_id})`);
+          // 3. Fallback caso quantidade exija inteiro, mas mantendo valor_liquido / valor_iva / valor_total
+          if (fError) {
+            const { error: err3 } = await supabase.from("fatura_itens").insert([
+              {
+                ...baseItem,
+                quantidade: Math.round(q_item),
+              },
+            ]);
+            fError = err3;
+          }
+
+          // 4. Fallback legado mínimo
+          if (fError) {
+            console.error("Error creating fatura item with valor_liquido columns, trying legacy fallback:", fError.message || fError);
+            const { error: fError4 } = await supabase.from("fatura_itens").insert([
+              {
+                fatura_id,
+                produto_id: item.produto_id,
+                quantidade: Math.round(q_item),
+                preco_custo: c_unitario,
+                iva: iva_percent,
+              },
+            ]);
+            if (fError4) {
+              await supabase.from("fatura_itens").insert([
+                {
+                  fatura_id,
+                  produto_id: item.produto_id,
+                  quantidade: Math.round(q_item),
+                  preco_unitario: c_unitario,
+                  iva: iva_percent,
+                },
+              ]);
+            }
+          }
         }
       }
-      
-      // Invalidate products cache to reflect cost changes in admin panels
-      cache.del("admin_produtos");
+
+      // Invalidate faturas cache to reflect pending conference invoice immediately
       cache.del("admin_stats");
-      
-      res.json({ message: "Stock e Fatura registados com sucesso" });
+      const fatKeys = cache.keys().filter((k: string) => k.startsWith("admin_faturas"));
+      if (fatKeys.length > 0) cache.del(fatKeys);
+
+      res.json({ message: "Fatura enviada para o Check de Faturas com sucesso" });
     } catch (error: any) {
-      console.error("Erro na entrada de stock manual:", error);
-      res.status(500).json({ error: "Erro ao atualizar stock", message: error.message });
+      console.error("Erro ao registar fatura para conferência:", error);
+      res.status(500).json({ error: "Erro ao registar fatura", message: error.message });
     }
   });
 
@@ -348,6 +264,207 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
     } catch (error: any) {
       console.error("Erro na movimentação manual:", error);
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET On-Demand Shortages & Store Demand Search (Faltas)
+  app.get("/api/admin/stock/faltas", authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+
+    try {
+      const rawQ = String(req.query.q || "").trim();
+      const categoriaId = String(req.query.categoria_id || "").trim();
+      const mode = String(req.query.mode || "search").trim();
+
+      if (mode !== "rupturas" && !rawQ && (!categoriaId || categoriaId === "all")) {
+        return res.json({ items: [], pendingOrdersCount: 0 });
+      }
+
+      // 1. Buscar apenas pedidos atualmente abertos (pendente / processando)
+      const { data: activeOrders, error: ordErr } = await supabase
+        .from("pedidos")
+        .select("id, status, created_at, user:users(id, name), pedido_itens(*)")
+        .in("status", ["pendente", "processando", "em_processamento"])
+        .order("created_at", { ascending: false });
+
+      if (ordErr) throw ordErr;
+
+      const openOrders = activeOrders || [];
+
+      // Se modo = "rupturas", identificar apenas os IDs de produtos pedidos nas encomendas abertas
+      const requestedIdsSet = new Set<string>();
+      openOrders.forEach((ord: any) => {
+        (ord.pedido_itens || []).forEach((it: any) => {
+          if (it.produto_id != null) requestedIdsSet.add(String(it.produto_id));
+        });
+      });
+
+      if (mode === "rupturas" && requestedIdsSet.size === 0) {
+        return res.json({ items: [], pendingOrdersCount: openOrders.length });
+      }
+
+      // 2. Buscar somente os produtos correspondentes à pesquisa (ou às encomendas pendentes no modo rupturas)
+      const selectCols =
+        "id, nome, barcode_ean, imagem_url, stock_armazem, unidade_base, fator_conversao_venda, categoria_id, categorias(nome), product_units(unit, factor)";
+
+      const buildProductQuery = (searchByEanToo: boolean) => {
+        let pq = supabase.from("produtos").select(selectCols);
+
+        if (mode === "rupturas") {
+          pq = pq.in("id", Array.from(requestedIdsSet));
+        }
+
+        if (categoriaId && categoriaId !== "all") {
+          if (categoriaId === "null") pq = pq.is("categoria_id", null);
+          else pq = pq.eq("categoria_id", categoriaId);
+        }
+
+        if (rawQ) {
+          const safeQ = rawQ.replace(/[,%()]/g, " ").trim();
+          if (safeQ) {
+            if (searchByEanToo) {
+              pq = pq.or(`nome.ilike.%${safeQ}%,barcode_ean.ilike.%${safeQ}%`);
+            } else {
+              pq = pq.ilike("nome", `%${safeQ}%`);
+            }
+          }
+        }
+
+        return pq.order("nome", { ascending: true }).limit(200);
+      };
+
+      let { data: matchedProds, error: prodErr } = await buildProductQuery(true);
+      if (prodErr && rawQ) {
+        const retry = await buildProductQuery(false);
+        matchedProds = retry.data;
+        prodErr = retry.error;
+      }
+      if (prodErr) throw prodErr;
+
+      const productsList = matchedProds || [];
+      if (productsList.length === 0) {
+        return res.json({ items: [], pendingOrdersCount: openOrders.length });
+      }
+
+      const prodMap = new Map<string, any>();
+      productsList.forEach((p: any) => prodMap.set(String(p.id), p));
+
+      // 3. Agregar quantidades pedidas apenas para os produtos encontrados
+      const productStats: Record<string, { totalRequested: number; orders: any[] }> = {};
+
+      openOrders.forEach((order: any) => {
+        const storeName = order.user?.name || "Loja";
+        const itemsArr = Array.isArray(order.pedido_itens) ? order.pedido_itens : [];
+
+        itemsArr.forEach((item: any) => {
+          const pid = String(item.produto_id);
+          const prod = prodMap.get(pid);
+          if (!prod) return;
+
+          const qty = Number(item.quantidade_pedida != null ? item.quantidade_pedida : item.quantidade) || 0;
+          if (qty <= 0) return;
+
+          let factor = 1;
+          const itemUnit = item.unidade || prod.unidade_base || "un";
+          if (itemUnit !== prod.unidade_base) {
+            const unitObj = (prod.product_units || []).find((u: any) => u.unit === itemUnit);
+            if (unitObj) {
+              factor = Number(unitObj.factor) || 1;
+            } else if (itemUnit === "cx") {
+              factor = Number(prod.fator_conversao_venda) || 1;
+            } else {
+              const aproxMatch = (prod.nome || "").match(/aprox\.?\s*([\d,.]+)\s*(kg|g)/i);
+              if (aproxMatch) {
+                const aproxValue = parseFloat(aproxMatch[1].replace(",", "."));
+                const aproxUnit = aproxMatch[2].toLowerCase();
+                const baseUnit = (prod.unidade_base || "").toLowerCase();
+                if (baseUnit === "kg") {
+                  if (aproxUnit === "g") factor = aproxValue / 1000;
+                  else if (aproxUnit === "kg") factor = aproxValue;
+                } else if (baseUnit === "g") {
+                  if (aproxUnit === "g") factor = aproxValue;
+                  else if (aproxUnit === "kg") factor = aproxValue * 1000;
+                }
+              }
+            }
+          }
+
+          const baseQty = qty * factor;
+          if (!productStats[pid]) {
+            productStats[pid] = { totalRequested: 0, orders: [] };
+          }
+          productStats[pid].totalRequested += baseQty;
+          productStats[pid].orders.push({
+            orderId: String(order.id),
+            status: order.status,
+            storeName,
+            requestedQty: baseQty,
+            displayQty: qty,
+            originalUnit: itemUnit,
+            date: order.created_at,
+          });
+        });
+      });
+
+      let resultItems = productsList.map((p: any) => {
+        const pid = String(p.id);
+        const stock = Number(p.stock_armazem) || 0;
+        const stats = productStats[pid] || { totalRequested: 0, orders: [] };
+        const requested = stats.totalRequested;
+        const diff = stock - requested;
+        const needsAttention = requested > 0 && diff < 0;
+
+        let aproxSuggestion: string | null = null;
+        if (needsAttention) {
+          const targetStr = `${p.nome || ""} ${p.unidade_base || ""}`;
+          const aproxMatch = targetStr.match(/aprox\.?\s*([\d,.]+)\s*(kg|g)/i);
+          if (aproxMatch) {
+            const aproxValue = parseFloat(aproxMatch[1].replace(",", "."));
+            const unit = aproxMatch[2].toLowerCase();
+            const baseUnit = (p.unidade_base || "").toLowerCase();
+            let aproxFactor = 0;
+            if (baseUnit === "kg") {
+              if (unit === "g") aproxFactor = aproxValue / 1000;
+              else if (unit === "kg") aproxFactor = aproxValue;
+            } else if (baseUnit === "g") {
+              if (unit === "g") aproxFactor = aproxValue;
+              else if (unit === "kg") aproxFactor = aproxValue * 1000;
+            }
+            if (aproxFactor > 0) {
+              const unitsNeeded = Math.ceil(Math.abs(diff) / aproxFactor);
+              aproxSuggestion = `Sugestão: pedir ~${unitsNeeded} un`;
+            }
+          }
+        }
+
+        return {
+          id: p.id,
+          nome: p.nome,
+          barcode_ean: p.barcode_ean || null,
+          imagem_url: p.imagem_url || null,
+          categoria_id: p.categoria_id,
+          categoria_nome: p.categorias?.nome || "Sem Categoria",
+          unidade_base: p.unidade_base || "un",
+          stock_armazem: stock,
+          requested,
+          diff,
+          needsAttention,
+          aproxSuggestion,
+          orders: stats.orders,
+        };
+      });
+
+      if (mode === "rupturas") {
+        resultItems = resultItems.filter((it: any) => it.needsAttention);
+      }
+
+      res.json({
+        items: resultItems,
+        pendingOrdersCount: openOrders.length,
+      });
+    } catch (error: any) {
+      console.error("Erro em GET /api/admin/stock/faltas:", error);
+      res.status(500).json({ error: error.message || "Erro ao consultar faltas" });
     }
   });
 

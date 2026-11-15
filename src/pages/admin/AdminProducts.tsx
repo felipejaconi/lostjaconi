@@ -11,11 +11,13 @@ import { CategoryIcon } from "../../components/CategoryIcon";
 import { BrandTitle } from "../../components/BrandTitle";
 import { cn } from "../../lib/utils";
 import { sortCategories } from "../../lib/categoryUtils";
+import { useAuth } from "../../context/AuthContext";
 
 export default function AdminProducts() {
+  const { user } = useAuth();
+  const isArmazem = user?.role === "armazem";
   const [products, setProducts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
-  const [lotes, setLotes] = useState<any[]>([]);
   const [isModalOpen, setModalOpen] = useState(false);
   const [isExistingModalOpen, setExistingModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
@@ -23,19 +25,15 @@ export default function AdminProducts() {
   const categoriaId = searchParams.get("categoria_id");
   const navigate = useNavigate();
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<any>({
     nome: "",
     descricao: "",
     categoria_id: "",
-    lote: "",
-    rua: "",
-    prateleira: "",
     unidade_base: "un",
     unidade_compra: "un",
     fator_conversao_compra: "1",
     is_peso_variavel: false,
     barcode_ean: "",
-    pais_origem: "",
     iva: "23",
   });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -152,14 +150,12 @@ export default function AdminProducts() {
 
   const fetchData = async () => {
     try {
-      const [pRes, cRes, lRes] = await Promise.all([
+      const [pRes, cRes] = await Promise.all([
         api.get("/produtos"),
         api.get("/categorias"),
-        supabase.from('lotes').select('*')
       ]);
       setProducts(Array.isArray(pRes.data) ? pRes.data.sort((a: any, b: any) => (a.nome || "").localeCompare(b.nome || "")) : []);
       setCategories(Array.isArray(cRes.data) ? sortCategories(cRes.data) : []);
-      if (lRes.data && !lRes.error) setLotes(lRes.data);
     } catch(e) { console.error("AdminProducts fetchData error", e); }
   };
 
@@ -232,15 +228,11 @@ export default function AdminProducts() {
         nome: "",
         descricao: "",
         categoria_id: "",
-        lote: "",
-    rua: "",
-    prateleira: "",
         unidade_base: "un",
         unidade_compra: "un",
         fator_conversao_compra: "1",
         is_peso_variavel: false,
         barcode_ean: "",
-        pais_origem: "",
         iva: "23",
       });
       setSelectedFile(null);
@@ -254,7 +246,7 @@ export default function AdminProducts() {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: number | string) => {
     const result = await Swal.fire({
       title: "Tem a certeza?",
       text: "Esta ação não pode ser revertida!",
@@ -267,10 +259,12 @@ export default function AdminProducts() {
     if (result.isConfirmed) {
       try {
         await api.delete(`/produtos/${id}`);
+        setProducts((prev) => prev.filter((p) => p.id !== id));
         Swal.fire("Removido!", "O produto foi eliminado.", "success");
         fetchData();
-      } catch (error) {
-        Swal.fire("Erro", "Falha ao remover produto", "error");
+      } catch (error: any) {
+        const msg = error?.response?.data?.error || "Falha ao remover produto";
+        Swal.fire("Erro", msg, "error");
       }
     }
   };
@@ -365,15 +359,11 @@ export default function AdminProducts() {
                       nome: "",
                       descricao: "",
                       categoria_id: categoriaId || "",
-                      lote: "",
-    rua: "",
-    prateleira: "",
                       unidade_base: "un",
                       unidade_compra: "un",
                       fator_conversao_compra: "1",
                       is_peso_variavel: false,
                       barcode_ean: "",
-                      pais_origem: "",
                       iva: "23",
                     });
                     setModalOpen(true);
@@ -482,7 +472,6 @@ export default function AdminProducts() {
                    <tr className="border-b border-white/10 bg-white/[0.02]">
                       <th className="p-5 text-xs font-black text-slate-500 uppercase tracking-widest">Produto</th>
                       <th className="p-5 text-xs font-black text-slate-500 uppercase tracking-widest">Categoria</th>
-                      <th className="p-5 text-xs font-black text-slate-500 uppercase tracking-widest">Lote / Local</th>
                       <th className="p-5 text-xs font-black text-slate-500 uppercase tracking-widest text-center">Stock / IVA</th>
                       <th className="p-5 text-xs font-black text-slate-500 uppercase tracking-widest text-right">Ações</th>
                    </tr>
@@ -510,20 +499,6 @@ export default function AdminProducts() {
                                 {p.categoria_nome || "Sem Categoria"}
                              </span>
                           </td>
-                          <td className="p-4">
-                             {((p.lotes as any)?.[0]?.lote || (p.lotes as any)?.[0]?.rua || (p.lotes as any)?.[0]?.prateleira) ? (
-                               <div className="flex flex-col gap-1">
-                                 {(p.lotes as any)?.[0]?.lote && <span className="text-xs text-white font-bold">Lote: <span className="text-slate-400">{(p.lotes as any)[0].lote}</span></span>}
-                                 {((p.lotes as any)?.[0]?.rua || (p.lotes as any)?.[0]?.prateleira) && (
-                                   <span className="text-[10px] text-slate-500 uppercase font-black tracking-widest">
-                                     {(p.lotes as any)[0].rua && `Rua ${(p.lotes as any)[0].rua}`} {(p.lotes as any)[0].rua && (p.lotes as any)[0].prateleira && "•"} {(p.lotes as any)[0].prateleira && `Prat ${(p.lotes as any)[0].prateleira}`}
-                                   </span>
-                                 )}
-                               </div>
-                             ) : (
-                               <span className="text-[10px] text-slate-600 uppercase font-black tracking-widest">Sem Local</span>
-                             )}
-                          </td>
                           <td className="p-4 text-center">
                              <div className="flex items-center justify-center gap-2">
                                 <div className={`inline-flex flex-col items-center justify-center px-4 py-2 rounded-xl text-sm font-black border ${p.stock_armazem < 10 ? "bg-red-500/10 text-red-500 border-red-500/20" : "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"}`}>
@@ -543,15 +518,11 @@ export default function AdminProducts() {
                                      nome: p.nome,
                                      descricao: p.descricao || "",
                                      categoria_id: p.categoria_id?.toString() || "",
-                                     lote: (p.lotes as any)?.[0]?.lote?.toString() || p.lote?.toString() || "",
-        rua: (p.lotes as any)?.[0]?.rua?.toString() || "",
-        prateleira: (p.lotes as any)?.[0]?.prateleira?.toString() || "",
                                      unidade_base: (p.unidade_base || "un").toLowerCase(),
                                      unidade_compra: p.unidade_compra || "un",
                                      fator_conversao_compra: p.fator_conversao_compra?.toString() || "1",
                                      is_peso_variavel: !!p.is_peso_variavel,
                                      barcode_ean: p.barcode_ean || "",
-                                     pais_origem: p.pais_origem || "",
                                      iva: p.iva?.toString() || "23",
                                    });
                                    setModalOpen(true);
@@ -560,12 +531,14 @@ export default function AdminProducts() {
                                >
                                  <Edit2 size={14} />
                                </button>
-                               <button
-                                 onClick={() => handleDelete(p.id)}
-                                 className="p-2.5 bg-white/5 hover:bg-red-500 hover:text-white text-slate-400 rounded-xl transition-all border border-white/10 hover:border-red-500 hover:shadow-lg hover:shadow-red-500/20"
-                               >
-                                 <Trash2 size={14} />
-                               </button>
+                               {!isArmazem && (
+                                 <button
+                                   onClick={() => handleDelete(p.id)}
+                                   className="p-2.5 bg-white/5 hover:bg-red-500 hover:text-white text-slate-400 rounded-xl transition-all border border-white/10 hover:border-red-500 hover:shadow-lg hover:shadow-red-500/20"
+                                 >
+                                   <Trash2 size={14} />
+                                 </button>
+                               )}
                              </div>
                           </td>
                        </tr>
@@ -707,7 +680,7 @@ export default function AdminProducts() {
                          className="w-full px-4 py-2 bg-white/[0.03] border border-white/10 rounded-xl outline-none focus:border-blue-500/50 text-white font-bold text-sm"
                        />
                      </div>
-                     <div className="grid grid-cols-2 gap-4">
+                     <div className={cn("grid grid-cols-1 gap-4", !isArmazem && "sm:grid-cols-3")}>
                        <div>
                          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
                            Categoria
@@ -717,49 +690,27 @@ export default function AdminProducts() {
                            {categories.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
                          </select>
                        </div>
-                       <div>
-                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-                           EAN-13
-                         </label>
-                         <input type="text" value={formData.barcode_ean || ""} onChange={(e) => setFormData({ ...formData, barcode_ean: e.target.value })} className="w-full px-4 py-2 bg-white/[0.03] border border-white/10 rounded-xl outline-none focus:border-blue-500/50 text-white font-bold text-sm" />
-                       </div>
-                     </div>
-                     <div className="grid grid-cols-3 gap-4">
-                       <div>
-                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-                           País de Origem
-                         </label>
-                         <input type="text" value={formData.pais_origem || ""} onChange={(e) => setFormData({ ...formData, pais_origem: e.target.value })} className="w-full px-4 py-2 bg-white/[0.03] border border-white/10 rounded-xl outline-none focus:border-blue-500/50 text-white font-bold text-sm uppercase" />
-                       </div>
-                       <div>
-                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-                           Lote
-                         </label>
-                         <input type="text" value={formData.lote || ""} onChange={(e) => setFormData({ ...formData, lote: e.target.value })} className="w-full px-4 py-2 bg-[#0a0a0a] border border-white/10 rounded-xl outline-none focus:border-blue-500/50 text-white font-bold text-sm" placeholder="Ex: L01" />
-                       </div>
-                       <div>
-                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-                           Rua
-                         </label>
-                         <input type="text" value={formData.rua || ""} onChange={(e) => setFormData({ ...formData, rua: e.target.value })} className="w-full px-4 py-2 bg-[#0a0a0a] border border-white/10 rounded-xl outline-none focus:border-blue-500/50 text-white font-bold text-sm" placeholder="Ex: A" />
-                       </div>
-                       <div>
-                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-                           Prateleira
-                         </label>
-                         <input type="text" value={formData.prateleira || ""} onChange={(e) => setFormData({ ...formData, prateleira: e.target.value })} className="w-full px-4 py-2 bg-[#0a0a0a] border border-white/10 rounded-xl outline-none focus:border-blue-500/50 text-white font-bold text-sm" placeholder="Ex: 1" />
-                       </div>
-                       <div>
-                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-                           IVA (%)
-                         </label>
-                         <select required value={formData.iva} onChange={(e) => setFormData({ ...formData, iva: e.target.value })} className="w-full px-4 py-2 bg-[#0a0a0a] border border-white/10 rounded-xl outline-none focus:border-blue-500/50 text-white font-bold text-sm">
-                           <option value="23">23% (Normal)</option>
-                           <option value="13">13% (Intermédia)</option>
-                           <option value="6">6% (Reduzida)</option>
-                           <option value="0">0% (Isento)</option>
-                         </select>
-                       </div>
+                       {!isArmazem && (
+                         <>
+                           <div>
+                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                               EAN-13
+                             </label>
+                             <input type="text" value={formData.barcode_ean || ""} onChange={(e) => setFormData({ ...formData, barcode_ean: e.target.value })} className="w-full px-4 py-2 bg-white/[0.03] border border-white/10 rounded-xl outline-none focus:border-blue-500/50 text-white font-bold text-sm" />
+                           </div>
+                           <div>
+                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                               IVA (%)
+                             </label>
+                             <select required value={formData.iva} onChange={(e) => setFormData({ ...formData, iva: e.target.value })} className="w-full px-4 py-2 bg-[#0a0a0a] border border-white/10 rounded-xl outline-none focus:border-blue-500/50 text-white font-bold text-sm">
+                               <option value="23">23% (Normal)</option>
+                               <option value="13">13% (Intermédia)</option>
+                               <option value="6">6% (Reduzida)</option>
+                               <option value="0">0% (Isento)</option>
+                             </select>
+                           </div>
+                         </>
+                       )}
                      </div>
                   </div>
 

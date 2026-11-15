@@ -95,8 +95,6 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
         fator_conversao_venda,
         is_peso_variavel,
         barcode_ean,
-        pais_origem,
-        lote,
       } = req.body;
       const imagem_url = req.file
         ? await uploadToSupabase(req.file, "produtos")
@@ -113,11 +111,9 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
               imagem_url,
               is_peso_variavel: is_peso_variavel === "true" || is_peso_variavel === true,
               barcode_ean: barcode_ean || null,
-              pais_origem: !pais_origem || pais_origem === "null" ? null : pais_origem,
               unidade_base: unidade_base || "un",
               unidade_compra: unidade_compra || "un",
               fator_conversao_compra: Number(fator_conversao_compra) || 1,
-              lote: lote || null,
         };
         
         if (preco !== undefined && preco !== "") productData.preco = Number(preco);
@@ -128,39 +124,12 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
         if (fator_conversao_venda !== undefined && fator_conversao_venda !== "") productData.fator_conversao_venda = Number(fator_conversao_venda);
 
         let result = await supabase.from("produtos").insert([productData]).select().single();
-        if (result.error) {
-           let shouldRetry = false;
-           if (result.error.message.includes("preco_custo")) {
-              console.warn("Coluna preco_custo não existe - ignorando");
-              delete productData.preco_custo;
-              shouldRetry = true;
-           }
-           if (result.error.message.includes("lote")) {
-              console.warn("Coluna lote não existe - ignorando");
-              delete productData.lote;
-              shouldRetry = true;
-           }
-           if (shouldRetry) {
-              result = await supabase.from("produtos").insert([productData]).select().single();
-           }
+        if (result.error && result.error.message.includes("preco_custo")) {
+           console.warn("Coluna preco_custo não existe - ignorando");
+           delete productData.preco_custo;
+           result = await supabase.from("produtos").insert([productData]).select().single();
         }
         if (result.error) throw result.error;
-
-        if (req.body.lote || req.body.rua || req.body.prateleira) {
-           const loteData = { 
-             produto_id: result.data.id, 
-             lote: req.body.lote || null,
-             rua: req.body.rua || null,
-             prateleira: req.body.prateleira || null,
-             quantidade: 0
-           };
-           const loteRes = await supabase.from("lotes").insert([loteData]);
-           
-           if (loteRes.error) {
-               console.error("Erro ao criar lote:", loteRes.error);
-               throw new Error("A tabela 'lotes' não possui as colunas corretas. Execute o comando SQL na base de dados para alterar a tabela: ALTER TABLE lotes ADD COLUMN IF NOT EXISTS rua TEXT, ADD COLUMN IF NOT EXISTS prateleira TEXT, ADD COLUMN IF NOT EXISTS lote TEXT;");
-           }
-        }
 
         cache.del("admin_produtos");
         res.json({ message: "Produto criado com sucesso", data: result.data });
@@ -213,8 +182,6 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
         fator_conversao_venda,
         is_peso_variavel,
         barcode_ean,
-        pais_origem,
-        lote,
       } = req.body;
 
       if (!categoria_id || categoria_id === "null" || categoria_id === "undefined") {
@@ -225,16 +192,17 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
         descricao,
         categoria_id,
         is_peso_variavel: is_peso_variavel === "true" || is_peso_variavel === true,
-        barcode_ean: barcode_ean || null,
-        pais_origem: !pais_origem || pais_origem === "null" ? null : pais_origem,
         unidade_base: unidade_base || "un",
         unidade_compra: unidade_compra || "un",
         fator_conversao_compra: Number(fator_conversao_compra) || 1,
-        lote: lote || null,
       };
 
+      if (req.user.role !== "armazem") {
+        updateData.barcode_ean = barcode_ean || null;
+        if (iva !== undefined && iva !== "") updateData.iva = Number(iva);
+      }
+
       if (preco !== undefined && preco !== "") updateData.preco = Number(preco);
-      if (iva !== undefined && iva !== "") updateData.iva = Number(iva);
       if (preco_custo !== undefined && preco_custo !== "") updateData.preco_custo = Number(preco_custo);
       if (unidade_venda !== undefined && unidade_venda !== "") updateData.unidade_venda = unidade_venda;
       if (fator_conversao_venda !== undefined && fator_conversao_venda !== "") updateData.fator_conversao_venda = Number(fator_conversao_venda);
@@ -266,51 +234,12 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
         }
 
         let result = await supabase.from("produtos").update(updateData).eq("id", req.params.id).select().single();
-        if (result.error) {
-           let shouldRetry = false;
-           if (result.error.message.includes("preco_custo")) {
-              console.warn("Coluna preco_custo não existe - ignorando");
-              delete updateData.preco_custo;
-              shouldRetry = true;
-           }
-           if (result.error.message.includes("lote")) {
-              console.warn("Coluna lote não existe - ignorando");
-              delete updateData.lote;
-              shouldRetry = true;
-           }
-           if (shouldRetry) {
-              result = await supabase.from("produtos").update(updateData).eq("id", req.params.id).select().single();
-           }
+        if (result.error && result.error.message.includes("preco_custo")) {
+           console.warn("Coluna preco_custo não existe - ignorando");
+           delete updateData.preco_custo;
+           result = await supabase.from("produtos").update(updateData).eq("id", req.params.id).select().single();
         }
         if (result.error) throw result.error;
-
-        if (req.body.lote !== undefined || req.body.rua !== undefined || req.body.prateleira !== undefined) {
-           const { data: existingLotes } = await supabase.from("lotes")
-             .select("id")
-             .eq("produto_id", req.params.id)
-             .limit(1);
-           
-           const loteData: any = { 
-             produto_id: req.params.id, 
-             lote: req.body.lote || null,
-             rua: req.body.rua || null,
-             prateleira: req.body.prateleira || null
-           };
-
-           let loteRes;
-           if (existingLotes && existingLotes.length > 0) {
-               loteRes = await supabase.from("lotes").update(loteData).eq("id", existingLotes[0].id);
-           } else {
-               loteData.quantidade = 0;
-               loteRes = await supabase.from("lotes").insert([loteData]);
-           }
-           
-           if (loteRes.error) {
-              // fallback if columns don't exist
-              console.error("Erro ao salvar lote no update:", loteRes.error);
-              throw new Error("A tabela 'lotes' não possui as colunas corretas. Execute o comando SQL na base de dados para alterar a tabela: ALTER TABLE lotes ADD COLUMN IF NOT EXISTS rua TEXT, ADD COLUMN IF NOT EXISTS prateleira TEXT, ADD COLUMN IF NOT EXISTS lote TEXT;");
-           }
-        }
 
         cache.del("admin_produtos");
         res.json({ message: "Produto atualizado", data: result.data });
@@ -345,20 +274,89 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
   });
 
   app.delete("/api/produtos/:id", authenticateToken, async (req: any, res) => {
-    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Apenas a administração pode remover produtos." });
+    const prodId = req.params.id;
     try {
-      const { data: oldProd } = await supabase.from("produtos").select("imagem_url").eq("id", req.params.id).single();
-      
-      const { error } = await supabase
+      const { data: oldProd } = await supabase
         .from("produtos")
-        .delete()
-        .eq("id", req.params.id);
-      if (error) throw error;
-      
-      if (oldProd && oldProd.imagem_url) {
-         await deleteFromSupabase(oldProd.imagem_url);
+        .select("nome, imagem_url")
+        .eq("id", prodId)
+        .maybeSingle();
+
+      // 1. Remover dependências diretas de unidades, lotes, stock de loja e movimentações
+      await supabase.from("product_units").delete().eq("product_id", prodId);
+      await supabase.from("lotes").delete().eq("produto_id", prodId);
+      await supabase.from("lotes").delete().eq("product_id", prodId);
+      await supabase.from("stock_loja").delete().eq("produto_id", prodId);
+      await supabase.from("movimentacoes_stock").delete().eq("produto_id", prodId);
+
+      // 2. Desvincular itens de faturas e pedidos (preservando histórico; caso a coluna seja NOT NULL, remove o registo dependente)
+      if (oldProd?.nome) {
+        await supabase
+          .from("fatura_itens")
+          .update({ descricao: oldProd.nome })
+          .eq("produto_id", prodId)
+          .is("descricao", null);
       }
-      
+      const { error: fiNullErr } = await supabase
+        .from("fatura_itens")
+        .update({ produto_id: null })
+        .eq("produto_id", prodId);
+      if (fiNullErr) {
+        await supabase.from("fatura_itens").delete().eq("produto_id", prodId);
+      }
+
+      const { error: piNullErr } = await supabase
+        .from("pedido_itens")
+        .update({ produto_id: null })
+        .eq("produto_id", prodId);
+      if (piNullErr) {
+        await supabase.from("pedido_itens").delete().eq("produto_id", prodId);
+      }
+
+      // 3. Remover o produto (com fallback caso exista outra tabela com FK ativa)
+      let deleteErr: any = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const { error } = await supabase
+          .from("produtos")
+          .delete()
+          .eq("id", prodId);
+        if (!error) {
+          deleteErr = null;
+          break;
+        }
+        deleteErr = error;
+        const msg = `${error.message || ""} ${error.details || ""}`;
+        const fkMatch =
+          msg.match(/referenced from table "([^"]+)"/i) ||
+          msg.match(/on table "([^"]+)"/i);
+        const refTable = fkMatch?.[1];
+        if (error.code === "23503" && refTable && refTable !== "produtos") {
+          const { error: u1 } = await supabase.from(refTable).update({ produto_id: null }).eq("produto_id", prodId);
+          if (u1) await supabase.from(refTable).delete().eq("produto_id", prodId);
+          const { error: u2 } = await supabase.from(refTable).update({ product_id: null }).eq("product_id", prodId);
+          if (u2) await supabase.from(refTable).delete().eq("product_id", prodId);
+        } else {
+          break;
+        }
+      }
+
+      if (deleteErr) throw deleteErr;
+
+      if (oldProd && oldProd.imagem_url) {
+        await deleteFromSupabase(oldProd.imagem_url);
+      }
+
+      if (cache) {
+        cache.del("admin_produtos");
+        cache.del("admin_stats");
+        cache.del("admin_dashboard_extended");
+        const dynamicKeys = cache
+          .keys()
+          .filter((k: string) => k.startsWith("pedidos_") || k.startsWith("admin_faturas"));
+        if (dynamicKeys.length > 0) cache.del(dynamicKeys);
+      }
+
       res.json({ message: "Produto removido" });
     } catch (error: any) {
       console.error("Erro ao remover produto:", error);

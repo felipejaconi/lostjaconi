@@ -1,6 +1,7 @@
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import AdminStockEntries from "./AdminStockEntries";
+import AdminUploadedInvoices from "./AdminUploadedInvoices";
 import AdminProducts from "./AdminProducts";
 import AdminOrders from "./AdminOrders";
 import { useParams, useNavigate } from "react-router-dom";
@@ -26,9 +27,14 @@ export default function AdminWarehousePicking() {
           {/* ENTRADA FATURA */}
           {activeTab === "fatura" && (
             <motion.div key="fatura" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
-              <AdminStockEntries onSuccess={() => {
-                navigate("/admin/armazem/estoque-global");
-              }} />
+              <AdminStockEntries />
+            </motion.div>
+          )}
+
+          {/* FATURAS SUBIDAS */}
+          {activeTab === "faturas-subidas" && (
+            <motion.div key="faturas-subidas" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+              <AdminUploadedInvoices />
             </motion.div>
           )}
 

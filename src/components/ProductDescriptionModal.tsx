@@ -7,9 +7,10 @@ interface ProductDescriptionModalProps {
   onClose: () => void;
   product: any | null;
   adminMode?: boolean; // Show admin stock details
+  hideCostAndTotal?: boolean;
 }
 
-export function ProductDescriptionModal({ isOpen, onClose, product, adminMode = false }: ProductDescriptionModalProps) {
+export function ProductDescriptionModal({ isOpen, onClose, product, adminMode = false, hideCostAndTotal = false }: ProductDescriptionModalProps) {
   // To allow CSS transition on unmount, we could use framer-motion or simple timeout.
   // Since we want simple, let's just use standard conditional rendering with a backdrop click.
   
@@ -80,18 +81,22 @@ export function ProductDescriptionModal({ isOpen, onClose, product, adminMode = 
                   {product.stock_armazem || 0} <span className="text-[10px] text-slate-500 font-bold uppercase">{product.unidade_base || 'un'}</span>
                 </p>
               </div>
-              <div className="bg-white/5 border border-white/10 rounded-xl p-2 flex flex-col justify-center">
-                <p className="text-[9px] font-bold text-emerald-400/70 uppercase tracking-widest mb-0.5 flex items-center gap-1"><CircleDollarSign size={10}/> Valor Total (PVP)</p>
-                <p className="text-base font-black text-emerald-400">
-                  €{(Number(product.stock_armazem || 0) * Number(product.preco || 0)).toFixed(2)}
-                </p>
-              </div>
-              <div className="bg-white/5 border border-white/10 rounded-xl p-2 flex flex-col justify-center">
-                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Custo Un.</p>
-                <p className="text-xs font-bold text-slate-300">
-                  €{Number(product.preco_custo || 0).toFixed(2)}
-                </p>
-              </div>
+              {!hideCostAndTotal && (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-2 flex flex-col justify-center">
+                  <p className="text-[9px] font-bold text-emerald-400/70 uppercase tracking-widest mb-0.5 flex items-center gap-1"><CircleDollarSign size={10}/> Valor Total (PVP)</p>
+                  <p className="text-base font-black text-emerald-400">
+                    €{(Number(product.stock_armazem || 0) * Number(product.preco || 0)).toFixed(2)}
+                  </p>
+                </div>
+              )}
+              {!hideCostAndTotal && (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-2 flex flex-col justify-center">
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Custo Un.</p>
+                  <p className="text-xs font-bold text-slate-300">
+                    €{Number(product.preco_custo || 0).toFixed(2)}
+                  </p>
+                </div>
+              )}
               <div className="bg-white/5 border border-white/10 rounded-xl p-2 flex flex-col justify-center">
                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">P.V.P Un.</p>
                 <p className="text-xs font-bold text-blue-400">

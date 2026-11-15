@@ -18,6 +18,7 @@ import {
   ArrowRight,
   Users,
   FileCode2,
+  FileText,
   BarChart3,
   Star,
   Award,
@@ -156,6 +157,134 @@ export default function AdminHome() {
     lucroLiquido: 0,
     vendasMes: 0,
   };
+
+  if (!isAdmin) {
+    return (
+      <div className="h-full flex flex-col p-4 sm:p-6 lg:p-8 gap-4 sm:gap-6 max-w-6xl mx-auto w-full">
+        <div className="flex flex-col items-center justify-center shrink-0 w-full mb-2">
+          <BrandTitle />
+          <h2
+            className="text-lg sm:text-2xl lg:text-3xl text-[#facc15] mt-0 text-center tracking-wide"
+            style={{
+              fontFamily: "'Yellowtail', cursive",
+              textShadow: "2px 2px 4px rgba(0,0,0,0.5)",
+            }}
+          >
+            {user?.name || "Logística e Armazém"}
+          </h2>
+        </div>
+
+        <div className="flex-1 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 lg:gap-5 w-full h-full pb-4">
+          {/* 1. Nova Fatura */}
+          <div
+            onClick={() => navigate("/admin/armazem/fatura")}
+            className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-emerald-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[220px] justify-between"
+          >
+            <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+              <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-emerald-500/10 group-hover:border-emerald-500/30 transition-colors">
+                <FileCode2 className="text-emerald-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+              </div>
+              <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+                Nova Fatura
+              </h3>
+            </div>
+
+            <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-emerald-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+              CRIAR FATURA <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+            </div>
+          </div>
+
+          {/* 2. Faturas */}
+          <div
+            onClick={() => navigate("/admin/armazem/faturas-subidas")}
+            className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-blue-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[220px] justify-between"
+          >
+            <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+              <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-blue-500/10 group-hover:border-blue-500/30 transition-colors">
+                <FileText className="text-blue-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+              </div>
+              <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+                Faturas
+              </h3>
+            </div>
+
+            <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-blue-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+              Aceder Faturas <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+            </div>
+          </div>
+
+          {/* 3. Pedidos */}
+          <div
+            onClick={() => navigate("/admin/armazem/pedidos")}
+            className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-yellow-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[220px] justify-between"
+          >
+            <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+              <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 relative group-hover:bg-yellow-500/10 group-hover:border-yellow-500/30 transition-colors">
+                <Activity className="text-yellow-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+                {pendingOrdersCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-3 h-3 sm:w-4 sm:h-4 bg-yellow-500 rounded-full border-2 border-[#0a0a0a]"></span>
+                )}
+              </div>
+              <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+                Pedidos
+              </h3>
+              <p className="text-yellow-500 text-lg sm:text-2xl lg:text-3xl font-medium mt-0 sm:mt-1 lg:mt-2 tracking-tighter tabular-nums whitespace-nowrap">
+                {pendingOrdersCount}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-yellow-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+              Ver Pedidos <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+            </div>
+          </div>
+
+          {/* 4. Fornecedores */}
+          <div
+            onClick={() => navigate("/admin/fornecedores")}
+            className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-purple-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[220px] justify-between"
+          >
+            <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+              <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 relative group-hover:bg-purple-500/10 group-hover:border-purple-500/30 transition-colors">
+                <Users className="text-purple-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+              </div>
+              <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+                Fornecedores
+              </h3>
+              <p className="text-purple-500 text-lg sm:text-2xl lg:text-3xl font-medium mt-0 sm:mt-1 lg:mt-2 tracking-tighter tabular-nums whitespace-nowrap">
+                {totalFornecedores}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-purple-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+              Aceder Fornecedores <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+            </div>
+          </div>
+
+          {/* 5. Produtos */}
+          <div
+            onClick={() => navigate("/admin/armazem/produtos")}
+            className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-cyan-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[220px] justify-between"
+          >
+            <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+              <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 relative group-hover:bg-cyan-500/10 group-hover:border-cyan-500/30 transition-colors">
+                <Package className="text-cyan-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+              </div>
+              <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+                Produtos
+              </h3>
+              <p className="text-cyan-500 text-lg sm:text-2xl lg:text-3xl font-medium mt-0 sm:mt-1 lg:mt-2 tracking-tighter tabular-nums whitespace-nowrap">
+                {stats?.totalProdutos || 0}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-cyan-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+              Aceder Produtos <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pt-2 px-4 md:pt-4 md:px-6 lg:px-8 pb-10">
@@ -645,147 +774,149 @@ export default function AdminHome() {
         </div>
       )}
 
-      <div className="bg-[#0a0a0a] rounded-xl border border-white/10 flex flex-col h-[500px] mt-4 sm:mt-6 overflow-hidden">
-        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/5 shrink-0 overflow-x-auto custom-scrollbar">
-          <div className="flex items-center gap-6 min-w-max">
-            <button
-              onClick={() => setAlertsTab("alertas")}
-              className={`text-sm font-semibold flex items-center gap-2 pb-1 transition-colors relative ${alertsTab === "alertas" ? "text-white" : "text-slate-500 hover:text-slate-300"}`}
-            >
-              <AlertTriangle className={`w-4 h-4 ${alertsTab === "alertas" ? "text-yellow-500" : ""}`} /> Alertas de Produtos
-              {alertsTab === "alertas" && <span className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-yellow-500 rounded-t-full"></span>}
-            </button>
-            <button
-              onClick={() => setAlertsTab("movimentacoes")}
-              className={`text-sm font-semibold flex items-center gap-2 pb-1 transition-colors relative ${alertsTab === "movimentacoes" ? "text-white" : "text-slate-500 hover:text-slate-300"}`}
-            >
-              <ShoppingCart className={`w-4 h-4 ${alertsTab === "movimentacoes" ? "text-blue-500" : ""}`} /> Movimentações Recentes
-              {alertsTab === "movimentacoes" && <span className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-blue-500 rounded-t-full"></span>}
-            </button>
+      {isAdmin && (
+        <div className="bg-[#0a0a0a] rounded-xl border border-white/10 flex flex-col h-[500px] mt-4 sm:mt-6 overflow-hidden">
+          <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/5 shrink-0 overflow-x-auto custom-scrollbar">
+            <div className="flex items-center gap-6 min-w-max">
+              <button
+                onClick={() => setAlertsTab("alertas")}
+                className={`text-sm font-semibold flex items-center gap-2 pb-1 transition-colors relative ${alertsTab === "alertas" ? "text-white" : "text-slate-500 hover:text-slate-300"}`}
+              >
+                <AlertTriangle className={`w-4 h-4 ${alertsTab === "alertas" ? "text-yellow-500" : ""}`} /> Alertas de Produtos
+                {alertsTab === "alertas" && <span className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-yellow-500 rounded-t-full"></span>}
+              </button>
+              <button
+                onClick={() => setAlertsTab("movimentacoes")}
+                className={`text-sm font-semibold flex items-center gap-2 pb-1 transition-colors relative ${alertsTab === "movimentacoes" ? "text-white" : "text-slate-500 hover:text-slate-300"}`}
+              >
+                <ShoppingCart className={`w-4 h-4 ${alertsTab === "movimentacoes" ? "text-blue-500" : ""}`} /> Movimentações Recentes
+                {alertsTab === "movimentacoes" && <span className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-blue-500 rounded-t-full"></span>}
+              </button>
+            </div>
+            
+            {alertsTab === "movimentacoes" && (
+              <button
+                onClick={() => navigate("/admin/pedidos")}
+                className="text-[10px] sm:text-[11px] text-blue-500 hover:text-blue-400 font-medium flex items-center gap-1 bg-blue-500/10 px-3 py-1.5 rounded-full transition-colors ml-4 shrink-0"
+              >
+                Grelha <ArrowRight className="w-3 h-3" />
+              </button>
+            )}
           </div>
           
-          {alertsTab === "movimentacoes" && (
-            <button
-              onClick={() => navigate("/admin/pedidos")}
-              className="text-[10px] sm:text-[11px] text-blue-500 hover:text-blue-400 font-medium flex items-center gap-1 bg-blue-500/10 px-3 py-1.5 rounded-full transition-colors ml-4 shrink-0"
-            >
-              Grelha <ArrowRight className="w-3 h-3" />
-            </button>
-          )}
-        </div>
-        
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 space-y-2">
-          {alertsTab === "alertas" && (
-            <>
-              {produtosAlertas.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full p-8 bg-white/[0.02] rounded-xl border border-white/5">
-                  <div className="w-10 h-10 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mb-3">
-                    <Package size={20} />
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 space-y-2">
+            {alertsTab === "alertas" && (
+              <>
+                {produtosAlertas.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full p-8 bg-white/[0.02] rounded-xl border border-white/5">
+                    <div className="w-10 h-10 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mb-3">
+                      <Package size={20} />
+                    </div>
+                    <p className="text-sm font-semibold text-white">
+                      Stock Saudável
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Nenhum produto a reportar no momento.
+                    </p>
                   </div>
-                  <p className="text-sm font-semibold text-white">
-                    Stock Saudável
-                  </p>
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Nenhum produto a reportar no momento.
-                  </p>
-                </div>
-              ) : (
-                produtosAlertas.map((prod, i) => {
-                  const preco = Number(prod.preco || 0);
-                  const custo = Number(prod.preco_custo || 0);
-                  const stock = Number(prod.stock_armazem || 0);
-                  const mrg = custo > 0 ? ((preco - custo) / (custo || 1)) * 100 : preco > 0 ? 100 : 0;
-                  
-                  return (
-                    <div
-                      key={prod.id || i}
-                      className="flex flex-col p-3 bg-white/[0.02] rounded-lg border border-white/5 hover:border-white/10 transition-colors group"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 pr-3">
-                          <p className="text-sm font-semibold text-white leading-snug mb-2 group-hover:text-amber-400 transition-colors">
-                            {prod.nome}
-                          </p>
-                          <div className="flex flex-wrap gap-2 text-[11px] font-medium">
-                            <span className={`px-2 py-0.5 rounded border ${stock < 10 ? "bg-red-500/10 text-red-500 border-red-500/20" : "bg-white/5 text-slate-400 border-white/10"}`}>
-                              Stock: {stock.toLocaleString("pt-PT", { maximumFractionDigits: 2 })} {prod.unidade_base || "un"}
-                            </span>
-                            {isAdmin && (
-                              <span className={`px-2 py-0.5 rounded border ${mrg < 15 ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/20" : "bg-white/5 text-slate-400 border-white/10"}`}>
-                                Margem: {mrg.toFixed(1)}%
+                ) : (
+                  produtosAlertas.map((prod, i) => {
+                    const preco = Number(prod.preco || 0);
+                    const custo = Number(prod.preco_custo || 0);
+                    const stock = Number(prod.stock_armazem || 0);
+                    const mrg = custo > 0 ? ((preco - custo) / (custo || 1)) * 100 : preco > 0 ? 100 : 0;
+                    
+                    return (
+                      <div
+                        key={prod.id || i}
+                        className="flex flex-col p-3 bg-white/[0.02] rounded-lg border border-white/5 hover:border-white/10 transition-colors group"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 pr-3">
+                            <p className="text-sm font-semibold text-white leading-snug mb-2 group-hover:text-amber-400 transition-colors">
+                              {prod.nome}
+                            </p>
+                            <div className="flex flex-wrap gap-2 text-[11px] font-medium">
+                              <span className={`px-2 py-0.5 rounded border ${stock < 10 ? "bg-red-500/10 text-red-500 border-red-500/20" : "bg-white/5 text-slate-400 border-white/10"}`}>
+                                Stock: {stock.toLocaleString("pt-PT", { maximumFractionDigits: 2 })} {prod.unidade_base || "un"}
                               </span>
-                            )}
+                              {isAdmin && (
+                                <span className={`px-2 py-0.5 rounded border ${mrg < 15 ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/20" : "bg-white/5 text-slate-400 border-white/10"}`}>
+                                  Margem: {mrg.toFixed(1)}%
+                                </span>
+                              )}
+                            </div>
                           </div>
+                          <button
+                            onClick={() => navigate("/admin/produtos?search=" + encodeURIComponent(prod.nome))}
+                            className="p-2 text-slate-500 hover:text-white hover:bg-white/5 rounded-lg transition-colors shrink-0 tooltip-trigger"
+                            title="Ver Produto"
+                          >
+                            <ArrowRight size={16} />
+                          </button>
                         </div>
-                        <button
-                          onClick={() => navigate("/admin/produtos?search=" + encodeURIComponent(prod.nome))}
-                          className="p-2 text-slate-500 hover:text-white hover:bg-white/5 rounded-lg transition-colors shrink-0 tooltip-trigger"
-                          title="Ver Produto"
-                        >
-                          <ArrowRight size={16} />
-                        </button>
                       </div>
-                    </div>
-                  );
-                })
-              )}
-            </>
-          )}
+                    );
+                  })
+                )}
+              </>
+            )}
 
-          {alertsTab === "movimentacoes" && (
-            <>
-              {recentOrders.length === 0 ? (
-                <div className="text-center py-12 text-sm text-slate-500 font-medium bg-white/[0.02] rounded-xl border border-white/5 h-full flex items-center justify-center">
-                  Sem pedidos recentes.
-                </div>
-              ) : (
-                recentOrders.map((order) => (
-                  <div
-                    key={order.id}
-                    onClick={() => navigate("/admin/pedidos")}
-                    className="flex items-center justify-between p-3 bg-white/[0.02] rounded-lg border border-white/5 hover:border-white/10 transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-3 overflow-hidden">
-                      <div className="w-10 h-10 rounded-lg bg-blue-500/10 text-blue-400 font-bold border border-blue-500/20 flex flex-col items-center justify-center shrink-0">
-                        <span className="text-[9px] text-blue-500/70 font-medium uppercase tracking-widest leading-none mb-0.5">
-                          ID
-                        </span>
-                        <span className="text-sm leading-none">
-                          {order.id.toString().slice(-3)}
-                        </span>
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-white mb-0.5 truncate group-hover:text-blue-400 transition-colors">
-                          {order.loja_nome || order.user?.name || "Loja Desconhecida"}
-                        </p>
-                        <p className="text-[10px] text-slate-400 flex items-center gap-1.5">
-                          <Clock className="w-3 h-3 text-slate-500" />{" "}
-                          {new Date(order.created_at).toLocaleString("pt-PT", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            day: "2-digit",
-                            month: "short",
-                          })}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      {isAdmin && (
-                        <p className="text-sm font-bold text-white">
-                          € {Number(order.total || 0).toLocaleString("pt-PT", { minimumFractionDigits: 2 })}
-                        </p>
-                      )}
-                      <p className={`text-[9px] font-black mt-1 uppercase tracking-widest px-2 py-0.5 rounded inline-block ${order.status === "pendente" ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" : order.status === "concluido" || order.status === "entregue" ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" : "bg-blue-500/10 text-blue-500 border border-blue-500/20"}`}>
-                        {order.status}
-                      </p>
-                    </div>
+            {alertsTab === "movimentacoes" && (
+              <>
+                {recentOrders.length === 0 ? (
+                  <div className="text-center py-12 text-sm text-slate-500 font-medium bg-white/[0.02] rounded-xl border border-white/5 h-full flex items-center justify-center">
+                    Sem pedidos recentes.
                   </div>
-                ))
-              )}
-            </>
-          )}
+                ) : (
+                  recentOrders.map((order) => (
+                    <div
+                      key={order.id}
+                      onClick={() => navigate("/admin/pedidos")}
+                      className="flex items-center justify-between p-3 bg-white/[0.02] rounded-lg border border-white/5 hover:border-white/10 transition-colors cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <div className="w-10 h-10 rounded-lg bg-blue-500/10 text-blue-400 font-bold border border-blue-500/20 flex flex-col items-center justify-center shrink-0">
+                          <span className="text-[9px] text-blue-500/70 font-medium uppercase tracking-widest leading-none mb-0.5">
+                            ID
+                          </span>
+                          <span className="text-sm leading-none">
+                            {order.id.toString().slice(-3)}
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-white mb-0.5 truncate group-hover:text-blue-400 transition-colors">
+                            {order.loja_nome || order.user?.name || "Loja Desconhecida"}
+                          </p>
+                          <p className="text-[10px] text-slate-400 flex items-center gap-1.5">
+                            <Clock className="w-3 h-3 text-slate-500" />{" "}
+                            {new Date(order.created_at).toLocaleString("pt-PT", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              day: "2-digit",
+                              month: "short",
+                            })}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        {isAdmin && (
+                          <p className="text-sm font-bold text-white">
+                            € {Number(order.total || 0).toLocaleString("pt-PT", { minimumFractionDigits: 2 })}
+                          </p>
+                        )}
+                        <p className={`text-[9px] font-black mt-1 uppercase tracking-widest px-2 py-0.5 rounded inline-block ${order.status === "pendente" ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" : order.status === "concluido" || order.status === "entregue" ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" : "bg-blue-500/10 text-blue-500 border border-blue-500/20"}`}>
+                          {order.status}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Real Map Section */}
       {isAdmin && (

@@ -3,6 +3,25 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
 export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
+  // Migração automática e idempotente: move todas as faturas legadas (tipo = 'compra') para a área de Faturas (tipo = 'entrada_stock')
+  (async () => {
+    try {
+      const { data, error } = await supabase
+        .from("faturas")
+        .update({ tipo: "entrada_stock" })
+        .eq("tipo", "compra")
+        .select("id");
+      if (!error && data && data.length > 0) {
+        console.log(`[Migration] ${data.length} faturas migradas do Financeiro ('compra') para Faturas ('entrada_stock').`);
+        const fatKeys = cache.keys().filter((k: string) => k.startsWith("admin_faturas"));
+        if (fatKeys.length > 0) cache.del(fatKeys);
+        cache.del("admin_stats");
+      }
+    } catch (e) {
+      console.warn("[Migration] Aviso ao migrar faturas:", e);
+    }
+  })();
+
   // ERP Financeiro - Fornecedores
   app.get("/api/admin/fornecedores", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
@@ -206,9 +225,8 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
 
   const clearFinanceCache = () => {
     const keys = cache.keys();
-    const finPedidosKeys = keys.filter((k: string) => k.startsWith("admin_financial_pedidos"));
-    cache.del(finPedidosKeys);
-    cache.del("admin_faturas");
+    const finPedidosKeys = keys.filter((k: string) => k.startsWith("admin_financial_pedidos") || k.startsWith("admin_faturas"));
+    if (finPedidosKeys.length > 0) cache.del(finPedidosKeys);
     cache.del("admin_stats");
     cache.del("admin_produtos");
   };
@@ -274,12 +292,26 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
   app.get("/api/admin/faturas", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     try {
-      const cached = cache.get("admin_faturas");
+      const period = typeof req.query.period === "string" ? req.query.period : "todos";
+      const cacheKey = period && period !== "todos" ? `admin_faturas_${period}` : "admin_faturas";
+      const cached = cache.get(cacheKey);
       if (cached) return res.json(cached);
-      const { data, error } = await supabase
+
+      let query = supabase
         .from("faturas")
-        .select("*, fornecedor:fornecedores(id, nome, iban, contribuinte, tipo), fatura_itens(id, fatura_id, quantidade, preco_custo, iva, valor_liquido, valor_iva, valor_total, produto:produtos(nome, unidade_base, iva)), user:created_by(id, name, email), movimentos_financeiros(*)")
-        .order("data_emissao", { ascending: false });
+        .select("*, fornecedor:fornecedores(id, nome, iban, contribuinte, tipo), fatura_itens(*, produto:produtos(id, nome, unidade_base, iva, preco_custo, preco)), user:created_by(id, name, email), movimentos_financeiros(*)");
+
+      if (period === "mes") {
+        const now = new Date();
+        const startOfMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+        query = query.gte("data_emissao", startOfMonth);
+      } else if (period === "ano") {
+        const now = new Date();
+        const startOfYear = `${now.getFullYear()}-01-01`;
+        query = query.gte("data_emissao", startOfYear);
+      }
+
+      const { data, error } = await query.order("data_emissao", { ascending: false });
       if (error) {
          if (error.code === '42P01') return res.json([]);
          throw error;
@@ -290,7 +322,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
         }
         return f;
       });
-      cache.set("admin_faturas", mapped, 60);
+      cache.set(cacheKey, mapped, 60);
       res.json(mapped);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -347,7 +379,137 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       
       if (error) throw error;
       clearFinanceCache();
+      cache.del("admin_fornecedores");
       res.json(isArray ? data : data[0]);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/faturas/compras", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+
+    try {
+      const isArray = Array.isArray(req.body);
+      const items = isArray ? req.body : [req.body];
+
+      let createdFornecedorId: any = null;
+      let createdFornecedorName: string | null = null;
+
+      const dataToInsert: any[] = [];
+
+      for (const item of items) {
+        let finalFornecedorId = item.fornecedor_id || null;
+
+        if (!finalFornecedorId && item.novo_fornecedor_nome) {
+          const cleanName = String(item.novo_fornecedor_nome).trim();
+          if (createdFornecedorName === cleanName && createdFornecedorId) {
+            finalFornecedorId = createdFornecedorId;
+          } else {
+            const { data: existingForn } = await supabase
+              .from("fornecedores")
+              .select("id")
+              .ilike("nome", cleanName)
+              .maybeSingle();
+
+            if (existingForn?.id) {
+              finalFornecedorId = existingForn.id;
+            } else {
+              let fornRes = await supabase
+                .from("fornecedores")
+                .insert([{ nome: cleanName, tipo: "mercadoria" }])
+                .select("id")
+                .single();
+
+              if (fornRes.error) {
+                fornRes = await supabase
+                  .from("fornecedores")
+                  .insert([{ nome: cleanName }])
+                  .select("id")
+                  .single();
+              }
+              if (fornRes.error) throw fornRes.error;
+              finalFornecedorId = fornRes.data.id;
+            }
+            createdFornecedorId = finalFornecedorId;
+            createdFornecedorName = cleanName;
+          }
+        }
+
+        const valorTotal = Number(item.valor_total) || 0;
+        const valorIva = Number(item.valor_iva) || 0;
+        const valorLiquido =
+          item.valor_liquido !== undefined && item.valor_liquido !== null
+            ? Number(item.valor_liquido)
+            : Math.max(0, valorTotal - valorIva);
+
+        const isAlreadyPaid = item.forma_pagamento === "pago";
+
+        const descObj: Record<string, any> = {};
+        if (item.loja_id) descObj.loja_id = item.loja_id;
+        if (item.classificacao_tipo) descObj.classificacao_tipo = item.classificacao_tipo;
+        if (item.classificacao_nome) descObj.classificacao_nome = item.classificacao_nome;
+        if (item.forma_pagamento) descObj.forma_pagamento = item.forma_pagamento;
+        const descricaoJson = Object.keys(descObj).length > 0 ? JSON.stringify(descObj) : null;
+
+        dataToInsert.push({
+          fornecedor_id: finalFornecedorId,
+          numero_fatura: item.numero_fatura,
+          data_emissao: item.data_fatura,
+          data_vencimento: item.data_vencimento || null,
+          valor_liquido: valorLiquido,
+          valor_iva: valorIva,
+          valor_total: valorTotal,
+          valor_pendente: isAlreadyPaid ? 0 : valorTotal,
+          status_pagamento: isAlreadyPaid ? "pago" : "pendente",
+          tipo: "compra_financeiro",
+          observacoes: item.observacoes || null,
+          descrição: descricaoJson,
+          created_by: req.user.id,
+        });
+      }
+
+      let insertResult = await supabase.from("faturas").insert(dataToInsert).select();
+
+      if (insertResult.error) {
+        const fallbackRows = dataToInsert.map((row) => ({
+          fornecedor_id: row.fornecedor_id,
+          numero_fatura: row.numero_fatura,
+          data_emissao: row.data_emissao,
+          data_vencimento: row.data_vencimento,
+          valor_total: row.valor_total,
+          valor_pendente: row.valor_pendente,
+          status_pagamento: row.status_pagamento,
+          tipo: "compra_financeiro",
+          descrição: row.descrição,
+          created_by: row.created_by,
+        }));
+        insertResult = await supabase.from("faturas").insert(fallbackRows).select();
+      }
+
+      if (insertResult.error) throw insertResult.error;
+
+      // Se foi lançada já como "pago", regista também o movimento financeiro correspondente
+      const insertedRows = insertResult.data || [];
+      for (const createdFat of insertedRows) {
+        if (createdFat?.status_pagamento === "pago" && Number(createdFat?.valor_total) > 0) {
+          try {
+            await supabase.from("movimentos_financeiros").insert([
+              {
+                fatura_id: createdFat.id,
+                valor: Number(createdFat.valor_total),
+                data_pagamento: createdFat.data_emissao || new Date().toISOString().split("T")[0],
+                metodo: "pago",
+                created_by: req.user.id,
+              },
+            ]);
+          } catch {}
+        }
+      }
+
+      clearFinanceCache();
+      cache.del("admin_fornecedores");
+      res.json(isArray ? insertResult.data : insertResult.data?.[0]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -370,179 +532,381 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     }
   });
 
+  const activeCheckoutIds = new Set<string>();
+  let isBulkApproveInProgress = false;
+
   app.put("/api/admin/faturas/bulk-approve-conference", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin") return res.sendStatus(403);
+    if (isBulkApproveInProgress || activeCheckoutIds.size > 0) {
+      return res.status(409).json({ error: "Já existe uma conferência em processamento. Aguarde um instante." });
+    }
+    isBulkApproveInProgress = true;
     try {
+      const { data: pendingList, error: fetchErr } = await supabase
+        .from("faturas")
+        .select("id, numero_fatura, status_pagamento, created_at, fatura_itens(*)")
+        .eq("status_pagamento", "em_conferencia");
+
+      if (fetchErr) throw fetchErr;
+
+      const list = pendingList || [];
+      for (const fat of list) {
+        let stockAlreadyApplied = false;
+        const { data: refMovs } = await supabase
+          .from("movimentacoes_stock")
+          .select("id")
+          .ilike("motivo", `%[ref:${fat.id}]%`)
+          .limit(1);
+        if (refMovs && refMovs.length > 0) {
+          stockAlreadyApplied = true;
+        } else if (fat.numero_fatura && fat.created_at) {
+          const minLegacyTime = new Date(new Date(fat.created_at).getTime() - 60000).toISOString();
+          const { data: legacyMovs } = await supabase
+            .from("movimentacoes_stock")
+            .select("id")
+            .ilike("motivo", `Fatura #${fat.numero_fatura} orig:%`)
+            .gte("created_at", minLegacyTime)
+            .limit(1);
+          if (legacyMovs && legacyMovs.length > 0) {
+            stockAlreadyApplied = true;
+          }
+        }
+
+        if (!stockAlreadyApplied && Array.isArray(fat.fatura_itens)) {
+          for (const item of fat.fatura_itens) {
+            if (!item.produto_id) continue;
+            const { data: prod } = await supabase
+              .from("produtos")
+              .select("preco_custo, preco, iva, stock_armazem, unidade_base")
+              .eq("id", item.produto_id)
+              .single();
+
+            if (!prod) continue;
+
+            const factor = Number(item.fator_conversao) || 1;
+            const qtyBase = (Number(item.quantidade) || 0) * factor;
+            const rawUnitCost =
+              item.preco_custo !== undefined && item.preco_custo !== null
+                ? Number(item.preco_custo)
+                : Number(item.preco_unitario) || 0;
+            const newCusto = rawUnitCost / factor;
+            const newIva =
+              item.iva !== null && item.iva !== undefined
+                ? Number(item.iva)
+                : Number(prod.iva || 0);
+
+            const updateProdData: any = {
+              iva: newIva,
+            };
+
+            if (qtyBase > 0) {
+              updateProdData.stock_armazem = Math.max(0, (Number(prod.stock_armazem) || 0) + qtyBase);
+
+              await supabase.from("movimentacoes_stock").insert([
+                {
+                  produto_id: item.produto_id,
+                  tipo: "entrada",
+                  quantidade: qtyBase,
+                  display_qty: Number(item.quantidade) || 0,
+                  display_unit: item.unidade_entrada || prod.unidade_base || "un",
+                  unidade: prod.unidade_base || "un",
+                  motivo: `Fatura #${fat.numero_fatura} aprovada no Check de Faturas [ref:${fat.id}]`,
+                  user_id: req.user.id,
+                },
+              ]);
+            }
+
+            if (newCusto > 0) {
+              const oldCusto = Number(prod.preco_custo) || 0;
+              const currentPreco = Number(prod.preco) || 0;
+              if (oldCusto > 0 && currentPreco > 0) {
+                const oldIvaRatio = 1 + Number(prod.iva || 0) / 100;
+                const pvpSemIva = currentPreco / oldIvaRatio;
+                const oldMargemPct = (pvpSemIva - oldCusto) / oldCusto;
+                const newPvpSemIva = newCusto * (1 + oldMargemPct);
+                const newIvaRatio = 1 + newIva / 100;
+                const newPvp = newPvpSemIva * newIvaRatio;
+                updateProdData.preco = Number(newPvp.toFixed(2));
+              }
+              updateProdData.preco_custo = Number(newCusto.toFixed(4));
+            }
+
+            await supabase.from("produtos").update(updateProdData).eq("id", item.produto_id);
+          }
+        }
+      }
+
       const { data, error } = await supabase
         .from("faturas")
-        .update({ status_pagamento: "pendente" })
+        .update({ status_pagamento: "pendente", tipo: "entrada_stock" })
         .eq("status_pagamento", "em_conferencia")
         .select();
-      
+
       if (error) throw error;
-      
+
       clearFinanceCache();
       res.json({ success: true, count: data?.length || 0 });
     } catch (error: any) {
       console.error("Erro no bulk approve faturas:", error);
       res.status(500).json({ error: error.message || "Erro ao aprovar faturas em massa" });
+    } finally {
+      isBulkApproveInProgress = false;
     }
   });
 
   app.put("/api/admin/faturas/:id/checkout", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin") return res.sendStatus(403);
-    const faturaId = req.params.id;
+    const faturaId = String(req.params.id);
+    if (isBulkApproveInProgress || activeCheckoutIds.has(faturaId)) {
+      return res.status(409).json({ error: "Esta fatura já está a ser processada. Aguarde um instante." });
+    }
+    activeCheckoutIds.add(faturaId);
     const { numero_fatura, data_emissao, data_vencimento, fornecedor_id, valor_liquido, valor_iva, valor_total, itens, observacoes } = req.body;
-    
+
     try {
-      // 0. Fetch existing items for stock adjustment
+      // 0. Verificar o estado atual da fatura para saber se o stock já havia sido aplicado anteriormente
+      const { data: currentFatura, error: fatFetchErr } = await supabase
+        .from("faturas")
+        .select("id, numero_fatura, status_pagamento, created_at")
+        .eq("id", faturaId)
+        .single();
+
+      if (fatFetchErr || !currentFatura) {
+        return res.status(404).json({ error: "Fatura não encontrada" });
+      }
+
+      let stockAlreadyApplied = currentFatura.status_pagamento !== "em_conferencia";
+      if (!stockAlreadyApplied) {
+        const { data: refMovs } = await supabase
+          .from("movimentacoes_stock")
+          .select("id")
+          .ilike("motivo", `%[ref:${faturaId}]%`)
+          .limit(1);
+        if (refMovs && refMovs.length > 0) {
+          stockAlreadyApplied = true;
+        } else if (currentFatura.numero_fatura && currentFatura.created_at) {
+          const minLegacyTime = new Date(new Date(currentFatura.created_at).getTime() - 60000).toISOString();
+          const { data: existingMovs } = await supabase
+            .from("movimentacoes_stock")
+            .select("id")
+            .ilike("motivo", `Fatura #${currentFatura.numero_fatura} orig:%`)
+            .gte("created_at", minLegacyTime)
+            .limit(1);
+          if (existingMovs && existingMovs.length > 0) {
+            stockAlreadyApplied = true;
+          }
+        }
+      }
+
       const { data: existingItems } = await supabase
         .from("fatura_itens")
         .select("id, produto_id, quantidade, fator_conversao, unidade_entrada")
         .eq("fatura_id", faturaId);
 
-      const oldItemsMap = new Map((existingItems || []).map(it => [String(it.id), it]));
+      const oldItemsMap = new Map((existingItems || []).map((it: any) => [String(it.id), it]));
 
-      // 1. Update the Fatura header
+      // 1. Atualizar cabeçalho da Fatura (marca como aprovada/conferida)
       const updatePayload: any = {
-         numero_fatura,
-         data_emissao,
-         data_vencimento,
-         fornecedor_id,
-         valor_liquido,
-         valor_iva,
-         valor_total,
-         valor_pendente: valor_total,
-         observacoes: observacoes || null,
-         status_pagamento: "pendente"
+        numero_fatura,
+        data_emissao,
+        data_vencimento,
+        fornecedor_id: fornecedor_id || null,
+        valor_liquido,
+        valor_iva,
+        valor_total,
+        valor_pendente: valor_total,
+        observacoes: observacoes || null,
+        tipo: "entrada_stock",
+        status_pagamento: "pendente",
       };
-      
+
       const { error: headerError } = await supabase.from("faturas").update(updatePayload).eq("id", faturaId);
       if (headerError) throw headerError;
-      
-      // 2. Process Items (Updates and New Items)
-      const processedItemIds = new Set();
+
+      // 2. Processar Itens (Atualizar/Inserir itens e aplicar entrada de stock + margem/preço)
+      const processedItemIds = new Set<string>();
       if (itens && Array.isArray(itens)) {
-         for (const item of itens) {
-            const itemPayload: any = {
-               fatura_id: faturaId,
-               produto_id: item.produto_id || null,
-               quantidade: Number(item.quantidade) || 0,
-               iva: item.iva,
-               valor_liquido: item.valor_liquido,
-               valor_iva: item.valor_iva,
-               valor_total: item.valor_total,
-               preco_custo: item.preco_unitario,
-               fator_conversao: item.fator_conversao || 1,
-               unidade_entrada: item.unidade_entrada || "un"
-            };
+        for (const item of itens) {
+          const oldItem = item.id ? (oldItemsMap.get(String(item.id)) as any) : null;
+          const resolvedProdutoId = item.produto_id || oldItem?.produto_id || null;
+          const factor = Number(item.fator_conversao) || Number(oldItem?.fator_conversao) || 1;
+          const unitEntrada = item.unidade_entrada || oldItem?.unidade_entrada || "un";
+          const qtyNum = Number(item.quantidade) || 0;
+          const unitPriceNum = Number(item.preco_unitario) || 0;
 
-            let qtyDiffBase = 0;
-            const factor = Number(item.fator_conversao) || 1;
+          const itemPayload: any = {
+            fatura_id: faturaId,
+            produto_id: resolvedProdutoId,
+            quantidade: qtyNum,
+            iva: item.iva,
+            valor_liquido: item.valor_liquido,
+            valor_iva: item.valor_iva,
+            valor_total: item.valor_total,
+            preco_custo: unitPriceNum,
+            fator_conversao: factor,
+            unidade_entrada: unitEntrada,
+          };
 
-            if (item.id) {
-               processedItemIds.add(String(item.id));
-               const oldItem = oldItemsMap.get(String(item.id)) as any;
-               if (oldItem) {
-                  const oldQtyBase = (Number(oldItem.quantidade) || 0) * (Number(oldItem.fator_conversao) || 1);
-                  const newQtyBase = (Number(item.quantidade) || 0) * factor;
-                  qtyDiffBase = newQtyBase - oldQtyBase;
-               } else {
-                  // This shouldn't happen if item.id is provided and valid, but treat as new if it does
-                  qtyDiffBase = (Number(item.quantidade) || 0) * factor;
-               }
-               await supabase.from("fatura_itens").update(itemPayload).eq("id", item.id);
+          let qtyToApplyBase = 0;
+
+          if (item.id) {
+            processedItemIds.add(String(item.id));
+            if (stockAlreadyApplied && oldItem) {
+              const oldQtyBase = (Number(oldItem.quantidade) || 0) * (Number(oldItem.fator_conversao) || 1);
+              const newQtyBase = qtyNum * factor;
+              qtyToApplyBase = newQtyBase - oldQtyBase;
             } else {
-               const { data: insertedItem } = await supabase.from("fatura_itens").insert([itemPayload]).select("id").single();
-               qtyDiffBase = (Number(item.quantidade) || 0) * factor;
-               if (insertedItem) processedItemIds.add(String(insertedItem.id));
+              qtyToApplyBase = qtyNum * factor;
             }
 
-            // 3. Update Product Catalog Price & Stock (ONLY if it has a produto_id)
-            if (item.produto_id) {
-               const { data: prod } = await supabase.from("produtos").select("preco_custo, preco, iva, stock_armazem, unidade_base").eq("id", item.produto_id).single();
-               
-               if (prod) {
-                  const updateProdData: any = {};
-                  
-                  // IVA update
-                  if (item.iva !== null && item.iva !== undefined) {
-                     updateProdData.iva = Number(item.iva);
-                  }
-
-                  // Stock adjustment
-                  if (qtyDiffBase !== 0) {
-                     updateProdData.stock_armazem = (Number(prod.stock_armazem) || 0) + qtyDiffBase;
-                     
-                     // Register movement for adjustment
-                     await supabase.from("movimentacoes_stock").insert([{
-                        produto_id: item.produto_id,
-                        tipo: qtyDiffBase > 0 ? "entrada" : "saida",
-                        quantidade: Math.abs(qtyDiffBase),
-                        display_qty: Math.abs(Number(item.quantidade) - (Number((oldItemsMap.get(String(item.id)) as any)?.quantidade) || 0)),
-                        display_unit: item.unidade_entrada || "un",
-                        unidade: prod.unidade_base || "un",
-                        motivo: `AJUSTE CONFERÊNCIA: Fatura #${numero_fatura} corrigida`,
-                        user_id: req.user.id
-                     }]);
-                  }
-
-                  // Price & Margin preservation
-                  const newCusto = Number(item.preco_unitario) / factor;
-                  const oldCusto = Number(prod.preco_custo) || 0;
-                  
-                  if (oldCusto > 0 && newCusto > 0 && oldCusto !== newCusto) {
-                      const currentPreco = Number(prod.preco) || 0;
-                      const oldIvaRatio = 1 + (Number(prod.iva || 0) / 100);
-                      const pvpSemIva = currentPreco / oldIvaRatio;
-                      
-                      const oldMargemPct = (pvpSemIva - oldCusto) / oldCusto;
-                      const newPvpSemIva = newCusto * (1 + oldMargemPct);
-                      const newIvaRatio = 1 + (Number(updateProdData.iva ?? prod.iva) / 100);
-                      const newPvp = newPvpSemIva * newIvaRatio;
-                      updateProdData.preco = Number(newPvp.toFixed(2));
-                  }
-                  updateProdData.preco_custo = newCusto;
-
-                  await supabase.from("produtos").update(updateProdData).eq("id", item.produto_id);
-               }
+            const { error: updErr } = await supabase.from("fatura_itens").update(itemPayload).eq("id", item.id);
+            if (updErr) {
+              const fallbackPayload = {
+                quantidade: Math.round(qtyNum),
+                iva: item.iva,
+                preco_custo: unitPriceNum,
+                valor_liquido: item.valor_liquido,
+                valor_iva: item.valor_iva,
+                valor_total: item.valor_total,
+              };
+              await supabase.from("fatura_itens").update(fallbackPayload).eq("id", item.id);
             }
-         }
+          } else {
+            let insertRes = await supabase.from("fatura_itens").insert([itemPayload]).select("id").single();
+            if (insertRes.error) {
+              insertRes = await supabase
+                .from("fatura_itens")
+                .insert([
+                  {
+                    fatura_id: faturaId,
+                    produto_id: resolvedProdutoId,
+                    quantidade: Math.round(qtyNum),
+                    preco_custo: unitPriceNum,
+                    iva: item.iva,
+                    valor_liquido: item.valor_liquido,
+                    valor_iva: item.valor_iva,
+                    valor_total: item.valor_total,
+                  },
+                ])
+                .select("id")
+                .single();
+            }
+            qtyToApplyBase = qtyNum * factor;
+            if (insertRes.data) processedItemIds.add(String(insertRes.data.id));
+          }
+
+          // 3. Atualizar Stock do Armazém e Margens/Preços (APENAS na aprovação do Admin)
+          if (resolvedProdutoId) {
+            const { data: prod } = await supabase
+              .from("produtos")
+              .select("preco_custo, preco, iva, stock_armazem, unidade_base")
+              .eq("id", resolvedProdutoId)
+              .single();
+
+            if (prod) {
+              const newIva =
+                item.iva !== null && item.iva !== undefined
+                  ? Number(item.iva)
+                  : Number(prod.iva || 0);
+              const updateProdData: any = {
+                iva: newIva,
+              };
+
+              if (qtyToApplyBase !== 0) {
+                updateProdData.stock_armazem = Math.max(0, (Number(prod.stock_armazem) || 0) + qtyToApplyBase);
+
+                const displayDiff = stockAlreadyApplied && oldItem
+                  ? Math.abs(qtyNum - (Number(oldItem.quantidade) || 0))
+                  : qtyNum;
+
+                await supabase.from("movimentacoes_stock").insert([
+                  {
+                    produto_id: resolvedProdutoId,
+                    tipo: qtyToApplyBase > 0 ? "entrada" : "saida",
+                    quantidade: Math.abs(qtyToApplyBase),
+                    display_qty: displayDiff,
+                    display_unit: unitEntrada || prod.unidade_base || "un",
+                    unidade: prod.unidade_base || "un",
+                    motivo: stockAlreadyApplied
+                      ? `AJUSTE CONFERÊNCIA: Fatura #${numero_fatura} corrigida [ref:${faturaId}]`
+                      : `Fatura #${numero_fatura} aprovada no Check de Faturas [ref:${faturaId}]`,
+                    user_id: req.user.id,
+                  },
+                ]);
+              }
+
+              // Atualizar Custo Base e PVP preservando a margem em Margens / Preços
+              const newCusto = unitPriceNum / factor;
+              if (newCusto > 0) {
+                const oldCusto = Number(prod.preco_custo) || 0;
+                const currentPreco = Number(prod.preco) || 0;
+
+                if (oldCusto > 0 && currentPreco > 0) {
+                  const oldIvaRatio = 1 + Number(prod.iva || 0) / 100;
+                  const pvpSemIva = currentPreco / oldIvaRatio;
+                  const oldMargemPct = (pvpSemIva - oldCusto) / oldCusto;
+                  const newPvpSemIva = newCusto * (1 + oldMargemPct);
+                  const newIvaRatio = 1 + newIva / 100;
+                  const newPvp = newPvpSemIva * newIvaRatio;
+                  updateProdData.preco = Number(newPvp.toFixed(2));
+                }
+
+                updateProdData.preco_custo = Number(newCusto.toFixed(4));
+              }
+
+              await supabase.from("produtos").update(updateProdData).eq("id", resolvedProdutoId);
+            }
+          }
+        }
       }
 
-      // 4. Handle Removed Items (Stock Reversion)
-      for (const [id, rawOldItem] of oldItemsMap.entries()) {
-         const oldItem = rawOldItem as any;
-         if (!processedItemIds.has(id)) {
+      // 4. Tratar Itens Removidos na Conferência
+      for (const [rawId, rawOldItem] of oldItemsMap.entries()) {
+        const id = String(rawId);
+        const oldItem = rawOldItem as any;
+        if (!processedItemIds.has(id)) {
+          if (stockAlreadyApplied) {
             const qtyToRevertBase = (Number(oldItem.quantidade) || 0) * (Number(oldItem.fator_conversao) || 1);
             if (oldItem.produto_id && qtyToRevertBase > 0) {
-               const { data: prod } = await supabase.from("produtos").select("stock_armazem, unidade_base").eq("id", oldItem.produto_id).single();
-               if (prod) {
-                  await supabase.from("produtos").update({ 
-                     stock_armazem: Math.max(0, (Number(prod.stock_armazem) || 0) - qtyToRevertBase) 
-                  }).eq("id", oldItem.produto_id);
+              const { data: prod } = await supabase
+                .from("produtos")
+                .select("stock_armazem, unidade_base")
+                .eq("id", oldItem.produto_id)
+                .single();
+              if (prod) {
+                await supabase
+                  .from("produtos")
+                  .update({
+                    stock_armazem: Math.max(0, (Number(prod.stock_armazem) || 0) - qtyToRevertBase),
+                  })
+                  .eq("id", oldItem.produto_id);
 
-                  await supabase.from("movimentacoes_stock").insert([{
-                     produto_id: oldItem.produto_id,
-                     tipo: "saida",
-                     quantidade: qtyToRevertBase,
-                     display_qty: oldItem.quantidade,
-                     display_unit: oldItem.unidade_entrada || "un",
-                     unidade: prod.unidade_base || "un",
-                     motivo: `REMOÇÃO CONFERÊNCIA: Item removido da Fatura #${numero_fatura}`,
-                     user_id: req.user.id
-                  }]);
-               }
+                await supabase.from("movimentacoes_stock").insert([
+                  {
+                    produto_id: oldItem.produto_id,
+                    tipo: "saida",
+                    quantidade: qtyToRevertBase,
+                    display_qty: oldItem.quantidade,
+                    display_unit: oldItem.unidade_entrada || "un",
+                    unidade: prod.unidade_base || "un",
+                    motivo: `REMOÇÃO CONFERÊNCIA: Item removido da Fatura #${numero_fatura} [ref:${faturaId}]`,
+                    user_id: req.user.id,
+                  },
+                ]);
+              }
             }
-            await supabase.from("fatura_itens").delete().eq("id", id);
-         }
+          }
+          await supabase.from("fatura_itens").delete().eq("id", id);
+        }
       }
-      
+
       clearFinanceCache();
       res.json({ success: true });
     } catch (error: any) {
       console.error("Erro no checkout fatura:", error);
       res.status(500).json({ error: error.message || "Erro no checkout da fatura" });
+    } finally {
+      activeCheckoutIds.delete(faturaId);
     }
   });
 
@@ -550,31 +914,63 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     if (req.user.role !== "admin") return res.sendStatus(403);
     const faturaId = req.params.id;
     try {
-      // 1. Fetch invoice to check type and items
+      // 1. Fetch invoice to check type, conference status, and items
       const { data: fatura } = await supabase
         .from("faturas")
-        .select("id, tipo, numero_fatura, fatura_itens(*, produto:produtos(id, stock_armazem, unidade_base))")
+        .select("id, tipo, numero_fatura, status_pagamento, created_at, fatura_itens(*, produto:produtos(id, stock_armazem, unidade_base))")
         .eq("id", faturaId)
         .single();
-      
-      if (fatura && fatura.tipo === 'compra') {
+
+      if (fatura && (fatura.tipo === "compra" || fatura.tipo === "entrada_stock")) {
+        let shouldRevertStock = fatura.status_pagamento !== "em_conferencia";
+        if (!shouldRevertStock) {
+          const { data: refMovs } = await supabase
+            .from("movimentacoes_stock")
+            .select("id")
+            .ilike("motivo", `%[ref:${faturaId}]%`)
+            .limit(1);
+          if (refMovs && refMovs.length > 0) {
+            shouldRevertStock = true;
+          } else if (fatura.numero_fatura && fatura.created_at) {
+            const minLegacyTime = new Date(new Date(fatura.created_at).getTime() - 60000).toISOString();
+            const { data: legacyMovs } = await supabase
+              .from("movimentacoes_stock")
+              .select("id")
+              .ilike("motivo", `Fatura #${fatura.numero_fatura} orig:%`)
+              .gte("created_at", minLegacyTime)
+              .limit(1);
+            if (legacyMovs && legacyMovs.length > 0) {
+              shouldRevertStock = true;
+            }
+          }
+        }
+
+        if (shouldRevertStock) {
           const items = fatura.fatura_itens || [];
           for (const item of items) {
             const prodId = item.produto_id;
             const qtyEntrada = Number(item.quantidade);
             if (!prodId || qtyEntrada <= 0) continue;
 
-            // Factor in conversion
             const factor = Number(item.fator_conversao) || 1;
             const qtyBase = qtyEntrada * factor;
 
-            const { data: latestProd } = await supabase.from("produtos").select("stock_armazem").eq("id", prodId).single();
-            const currentStock = latestProd ? Number(latestProd.stock_armazem) : (Number(item.produto?.stock_armazem) || 0);
-            
-            // Revert: Deduct from warehouse
-            await supabase.from("produtos").update({ stock_armazem: Math.max(0, currentStock - qtyBase) }).eq("id", prodId);
+            const { data: latestProd } = await supabase
+              .from("produtos")
+              .select("stock_armazem")
+              .eq("id", prodId)
+              .single();
+            const currentStock = latestProd
+              ? Number(latestProd.stock_armazem)
+              : Number(item.produto?.stock_armazem) || 0;
 
-            await supabase.from("movimentacoes_stock").insert([{
+            await supabase
+              .from("produtos")
+              .update({ stock_armazem: Math.max(0, currentStock - qtyBase) })
+              .eq("id", prodId);
+
+            await supabase.from("movimentacoes_stock").insert([
+              {
                 produto_id: prodId,
                 tipo: "saida",
                 quantidade: qtyBase,
@@ -582,13 +978,15 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
                 display_unit: item.unidade_entrada || "un",
                 unidade: item.produto?.unidade_base || "un",
                 motivo: `ELIMINAÇÃO: Stock removido após apagar Fatura #${fatura.numero_fatura || faturaId}`,
-                user_id: req.user.id
-            }]);
+                user_id: req.user.id,
+              },
+            ]);
           }
+        }
       }
 
       await supabase.from("fatura_itens").delete().eq("fatura_id", faturaId);
-      await supabase.from("movimentacoes_stock").delete().ilike("motivo", `%Fatura #${fatura?.numero_fatura}%`); // Clean up associated movements too? Maybe not, keep for history.
+      await supabase.from("movimentacoes_stock").delete().ilike("motivo", `%[ref:${faturaId}]%`);
       await supabase.from("movimentos_financeiros").delete().eq("fatura_id", faturaId);
       const { error } = await supabase.from("faturas").delete().eq("id", faturaId);
       if (error) throw error;

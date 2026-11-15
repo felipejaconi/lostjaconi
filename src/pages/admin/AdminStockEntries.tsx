@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Trash2, Save, FileText, Calendar, X, Receipt, Image as ImageIcon } from "lucide-react";
+import { Plus, Trash2, Save, FileText, Calendar, X, Receipt, Image as ImageIcon, Loader2 } from "lucide-react";
 import Swal from "sweetalert2";
 import api from "../../lib/api";
 import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
@@ -9,7 +9,6 @@ import { motion, AnimatePresence } from "motion/react";
 import Decimal from "decimal.js";
 import { BrandTitle } from "../../components/BrandTitle";
 import { Modal } from "../../components/ui/Modal";
-import AdminExpenseEntries from "./AdminExpenseEntries";
 import { useAuth } from "../../context/AuthContext";
 import { CheckCircle2 } from "lucide-react";
 import { sortCategories } from "../../lib/categoryUtils";
@@ -34,7 +33,6 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
   const [observacoes, setObservacoes] = useState("");
   
   const [isProductModalOpen, setProductModalOpen] = useState(false);
-  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [targetItemRowId, setTargetItemRowId] = useState<number | null>(null);
   
   const { user } = useAuth();
@@ -53,24 +51,38 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
     observacoes: ""
   });
   const [checkoutFaturaItens, setCheckoutFaturaItens] = useState<any[]>([]);
+  const [openingCheckoutId, setOpeningCheckoutId] = useState<string | null>(null);
+  const [isApprovingCheckout, setIsApprovingCheckout] = useState(false);
+  const [isBulkApproving, setIsBulkApproving] = useState(false);
 
-  // We recalculate totals whenever items change
+  const submittingInvoiceRef = useRef(false);
+  const openingCheckoutRef = useRef(false);
+  const approvingCheckoutRef = useRef(false);
+  const bulkApprovingRef = useRef(false);
+
+  // Recalcular totais sempre que os itens do Check Fatura mudarem
   useEffect(() => {
-     if (isCheckoutModalOpen && checkoutFaturaItens.length > 0) {
+     if (isCheckoutModalOpen) {
         let totalLiquido = new Decimal(0);
         let totalIva = new Decimal(0);
         checkoutFaturaItens.forEach(it => {
-           const preco = new Decimal(it.preco_unitario || it.preco_custo || 0);
-           const qtd = new Decimal(it.quantidade || 0);
-           const iva = new Decimal(it.iva || 0);
-           
-           const liq = preco.mul(qtd);
+           let preco = new Decimal(0);
+           let qtd = new Decimal(0);
+           let iva = new Decimal(0);
+           try { preco = new Decimal(it.preco_unitario ?? it.preco_custo ?? 0); } catch {}
+           try { qtd = new Decimal(it.quantidade || 0); } catch {}
+           try { iva = new Decimal(it.iva || 0); } catch {}
+
+           let liq = preco.mul(qtd);
+           if (it.total_liquido !== undefined && it.total_liquido !== null && String(it.total_liquido).trim() !== "") {
+              try { liq = new Decimal(it.total_liquido); } catch {}
+           }
            const vIva = liq.mul(iva).div(100);
            totalLiquido = totalLiquido.add(liq);
            totalIva = totalIva.add(vIva);
         });
         const totalFinal = totalLiquido.add(totalIva);
-        
+
         setCheckoutFormData(prev => ({
            ...prev,
            valor_liquido: totalLiquido.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toString(),
@@ -124,7 +136,6 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
     descricao: "",
     categoria_id: "",
     barcode_ean: "",
-    pais_origem: "",
     unidade_base: "un",
     unidade_compra: "un",
     fator_conversao_compra: "1",
@@ -204,7 +215,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
       
       setProductModalOpen(false);
       setNewProductData({
-        nome: "", descricao: "", categoria_id: "", barcode_ean: "", pais_origem: "", unidade_base: "un", unidade_compra: "un", fator_conversao_compra: "1", is_peso_variavel: false, iva: 23
+        nome: "", descricao: "", categoria_id: "", barcode_ean: "", unidade_base: "un", unidade_compra: "un", fator_conversao_compra: "1", is_peso_variavel: false, iva: 23
       });
       setSelectedProductFile(null);
       Swal.fire({ title: "Sucesso", text: "Produto criado rapidamente!", icon: "success", timer: 1500, showConfirmButton: false });
@@ -320,9 +331,9 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
     };
   };
 
-  const { valorLiquido, creditoIva, valorFinal } = getCalculations();
 
   const handleConfirm = async () => {
+    if (submittingInvoiceRef.current || isProcessing) return;
     const fornecedorFinal = useNovaEntidade ? fornecedorNovo : fornecedorExistente;
 
     if (!fornecedorFinal || !numeroFatura || !dataFatura || !dataVencimento) {
@@ -336,6 +347,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
       return;
     }
 
+    submittingInvoiceRef.current = true;
     setIsProcessing(true);
     try {
        // Usar cálculos exatos da arquitetura Decimal para o envio à base de dados
@@ -375,7 +387,11 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
       };
 
       await api.post("/stock/entrada-manual", payload);
-      Swal.fire("Sucesso", "Fatura registada e stock atualizado com sucesso!", "success");
+      Swal.fire("Sucesso", "Fatura enviada para o Check de Faturas com sucesso!", "success");
+
+      if (user?.role === "admin") {
+        loadPendingFaturas();
+      }
       
       localStorage.removeItem('adminStockEntriesState');
       setFornecedorExistente("");
@@ -391,6 +407,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
     } catch (e: any) {
       Swal.fire("Erro", e.response?.data?.error || e.response?.data?.message || "Erro ao registar fatura", "error");
     } finally {
+      submittingInvoiceRef.current = false;
       setIsProcessing(false);
     }
   };
@@ -412,10 +429,12 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                </div>
                {pendingFaturas.length > 0 && (
                   <button
+                     disabled={isBulkApproving || isApprovingCheckout}
                      onClick={async () => {
+                        if (bulkApprovingRef.current || isBulkApproving) return;
                         const confirm = await Swal.fire({
                            title: "Aprovar Todas?",
-                           text: `Deseja aprovar todas as ${pendingFaturas.length} faturas para o financeiro de uma só vez?`,
+                           text: `Deseja aprovar todas as ${pendingFaturas.length} faturas de uma só vez? O stock do armazém e as margens/preços serão atualizados agora.`,
                            icon: "question",
                            showCancelButton: true,
                            confirmButtonText: "Sim, aprovar todas",
@@ -423,19 +442,26 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                            confirmButtonColor: "#4f46e5"
                         });
                         if (confirm.isConfirmed) {
+                           if (bulkApprovingRef.current) return;
+                           bulkApprovingRef.current = true;
+                           setIsBulkApproving(true);
                            try {
                               await api.put("/admin/faturas/bulk-approve-conference");
-                              Swal.fire("Sucesso", "Todas as faturas foram aprovadas!", "success");
-                              loadPendingFaturas();
+                              Swal.fire("Sucesso", "Faturas aprovadas! Stock e margens/preços atualizados com sucesso.", "success");
+                              await loadPendingFaturas();
+                              fetchData();
                            } catch (e: any) {
                               Swal.fire("Erro", e.response?.data?.error || "Erro ao aprovar faturas", "error");
+                           } finally {
+                              bulkApprovingRef.current = false;
+                              setIsBulkApproving(false);
                            }
                         }
                      }}
-                     className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 whitespace-nowrap"
+                     className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:pointer-events-none text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 whitespace-nowrap cursor-pointer"
                   >
-                     <CheckCircle2 size={16} />
-                     Aprovar Todas
+                     {isBulkApproving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                     {isBulkApproving ? "A Processar..." : "Aprovar Todas"}
                   </button>
                )}
             </div>
@@ -475,6 +501,11 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                                     {f.data_emissao && <span>• Data: {new Date(f.data_emissao).toLocaleDateString("pt-PT")}</span>}
                                     {f.fatura_itens?.length > 0 && <span>• {f.fatura_itens.length} {f.fatura_itens.length === 1 ? 'item' : 'itens'}</span>}
                                  </div>
+                                 {f.observacoes && (
+                                    <p className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 mt-1.5">
+                                       <span className="font-semibold text-amber-400">Obs. Armazém:</span> {f.observacoes}
+                                    </p>
+                                 )}
                               </div>
                               <div className="flex items-center gap-3 self-end sm:self-center">
                                  <div className="text-right">
@@ -482,40 +513,78 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                                     <p className="text-sm font-bold text-amber-500">€ {Number(f.valor_total || 0).toFixed(2)}</p>
                                  </div>
                                  <button 
+                                    disabled={openingCheckoutId !== null || isBulkApproving || isApprovingCheckout}
                                     onClick={() => {
-                                       setSelectedCheckoutFatura(f);
-                                       setCheckoutFormData({
-                                          numero_fatura: f.numero_fatura || '',
-                                          data_emissao: f.data_emissao ? f.data_emissao.split('T')[0] : '',
-                                          data_vencimento: f.data_vencimento ? f.data_vencimento.split('T')[0] : '',
-                                          fornecedor_id: f.fornecedor_id ? String(f.fornecedor_id) : '',
-                                          valor_liquido: String(f.valor_liquido || ''),
-                                          valor_iva: String(f.valor_iva || ''),
-                                          valor_total: String(f.valor_total || '')
-                                       });
-                                       if (f.fatura_itens) {
-                                          setCheckoutFaturaItens(f.fatura_itens.map((it: any) => ({
-                                             ...it,
-                                             preco_unitario: it.preco_custo !== undefined ? it.preco_custo : it.preco_unitario,
-                                             fator_conversao: it.fator_conversao || 1,
-                                             unidade_entrada: it.unidade_entrada || "un",
-                                             iva: (it.iva !== null && it.iva !== undefined) ? it.iva : (it.produto?.iva ?? 23)
-                                          })));
-                                       } else {
-                                          setCheckoutFaturaItens([]);
+                                       if (openingCheckoutRef.current || isBulkApproving || isApprovingCheckout) return;
+                                       openingCheckoutRef.current = true;
+                                       setOpeningCheckoutId(String(f.id));
+                                       try {
+                                          setSelectedCheckoutFatura(f);
+                                          setCheckoutFormData({
+                                             numero_fatura: f.numero_fatura || '',
+                                             data_emissao: f.data_emissao ? f.data_emissao.split('T')[0] : '',
+                                             data_vencimento: f.data_vencimento ? f.data_vencimento.split('T')[0] : '',
+                                             fornecedor_id: f.fornecedor_id ? String(f.fornecedor_id) : '',
+                                             valor_liquido: String(f.valor_liquido || ''),
+                                             valor_iva: String(f.valor_iva || ''),
+                                             valor_total: String(f.valor_total || ''),
+                                             observacoes: f.observacoes || ''
+                                          });
+                                          if (f.fatura_itens) {
+                                             setCheckoutFaturaItens(f.fatura_itens.map((it: any) => {
+                                                const unitP = it.preco_custo !== undefined && it.preco_custo !== null ? it.preco_custo : (it.preco_unitario ?? 0);
+                                                const qtyVal = it.quantidade ?? 0;
+                                                const storedLiq = safeDecimal(it.valor_liquido);
+                                                const computedLiq = (safeDecimal(unitP) || new Decimal(0)).mul(safeDecimal(qtyVal) || new Decimal(0));
+                                                let calcLiq = "0.00";
+                                                if (storedLiq !== null && !storedLiq.isZero()) {
+                                                   calcLiq = storedLiq.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+                                                } else if (!computedLiq.isZero()) {
+                                                   calcLiq = computedLiq.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+                                                } else if (storedLiq !== null) {
+                                                   calcLiq = storedLiq.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+                                                }
+                                                return {
+                                                   ...it,
+                                                   produto_id: it.produto_id || it.produto?.id || null,
+                                                   preco_unitario: unitP,
+                                                   total_liquido: calcLiq,
+                                                   fator_conversao: it.fator_conversao || 1,
+                                                   unidade_entrada: it.unidade_entrada || it.produto?.unidade_base || "un",
+                                                   iva: (it.iva !== null && it.iva !== undefined) ? it.iva : (it.produto?.iva ?? 23)
+                                                };
+                                             }));
+                                          } else {
+                                             setCheckoutFaturaItens([]);
+                                          }
+                                          setIsCheckoutListModalOpen(false);
+                                          setIsCheckoutModalOpen(true);
+                                       } finally {
+                                          setTimeout(() => {
+                                             openingCheckoutRef.current = false;
+                                             setOpeningCheckoutId(null);
+                                          }, 300);
                                        }
-                                       setIsCheckoutListModalOpen(false);
-                                       setIsCheckoutModalOpen(true);
                                     }}
-                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors whitespace-nowrap shadow-sm flex items-center gap-1.5"
+                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:pointer-events-none text-white text-xs font-bold rounded-lg transition-colors whitespace-nowrap shadow-sm flex items-center gap-1.5 cursor-pointer"
                                  >
-                                    <CheckCircle2 size={14} />
-                                    Conferir Valores
+                                    {openingCheckoutId === String(f.id) ? (
+                                       <>
+                                          <Loader2 size={14} className="animate-spin" />
+                                          A Processar...
+                                       </>
+                                    ) : (
+                                       <>
+                                          <CheckCircle2 size={14} />
+                                          Conferir Valores
+                                       </>
+                                    )}
                                  </button>
                                  <button
+                                    disabled={openingCheckoutId !== null || isBulkApproving || isApprovingCheckout}
                                     onClick={() => handleDeletePendingFatura(f.id, f.numero_fatura)}
                                     title="Rejeitar / Excluir Fatura"
-                                    className="p-2 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
+                                    className="p-2 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 disabled:opacity-40 disabled:pointer-events-none rounded-lg transition-colors"
                                  >
                                     <Trash2 size={16} />
                                  </button>
@@ -529,7 +598,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
          </div>
       </Modal>
 
-      <Modal isOpen={isCheckoutModalOpen} onClose={() => { setIsCheckoutModalOpen(false); setSelectedCheckoutFatura(null); setIsCheckoutListModalOpen(true); }} title={`Check Fatura: ${selectedCheckoutFatura?.numero_fatura || ""}`} maxWidth="3xl">
+      <Modal isOpen={isCheckoutModalOpen} onClose={() => { if (approvingCheckoutRef.current || isApprovingCheckout) return; setIsCheckoutModalOpen(false); setSelectedCheckoutFatura(null); setIsCheckoutListModalOpen(true); }} title={`Check Fatura: ${selectedCheckoutFatura?.numero_fatura || ""}`} maxWidth="3xl">
          <div className="pt-4 space-y-6 max-h-[80vh] overflow-y-auto no-scrollbar">
             
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 bg-zinc-900/30 p-4 rounded-xl border border-zinc-800">
@@ -600,7 +669,8 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                      <thead>
                         <tr className="border-b border-zinc-800">
                            <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase">Produto / Descrição</th>
-                           <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase text-right w-24">Qtd</th>
+                           <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase text-right w-28">Qtd</th>
+                           <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase w-32">Total Líq. (€)</th>
                            <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase w-32">V. Unitário (€)</th>
                            <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase w-24">IVA (%)</th>
                            <th className="py-2 px-3 text-[10px] font-bold text-zinc-500 uppercase w-10"></th>
@@ -611,15 +681,25 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                            <tr key={idx} className="border-b border-zinc-800/50 hover:bg-zinc-900/20">
                               <td className="py-2 px-3 text-xs text-zinc-300 font-medium">
                                  {item.produto_id ? (
-                                    item.produto?.nome || 'Produto Desconhecido'
+                                    <div>
+                                       <span>{item.produto?.nome || 'Produto Desconhecido'}</span>
+                                       {item.produto?.unidade_base && (
+                                          <span className="ml-1.5 text-[10px] text-emerald-400 uppercase font-bold">
+                                             ({item.produto.unidade_base})
+                                          </span>
+                                       )}
+                                    </div>
                                  ) : (
                                     <input 
                                        type="text"
                                        value={item.produto?.nome || ''}
                                        onChange={e => {
                                           const newItems = [...checkoutFaturaItens];
-                                          newItems[idx].produto = { ...newItems[idx].produto, nome: e.target.value };
-                                          newItems[idx].descricao = e.target.value;
+                                          newItems[idx] = {
+                                             ...newItems[idx],
+                                             produto: { ...newItems[idx].produto, nome: e.target.value },
+                                             descricao: e.target.value
+                                          };
                                           setCheckoutFaturaItens(newItems);
                                        }}
                                        placeholder="Descrição do gasto..."
@@ -628,32 +708,74 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                                  )}
                               </td>
                               <td className="py-2 px-3 text-xs text-zinc-400 text-right">
-                                 {item.produto_id ? (
-                                    item.quantidade
-                                 ) : (
-                                    <input 
-                                       type="number"
-                                       value={item.quantidade}
-                                       onChange={e => {
-                                          const newItems = [...checkoutFaturaItens];
-                                          newItems[idx].quantidade = e.target.value;
-                                          setCheckoutFaturaItens(newItems);
-                                       }}
-                                       className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-100 outline-none text-right"
-                                    />
-                                 )}
+                                 <input 
+                                    type="number"
+                                    min="0"
+                                    step="0.001"
+                                    value={item.quantidade}
+                                    onChange={e => {
+                                       const val = e.target.value;
+                                       const newItems = [...checkoutFaturaItens];
+                                       const updated = { ...newItems[idx], quantidade: val };
+                                       const qDec = safeDecimal(val);
+                                       const tlDec = safeDecimal(updated.total_liquido);
+                                       const cuDec = safeDecimal(updated.preco_unitario);
+                                       if (cuDec !== null && qDec !== null) {
+                                          updated.total_liquido = cuDec.mul(qDec).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toString();
+                                       } else if (tlDec !== null && qDec !== null && !qDec.isZero()) {
+                                          updated.preco_unitario = tlDec.div(qDec).toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toString();
+                                       }
+                                       newItems[idx] = updated;
+                                       setCheckoutFaturaItens(newItems);
+                                    }}
+                                    className="w-full bg-zinc-950 border border-zinc-800 focus:border-indigo-500/50 rounded px-2 py-1 text-xs text-zinc-100 outline-none text-right tabular-nums"
+                                 />
                               </td>
                               <td className="py-2 px-3">
                                  <input
                                     type="number"
-                                    step="0.001"
-                                    value={item.preco_unitario}
+                                    min="0"
+                                    step="0.0001"
+                                    value={item.total_liquido ?? ""}
                                     onChange={e => {
+                                       const val = e.target.value;
                                        const newItems = [...checkoutFaturaItens];
-                                       newItems[idx].preco_unitario = e.target.value;
+                                       const updated = { ...newItems[idx], total_liquido: val };
+                                       const tlDec = safeDecimal(val);
+                                       const qDec = safeDecimal(updated.quantidade);
+                                       if (tlDec !== null && qDec !== null && !qDec.isZero()) {
+                                          updated.preco_unitario = tlDec.div(qDec).toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toString();
+                                       } else if (val === "") {
+                                          updated.preco_unitario = "";
+                                       }
+                                       newItems[idx] = updated;
                                        setCheckoutFaturaItens(newItems);
                                     }}
-                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500/50"
+                                    placeholder="0.00"
+                                    className="w-full bg-emerald-500/5 border border-emerald-500/30 focus:border-emerald-500 rounded px-2 py-1 text-xs text-emerald-100 outline-none tabular-nums"
+                                 />
+                              </td>
+                              <td className="py-2 px-3">
+                                 <input
+                                    type="number"
+                                    min="0"
+                                    step="0.0001"
+                                    value={item.preco_unitario}
+                                    onChange={e => {
+                                       const val = e.target.value;
+                                       const newItems = [...checkoutFaturaItens];
+                                       const updated = { ...newItems[idx], preco_unitario: val };
+                                       const cuDec = safeDecimal(val);
+                                       const qDec = safeDecimal(updated.quantidade);
+                                       if (cuDec !== null && qDec !== null) {
+                                          updated.total_liquido = cuDec.mul(qDec).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toString();
+                                       } else if (val === "") {
+                                          updated.total_liquido = "";
+                                       }
+                                       newItems[idx] = updated;
+                                       setCheckoutFaturaItens(newItems);
+                                    }}
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500/50 tabular-nums"
                                  />
                               </td>
                               <td className="py-2 px-3">
@@ -661,7 +783,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                                     value={item.iva}
                                     onChange={e => {
                                        const newItems = [...checkoutFaturaItens];
-                                       newItems[idx].iva = e.target.value;
+                                       newItems[idx] = { ...newItems[idx], iva: e.target.value };
                                        setCheckoutFaturaItens(newItems);
                                     }}
                                     className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500/50"
@@ -669,11 +791,12 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                                     {IVA_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}%</option>)}
                                  </select>
                               </td>
-                              <td className="py-2 px-3">
-                                 {!item.produto_id && (
+                              <td className="py-2 px-3 text-right">
+                                 {(checkoutFaturaItens.length > 1 || !item.produto_id) && (
                                     <button 
                                        onClick={() => setCheckoutFaturaItens(checkoutFaturaItens.filter((_, i) => i !== idx))}
-                                       className="text-zinc-600 hover:text-rose-500 transition-colors"
+                                       title="Remover item da fatura"
+                                       className="text-zinc-600 hover:text-rose-500 transition-colors p-1"
                                     >
                                        <X size={14} />
                                     </button>
@@ -721,6 +844,12 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
 
             <div className="space-y-2">
                <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block">Observações / Notas do Admin</label>
+               {selectedCheckoutFatura?.observacoes && (
+                  <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2 text-xs text-zinc-300">
+                     <span className="font-semibold text-amber-400">Escrito pelo Armazém ({selectedCheckoutFatura.user?.name || "Armazém"}):</span>{" "}
+                     <span className="whitespace-pre-wrap">{selectedCheckoutFatura.observacoes}</span>
+                  </div>
+               )}
                <textarea 
                   value={checkoutFormData.observacoes}
                   onChange={e => setCheckoutFormData({...checkoutFormData, observacoes: e.target.value})}
@@ -730,9 +859,24 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
             </div>
             
             <div className="pt-6 flex justify-end gap-3 sticky bottom-0 bg-[#0a0a0a] pb-2">
-               <button onClick={() => { setIsCheckoutModalOpen(false); setIsCheckoutListModalOpen(true); }} className="px-5 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 rounded-lg transition-colors">Voltar</button>
                <button
+                  disabled={isApprovingCheckout}
+                  onClick={() => {
+                     if (approvingCheckoutRef.current || isApprovingCheckout) return;
+                     setIsCheckoutModalOpen(false);
+                     setSelectedCheckoutFatura(null);
+                     setIsCheckoutListModalOpen(true);
+                  }}
+                  className="px-5 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 disabled:opacity-40 disabled:pointer-events-none rounded-lg transition-colors cursor-pointer"
+               >
+                  Voltar
+               </button>
+               <button
+                  disabled={isApprovingCheckout}
                   onClick={async () => {
+                     if (approvingCheckoutRef.current || isApprovingCheckout || !selectedCheckoutFatura?.id) return;
+                     approvingCheckoutRef.current = true;
+                     setIsApprovingCheckout(true);
                      try {
                         const payload = {
                            numero_fatura: checkoutFormData.numero_fatura,
@@ -742,19 +886,28 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                            valor_liquido: Number(checkoutFormData.valor_liquido),
                            valor_iva: Number(checkoutFormData.valor_iva),
                            valor_total: Number(checkoutFormData.valor_total),
-                           itens: checkoutFaturaItens.map(it => ({
-                              id: it.id,
-                              produto_id: it.produto_id,
-                              descricao: it.descricao || it.produto?.nome || null,
-                              quantidade: Number(it.quantidade),
-                               fator_conversao: it.fator_conversao || 1,
-                              preco_unitario: Number(it.preco_unitario),
-                              iva: Number(it.iva),
-                              // Calculados para o endpoint:
-                              valor_liquido: Number(it.preco_unitario) * Number(it.quantidade),
-                              valor_iva: (Number(it.preco_unitario) * Number(it.quantidade)) * (Number(it.iva) / 100),
-                              valor_total: (Number(it.preco_unitario) * Number(it.quantidade)) * (1 + Number(it.iva) / 100)
-                           })),
+                           itens: checkoutFaturaItens.map(it => {
+                              const q = Number(it.quantidade) || 0;
+                              const pu = Number(it.preco_unitario) || 0;
+                              const liq = it.total_liquido !== undefined && it.total_liquido !== null && String(it.total_liquido).trim() !== ""
+                                 ? Number(it.total_liquido)
+                                 : pu * q;
+                              const ivaNum = Number(it.iva) || 0;
+                              const vIva = liq * (ivaNum / 100);
+                              return {
+                                 id: it.id,
+                                 produto_id: it.produto_id || it.produto?.id || null,
+                                 descricao: it.descricao || it.produto?.nome || null,
+                                 quantidade: q,
+                                 fator_conversao: it.fator_conversao || 1,
+                                 unidade_entrada: it.unidade_entrada || it.produto?.unidade_base || "un",
+                                 preco_unitario: pu,
+                                 iva: ivaNum,
+                                 valor_liquido: liq,
+                                 valor_iva: vIva,
+                                 valor_total: liq + vIva
+                              };
+                           }),
                            observacoes: checkoutFormData.observacoes
                         };
 
@@ -762,30 +915,40 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                         
                         setIsCheckoutModalOpen(false);
                         setSelectedCheckoutFatura(null);
-                        loadPendingFaturas();
+                        await loadPendingFaturas();
+                        fetchData();
                         setIsCheckoutListModalOpen(true);
-                        Swal.fire("Sucesso", "Fatura aprovada com sucesso!", "success");
+                        Swal.fire("Sucesso", "Fatura aprovada! Stock do armazém e margens/preços atualizados com sucesso.", "success");
                      } catch(e: any) {
                         Swal.fire("Erro", e.response?.data?.error || "Erro ao aprovar fatura", "error");
+                     } finally {
+                        approvingCheckoutRef.current = false;
+                        setIsApprovingCheckout(false);
                      }
                   }}
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded-lg shadow-sm transition-colors flex items-center gap-2"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:pointer-events-none text-white text-sm font-bold rounded-lg shadow-sm transition-colors flex items-center gap-2 whitespace-nowrap cursor-pointer"
                >
-                  <CheckCircle2 className="w-4 h-4" /> Aprovar e Corrigir
+                  {isApprovingCheckout ? (
+                     <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        A Processar...
+                     </>
+                  ) : (
+                     <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        Aprovar e Corrigir
+                     </>
+                  )}
                </button>
             </div>
          </div>
       </Modal>
 
-      <Modal isOpen={isExpenseModalOpen} onClose={() => setIsExpenseModalOpen(false)} maxWidth="2xl">
-        <AdminExpenseEntries compact={true} onSuccess={() => setIsExpenseModalOpen(false)} />
-      </Modal>
-
       <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-4 -mt-2 md:-mt-4 mb-10 w-full flex flex-col sm:flex-row sm:items-center justify-between gap-4 max-w-full">
         <BrandTitle title="Registro de Faturas" titleClassName="-mt-7 pl-0 pt-0 ml-0" hideUnderline />
-        <div className="flex items-center gap-3 -mt-6 sm:mt-0">
+        <div className="flex flex-wrap items-center gap-3 -mt-6 sm:mt-0">
           {user?.role === 'admin' && (
-            <button onClick={handleOpenCheckoutList} className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
+            <button onClick={handleOpenCheckoutList} className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm cursor-pointer">
                <CheckCircle2 size={16} />
                <span>Check Faturas</span>
                {pendingFaturas.length > 0 && (
@@ -795,19 +958,20 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                )}
             </button>
           )}
-          {user?.role === 'admin' && (
-            <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm">
-               <Receipt size={16} />
-               Registrar Despesa
-            </button>
-          )}
+          <button
+            onClick={() => navigate("/admin/armazem/faturas-subidas")}
+            className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm cursor-pointer"
+          >
+            <FileText size={16} />
+            <span>Faturas</span>
+          </button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 relative z-10 w-full">
         
         {/* Main Content Area */}
-        <div className="lg:col-span-8 space-y-8">
+        <div className="lg:col-span-12 space-y-8">
           
           {/* Invoice Details Section */}
           <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 lg:p-8">
@@ -877,17 +1041,15 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all [color-scheme:dark]"
                 />
                </div>
-              {user?.role === 'admin' && (
-                <div className="md:col-span-2 space-y-2">
-                  <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">Observações (Opcional)</label>
-                  <textarea 
-                    value={observacoes}
-                    onChange={e => setObservacoes(e.target.value)}
-                    placeholder="Ex: Teve taxa de urgência, desconto por volume, etc..."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all placeholder:text-zinc-600 min-h-[80px] resize-none"
-                  />
-                </div>
-              )}
+              <div className="md:col-span-2 space-y-2">
+                <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">Observações (Opcional)</label>
+                <textarea 
+                  value={observacoes}
+                  onChange={e => setObservacoes(e.target.value)}
+                  placeholder="Escreva qualquer observação sobre a entrega ou fatura (ex: faltou mercadoria, diferença de peso, taxa extra...)"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all placeholder:text-zinc-600 min-h-[80px] resize-none"
+                />
+              </div>
             </div>
           </section>
 
@@ -1056,45 +1218,23 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                   )
                 })}
              </div>
+
+             <div className="mt-8 pt-6 border-t border-zinc-800/70 flex justify-end">
+               <button
+                 onClick={handleConfirm}
+                 disabled={isProcessing}
+                 className="w-full sm:w-auto sm:min-w-[240px] bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold py-3.5 px-6 rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
+               >
+                 {isProcessing ? (
+                   <img src={`${import.meta.env.VITE_SUPABASE_URL || "https://ybaoaskddcmwoincsnwm.supabase.co"}/storage/v1/object/public/uploads/icon.png`} alt="Carregando..." className="w-5 h-5 animate-spin opacity-80" referrerPolicy="no-referrer" />
+                 ) : (
+                   <Save className="w-5 h-5" />
+                 )}
+                 {isProcessing ? 'A Processar...' : 'Registar Fatura'}
+               </button>
+             </div>
           </section>
 
-        </div>
-
-        {/* Sidebar Summary */}
-        <div className="lg:col-span-4 z-10 w-full relative">
-          <div className="sticky top-8 bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 lg:p-8 flex flex-col gap-6 w-full shadow-2xl">
-            <h3 className="text-lg font-medium text-zinc-100 flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-zinc-400" /> Resumo
-            </h3>
-            
-            <div className="space-y-4">
-              <div className="flex justify-between items-center py-2 border-b border-zinc-800/50">
-                <span className="text-zinc-400 text-sm">Valor Líquido</span>
-                <span className="text-zinc-100 font-medium">€ {getCalculations().valorLiquidoRaw.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber().toLocaleString('pt-PT', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-zinc-800/50">
-                <span className="text-zinc-400 text-sm">IVA (Crédito)</span>
-                <span className="text-emerald-400/90 font-medium">€ {getCalculations().creditoIvaRaw.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber().toLocaleString('pt-PT', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-              </div>
-              <div className="flex justify-between items-center pt-2">
-                <span className="text-zinc-100 font-semibold text-base">Total Fatura</span>
-                <span className="text-emerald-400 font-semibold text-xl tracking-tight">€ {getCalculations().valorFinalRaw.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber().toLocaleString('pt-PT', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-              </div>
-            </div>
-
-            <button
-              onClick={handleConfirm}
-              disabled={isProcessing}
-              className="mt-4 w-full bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold py-3.5 px-4 rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
-            >
-              {isProcessing ? (
-                <img src={`${import.meta.env.VITE_SUPABASE_URL || "https://ybaoaskddcmwoincsnwm.supabase.co"}/storage/v1/object/public/uploads/icon.png`} alt="Carregando..." className="w-5 h-5 animate-spin opacity-80" />
-              ) : (
-                <Save className="w-5 h-5" />
-              )}
-              {isProcessing ? 'A Processar...' : 'Registar Fatura'}
-            </button>
-          </div>
         </div>
 
       </div>
@@ -1209,13 +1349,6 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                           <span className="text-sm font-medium text-zinc-300">Peso Variável</span>
                         </label>
                       </div>
-
-                     <div className="grid grid-cols-1 gap-4">
-                        <div>
-                         <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block mb-2">País de Origem</label>
-                         <input type="text" value={newProductData.pais_origem} onChange={(e) => setNewProductData({ ...newProductData, pais_origem: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 outline-none transition-all" placeholder="Opcional" />
-                        </div>
-                     </div>
 
                      <div>
                         <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block mb-2">Imagem</label>

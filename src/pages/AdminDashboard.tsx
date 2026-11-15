@@ -402,12 +402,15 @@ export default function AdminDashboard() {
                        </div>
                      )
                   } else {
+                     const isActiveLink =
+                       location.pathname === item.to ||
+                       (item.to === "/admin/armazem/fatura" && location.pathname === "/admin/armazem/faturas-subidas");
                      return (
                        <Link
                          key={item.to}
                          to={item.to!}
                          className={`px-3 py-1.5 rounded-lg flex items-center gap-2.5 transition-all ${
-                           location.pathname === item.to
+                           isActiveLink
                              ? "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 shadow-inner"
                              : "text-slate-300 hover:bg-white/5 hover:text-white"
                          }`}
@@ -416,7 +419,7 @@ export default function AdminDashboard() {
                            setIsMobileMenuOpen(false);
                          }}
                        >
-                         <div className={`${location.pathname === item.to ? "text-yellow-500 drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]" : "text-slate-400"}`}>
+                         <div className={`${isActiveLink ? "text-yellow-500 drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]" : "text-slate-400"}`}>
                            {item.icon}
                          </div>
                          <span className="text-xs font-bold tracking-wide">{item.label}</span>

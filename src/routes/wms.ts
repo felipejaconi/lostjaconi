@@ -53,15 +53,27 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
     }
   });
 
+  const activeWmsExitOrders = new Set<string>();
+
   app.post("/api/wms/saida/agrupada", authenticateToken, async (req: any, res) => {
     if (!["admin", "armazem"].includes(req.user.role)) return res.sendStatus(403);
     const { loja_id, pedidos_ids, itens_conferidos } = req.body;
+
+    if (!Array.isArray(pedidos_ids) || pedidos_ids.length === 0) {
+      return res.status(400).json({ error: "Pedido inválido" });
+    }
+
+    const lockedIds = pedidos_ids.map((id: any) => String(id));
+    if (lockedIds.some((id: string) => activeWmsExitOrders.has(id))) {
+      return res.status(409).json({ error: "Este pedido já está a finalizar o picking. Aguarde um instante." });
+    }
+    lockedIds.forEach((id: string) => activeWmsExitOrders.add(id));
 
     try {
       // Check if any of the orders are already delivered
       const { data: currentPedidos } = await supabase
         .from("pedidos")
-        .select("status")
+        .select("id, status, user_id, user:users(name)")
         .in("id", pedidos_ids);
       
       if (currentPedidos?.some((p: any) => p.status === 'entregue' || p.status === 'concluido') && req.user.role !== 'admin') {
@@ -77,11 +89,6 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
         const qtyVenda = Number(item.quantidade);
         if (qtyVenda < 0) return; // Allow 0 to handle removals
 
-        // Fetch product to get factor for pedido_itens distribution if needed
-        const { data: prod } = await supabase.from("produtos").select("fator_conversao_venda").eq("id", prodId).single();
-        if (!prod) return;
-
-        const fatorVenda = Number(prod.fator_conversao_venda) || 1;
         const actualQtyVenda = Number(qtyVenda.toFixed(3));
 
         // 1. Update `pedido_itens` with the conference result
@@ -131,30 +138,133 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
         }
       }
 
-      // Mark orders as pronto and RECALCULATE THEIR TOTAL based on the new sent quantities
-      if (pedidos_ids && pedidos_ids.length > 0) {
-        await Promise.all(pedidos_ids.map(async (pId: any) => {
-          const { data: orderItems } = await supabase
-            .from("pedido_itens")
-            .select("quantidade, preco_unitario")
-            .eq("pedido_id", pId);
-          
-          const newTotal = (orderItems || []).reduce((acc: number, it: any) => acc + (Number(it.quantidade) * Number(it.preco_unitario)), 0);
-          
-          await supabase
-            .from("pedidos")
-            .update({ 
-              status: "pronto", 
-              total: newTotal
-            })
-            .eq("id", pId);
-        }));
+      // 3. Mark orders directly as 'entregue', recalculate total, and apply warehouse->store stock transfer
+      const nowIso = new Date().toISOString();
+      for (const pId of pedidos_ids) {
+        const currentOrder = (currentPedidos || []).find((p: any) => String(p.id) === String(pId));
+        const wasDelivered = currentOrder && ["entregue", "concluido"].includes(currentOrder.status);
+        const targetUserId = currentOrder?.user_id || loja_id;
+        const storeName = (currentOrder as any)?.user?.name || "Loja";
+
+        const { data: orderItems } = await supabase
+          .from("pedido_itens")
+          .select("id, produto_id, quantidade, preco_unitario, produto:produtos(id, stock_armazem, fator_conversao_venda, unidade_base)")
+          .eq("pedido_id", pId);
+        
+        const newTotal = (orderItems || []).reduce((acc: number, it: any) => acc + (Number(it.quantidade) * Number(it.preco_unitario)), 0);
+        
+        const updateOrderPayload: any = {
+          status: "entregue",
+          total: newTotal,
+        };
+        if (!wasDelivered) {
+          updateOrderPayload.created_at = nowIso;
+        }
+
+        await supabase
+          .from("pedidos")
+          .update(updateOrderPayload)
+          .eq("id", pId);
+
+        // Deduct warehouse stock & add to store stock if not previously delivered
+        if (!wasDelivered) {
+          const { data: existingMov } = await supabase
+            .from("movimentacoes_stock")
+            .select("id")
+            .ilike("motivo", `%#${pId}%`)
+            .limit(1);
+
+          if (!existingMov || existingMov.length === 0) {
+            const movementMotivo = `Entrega de Pedido #${pId} para ${storeName}`;
+            for (const item of orderItems || []) {
+              const prodId = item.produto_id;
+              const qtyVenda = Number(item.quantidade);
+              const prodObj = (item as any).produto;
+              if (qtyVenda <= 0 || !prodObj) continue;
+
+              const qtyBase = qtyVenda * (Number(prodObj.fator_conversao_venda) || 1);
+
+              const { data: latestProd } = await supabase
+                .from("produtos")
+                .select("stock_armazem")
+                .eq("id", prodId)
+                .single();
+              const currentStock = latestProd
+                ? Number(latestProd.stock_armazem)
+                : Number(prodObj.stock_armazem) || 0;
+
+              await supabase
+                .from("produtos")
+                .update({ stock_armazem: currentStock - qtyBase })
+                .eq("id", prodId);
+
+              await supabase.from("movimentacoes_stock").insert([
+                {
+                  produto_id: prodId,
+                  user_target_id: targetUserId,
+                  tipo: "saida",
+                  quantidade: qtyBase,
+                  display_qty: qtyVenda,
+                  display_unit: prodObj.unidade_base || "un",
+                  unidade: prodObj.unidade_base || "un",
+                  motivo: movementMotivo,
+                  user_id: req.user.id,
+                },
+              ]);
+
+              if (targetUserId) {
+                const { data: storeStockExisting } = await supabase
+                  .from("stock_loja")
+                  .select("id, quantidade")
+                  .eq("user_id", targetUserId)
+                  .eq("produto_id", prodId)
+                  .maybeSingle();
+
+                if (storeStockExisting) {
+                  await supabase
+                    .from("stock_loja")
+                    .update({
+                      quantidade: Number(storeStockExisting.quantidade) + qtyBase,
+                      ultima_picagem: nowIso,
+                    })
+                    .eq("id", storeStockExisting.id);
+                } else {
+                  await supabase.from("stock_loja").insert([
+                    {
+                      user_id: targetUserId,
+                      produto_id: prodId,
+                      quantidade: qtyBase,
+                      ultima_picagem: nowIso,
+                    },
+                  ]);
+                }
+              }
+            }
+          }
+        }
       }
 
-      res.json({ message: "Saída e conferência concluídas com sucesso" });
+      // Clear relevant caches so orders, analytics, and dashboard reflect delivery immediately
+      if (cache) {
+        const keys = cache.keys();
+        const orderKeys = keys.filter(
+          (k: string) =>
+            k.startsWith("pedidos_") ||
+            k.startsWith("admin_analytics_consumo_") ||
+            k.startsWith("admin_financial_pedidos")
+        );
+        if (orderKeys.length > 0) cache.del(orderKeys);
+        cache.del("admin_stats");
+        cache.del("admin_dashboard_extended");
+        cache.del("admin_produtos");
+      }
+
+      res.json({ message: "Picking finalizado e pedido entregue com sucesso" });
     } catch (error: any) {
       console.error("Erro na saída agrupada:", error);
       res.status(500).json({ error: error.message });
+    } finally {
+      lockedIds.forEach((id: string) => activeWmsExitOrders.delete(id));
     }
   });
 

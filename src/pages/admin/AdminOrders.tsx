@@ -52,6 +52,10 @@ export default function AdminOrders() {
   const [viewMode, setViewMode] = useState<"diario" | "semanal" | "todos">("diario");
   const [displayCount, setDisplayCount] = useState<number>(50);
   const [scaleStatus, setScaleStatus] = useState<ScaleStatus>('disconnected');
+  const [isAddingItem, setIsAddingItem] = useState(false);
+  const [isSavingOrderEdit, setIsSavingOrderEdit] = useState(false);
+  const addingItemRef = useRef(false);
+  const savingOrderEditRef = useRef(false);
 
   // When expanding an order that is in "processando", initialize conferidos
   const handleExpandOrder = (orderId: number, status: string, items: any[]) => {
@@ -185,8 +189,11 @@ export default function AdminOrders() {
       return Swal.fire("Atenção", "Nenhum item foi conferido para saída.", "warning");
     }
 
+    if (loadingExit) return;
+
     try {
       setLoadingExit(true);
+      const nowIso = new Date().toISOString();
 
       // Calculate optimistic total and new items list based on conferidos
       const newItems = order.pedido_itens.map((i: any) => {
@@ -197,11 +204,12 @@ export default function AdminOrders() {
 
       const newTotal = newItems.reduce((acc: number, item: any) => acc + (item.quantidade * Number(item.preco_unitario)), 0);
 
-      // Optimistically update status, items, and total
+      // Optimistically update status directly to 'entregue', items, and total
       setActivePreparationId(null);
       setOrders(prev => prev.map(o => o.id === order.id ? { 
          ...o, 
-         status: 'pronto', 
+         status: 'entregue', 
+         created_at: nowIso,
          pedido_itens: newItems, 
          total: newTotal 
       } : o));
@@ -212,11 +220,12 @@ export default function AdminOrders() {
         itens_conferidos: itensToSubmit
       });
 
-      Swal.fire({ title: "Sucesso", text: "Saída registada e pedido atualizado.", icon: "success", timer: 2000, showConfirmButton: false });
+      Swal.fire({ title: "Sucesso", text: "Picking finalizado e pedido marcado como entregue.", icon: "success", timer: 2000, showConfirmButton: false });
       
       const optimisticOrderToPrint = {
          ...order,
-         status: 'pronto',
+         status: 'entregue',
+         created_at: nowIso,
          pedido_itens: newItems,
          total: newTotal
       };
@@ -224,7 +233,8 @@ export default function AdminOrders() {
         generateTransportGuide(optimisticOrderToPrint);
       }, 500);
 
-      // We can skip fetchOrders here as the realtime channel will update it in background
+      // Refresh products in background to reflect updated warehouse stock
+      fetchProducts();
     } catch (err: any) {
       // Revert optimistic
       fetchOrders();
@@ -541,6 +551,7 @@ export default function AdminOrders() {
   };
 
   const deleteOrder = async (id: number) => {
+    if (user?.role !== 'admin') return;
     const confirm = await Swal.fire({
       title: 'Excluir pedido?',
       text: "Esta ação não pode ser desfeita.",
@@ -577,6 +588,16 @@ export default function AdminOrders() {
 
   const handleUpdateOrderItem = async (orderId: number, itemId: number, newQuantity: number, newPrice?: number) => {
     try {
+      const targetOrder = editingOrder?.id === orderId ? editingOrder : orders.find(o => o.id === orderId);
+      const isRestrictedForArmazem = ["pendente", "processando"].includes(targetOrder?.status?.toLowerCase() || "");
+
+      if (user?.role === "armazem" && isRestrictedForArmazem && (isNaN(newQuantity) || newQuantity <= 0)) {
+        Swal.fire("Aviso", "Não é permitido remover itens do pedido.", "warning");
+        setEditingOrder((prev: any) => (prev ? { ...prev, pedido_itens: [...(prev.pedido_itens || [])] } : null));
+        return;
+      }
+      if (isNaN(newQuantity)) return;
+
       const allowedPrice = isAdmin && newPrice !== undefined && !isNaN(newPrice) ? newPrice : undefined;
 
       // Optimistic Update
@@ -628,15 +649,25 @@ export default function AdminOrders() {
          setEditingOrder(updatedRes.data);
          setOrders(prev => prev.map(o => o.id === orderId ? updatedRes.data : o));
       }
+      if (["entregue", "concluido", "pronto"].includes(targetOrder?.status?.toLowerCase() || "")) {
+        fetchProducts();
+      }
     } catch (error) {
       fetchOrders();
       Swal.fire("Erro", "Falha ao atualizar item", "error");
     }
   };
 
-  const handleAddOrderItem = async (orderId: number) => {
-    if (!newItemProductId || newItemQuantity <= 0) return Swal.fire("Aviso", "Selecione um produto e uma quantidade válida", "warning");
+  const handleAddOrderItem = async (orderId: number, silentToast = false) => {
+    if (addingItemRef.current || isAddingItem) return false;
+    if (!newItemProductId || newItemQuantity <= 0) {
+      if (!silentToast) Swal.fire("Aviso", "Selecione um produto e uma quantidade válida", "warning");
+      return false;
+    }
+    addingItemRef.current = true;
+    setIsAddingItem(true);
     try {
+      const targetOrder = editingOrder?.id === orderId ? editingOrder : orders.find(o => o.id === orderId);
       const prod = products.find(p => String(p.id) === String(newItemProductId));
       // Ensure we get the price, preferring 'preco' which is the base price used in the system
       const unitPrice = Number(prod?.preco || prod?.preco_venda || 0);
@@ -645,12 +676,15 @@ export default function AdminOrders() {
          console.warn("Product price is 0 for warehouse user addition");
       }
 
+      const prodIdToInsert = newItemProductId;
+      const qtyToInsert = newItemQuantity;
+
       // Optimistic Update
       const fakeId = Date.now();
       const newItem = {
          id: fakeId,
-         produto_id: newItemProductId,
-         quantidade: newItemQuantity,
+         produto_id: prodIdToInsert,
+         quantidade: qtyToInsert,
          preco_unitario: unitPrice,
          produto: prod
       };
@@ -678,8 +712,8 @@ export default function AdminOrders() {
       }
 
       await api.post(`/pedidos/${orderId}/itens`, {
-        produto_id: newItemProductId,
-        quantidade: newItemQuantity,
+        produto_id: prodIdToInsert,
+        quantidade: qtyToInsert,
         preco_unitario: unitPrice
       });
       setNewItemProductId("");
@@ -687,15 +721,57 @@ export default function AdminOrders() {
       setNewItemQuantity(1);
 
       const updatedRes = await api.get(`/pedidos/${orderId}`);
-      if (editingOrder?.id === orderId) {
+      if (editingOrder?.id === orderId && !silentToast) {
         setEditingOrder(updatedRes.data);
       }
       setOrders(prev => prev.map(o => o.id === orderId ? updatedRes.data : o));
 
-      Swal.fire({ title: "Inserido!", text: "Produto adicionado com sucesso.", icon: "success", timer: 1500, showConfirmButton: false, toast: true, position: 'bottom-end' });
+      if (["entregue", "concluido", "pronto"].includes(targetOrder?.status?.toLowerCase() || "")) {
+        await fetchProducts();
+      }
+
+      if (!silentToast) {
+        Swal.fire({ title: "Inserido!", text: "Produto adicionado com sucesso.", icon: "success", timer: 1500, showConfirmButton: false, toast: true, position: 'bottom-end' });
+      }
+      return true;
     } catch (error: any) {
-        fetchOrders();
-        Swal.fire("Erro", error.response?.data?.message || "Erro ao adicionar", "error");
+      fetchOrders();
+      Swal.fire("Erro", error.response?.data?.error || error.response?.data?.message || "Erro ao adicionar", "error");
+      return false;
+    } finally {
+      addingItemRef.current = false;
+      setIsAddingItem(false);
+    }
+  };
+
+  const handleSaveEditingOrder = async () => {
+    if (!editingOrder || savingOrderEditRef.current || isSavingOrderEdit) return;
+    savingOrderEditRef.current = true;
+    setIsSavingOrderEdit(true);
+    try {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      await new Promise(resolve => setTimeout(resolve, 80));
+
+      if (newItemProductId && newItemQuantity > 0) {
+        const added = await handleAddOrderItem(editingOrder.id, true);
+        if (!added) return;
+      }
+
+      await Promise.all([fetchOrders(), fetchProducts()]);
+      setEditingOrder(null);
+      Swal.fire({
+        title: "Alterações guardadas!",
+        icon: "success",
+        timer: 1400,
+        showConfirmButton: false,
+        toast: true,
+        position: "bottom-end"
+      });
+    } finally {
+      savingOrderEditRef.current = false;
+      setIsSavingOrderEdit(false);
     }
   };
 
@@ -768,8 +844,7 @@ export default function AdminOrders() {
     switch (status) {
       case "pendente": return <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest bg-amber-500/10 text-amber-500 border border-amber-500/20"><Clock size={12} className="mr-1.5" /> Pendente</span>;
       case "processando": return <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest bg-rose-500/10 text-rose-500 border border-rose-500/20"><Package size={12} className="mr-1.5" /> Prep</span>;
-      case "pronto": return <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"><Truck size={12} className="mr-1.5" /> Pronto</span>;
-      case "concluido": case "entregue": return <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest bg-purple-500/10 text-purple-400 border border-purple-500/20"><CheckCircle2 size={12} className="mr-1.5" /> Entregue</span>;
+      case "pronto": case "concluido": case "entregue": return <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest bg-purple-500/10 text-purple-400 border border-purple-500/20"><CheckCircle2 size={12} className="mr-1.5" /> Entregue</span>;
       case "cancelado": return <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest bg-rose-500/10 text-rose-500 border border-rose-500/20"><AlertCircle size={12} className="mr-1.5" /> Cance</span>;
       default: return <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest bg-zinc-800 text-zinc-400 border border-zinc-700">{status}</span>;
     }
@@ -818,7 +893,7 @@ export default function AdminOrders() {
     
     const matchesStatus = statusFilter === "todos" 
       ? true 
-      : (statusFilter === "entregue" ? (s === "entregue" || s === "concluido") : s === statusFilter);
+      : (statusFilter === "entregue" ? (s === "entregue" || s === "concluido" || s === "pronto") : s === statusFilter);
     const matchesSearch = searchTerm === "" || (o.user?.name || o.loja_nome || "").toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStore = selectedStoreFilter === "all" || String(o.user_id) === String(selectedStoreFilter);
     
@@ -1030,7 +1105,6 @@ export default function AdminOrders() {
             {[
               { id: "pendente", label: "Pendente", activeClass: "bg-amber-500/20 text-amber-400 border-amber-500/30" },
               { id: "processando", label: "Preparação", activeClass: "bg-red-500/20 text-red-400 border-red-500/30" },
-              { id: "pronto", label: "Pronto", activeClass: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" },
               { id: "entregue", label: "Entregue", activeClass: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
               { id: "cancelado", label: "Cancelado", activeClass: "bg-red-500/20 text-red-400 border-red-500/30" }
             ].map(f => (
@@ -1130,8 +1204,8 @@ export default function AdminOrders() {
 
                              {/* Workflow Stepper */}
                              <div className="mb-6 p-4 bg-zinc-950 border border-zinc-800 rounded-xl flex items-center justify-between overflow-x-auto no-scrollbar">
-                                {['pendente', 'processando', 'pronto', 'entregue'].map((step, idx, arr) => {
-                                   const statusIndexMap: Record<string, number> = { 'pendente': 0, 'processando': 1, 'pronto': 2, 'entregue': 3, 'concluido': 3 };
+                                {['pendente', 'processando', 'entregue'].map((step, idx, arr) => {
+                                   const statusIndexMap: Record<string, number> = { 'pendente': 0, 'processando': 1, 'pronto': 2, 'entregue': 2, 'concluido': 2 };
                                    const currentIndex = statusIndexMap[order.status] ?? -1;
                                    const isActive = currentIndex === idx;
                                    const isPast = currentIndex > idx;
@@ -1363,17 +1437,12 @@ export default function AdminOrders() {
                        Reverter p/ Pendente
                    </button>
                  )}
-                 {order.status === 'pronto' && (
-                   <button onClick={() => updateStatus(order.id, 'entregue')} className="flex-1 sm:flex-none px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold rounded-xl text-sm transition-all shadow-md flex items-center justify-center gap-2">
-                       <CheckCircle2 className="w-4 h-4" /> 3. Marcar Entregue
-                   </button>
-                 )}
-                 { order.status !== 'cancelado' && !( (order.status === 'entregue' || order.status === 'concluido') && user?.role === 'armazem' ) && (
+                 { order.status !== 'cancelado' && !( (order.status === 'entregue' || order.status === 'concluido' || order.status === 'pronto') && user?.role === 'armazem' ) && (
                    <button onClick={() => setEditingOrder(order)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 font-bold rounded-xl text-sm transition-all shadow-md">
                       <Edit className="w-4 h-4" /> Editar
                    </button>
                  )}
-                 {(user?.role === 'admin' || (user?.role === 'armazem' && order.status === 'processando')) && (
+                 {user?.role === 'admin' && (
                    <button onClick={() => deleteOrder(order.id)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 font-bold rounded-xl text-sm transition-all shadow-md">
                       <Trash2 className="w-4 h-4" /> Excluir
                    </button>
@@ -1525,7 +1594,9 @@ export default function AdminOrders() {
                                 <th className="px-5 py-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Produto</th>
                                 <th className="px-5 py-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider text-center w-32">Quantidade</th>
                                 <th className="px-5 py-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider text-center w-32">Preço Unit. (€)</th>
-                                <th className="px-5 py-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider text-right w-24">Ação</th>
+                                {!(user?.role === "armazem" && ["pendente", "processando"].includes(editingOrder.status?.toLowerCase())) && (
+                                   <th className="px-5 py-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider text-right w-24">Ação</th>
+                                )}
                              </tr>
                           </thead>
                           <tbody className="divide-y divide-zinc-800/40">
@@ -1540,9 +1611,15 @@ export default function AdminOrders() {
                                    <td className="px-5 py-4 text-center">
                                       <input 
                                          key={`qty-${item.id}-${item.quantidade}`}
-                                         type="number" min="0" step="0.001"
+                                         type="number" min={user?.role === "armazem" && ["pendente", "processando"].includes(editingOrder.status?.toLowerCase()) ? "0.001" : "0"} step="0.001"
                                          defaultValue={item.quantidade}
-                                         onBlur={(e) => handleUpdateOrderItem(editingOrder.id, item.id, parseFloat(e.target.value), item.preco_unitario)}
+                                         onBlur={(e) => {
+                                           const parsed = parseFloat(e.target.value);
+                                           if (user?.role === "armazem" && ["pendente", "processando"].includes(editingOrder.status?.toLowerCase()) && (isNaN(parsed) || parsed <= 0)) {
+                                             e.target.value = String(item.quantidade);
+                                           }
+                                           handleUpdateOrderItem(editingOrder.id, item.id, parsed, item.preco_unitario);
+                                         }}
                                          className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
                                       />
                                    </td>
@@ -1564,20 +1641,22 @@ export default function AdminOrders() {
                                         </div>
                                       )}
                                    </td>
-                                   <td className="px-5 py-4 text-right">
-                                      <button 
-                                         onClick={() => handleUpdateOrderItem(editingOrder.id, item.id, 0)}
-                                         className="w-10 h-10 rounded-lg bg-rose-500/5 text-rose-500/70 hover:bg-rose-500/10 hover:text-rose-500 flex items-center justify-center transition-all ml-auto"
-                                         title="Remover Item"
-                                      >
-                                         <Trash2 className="w-4 h-4" />
-                                      </button>
-                                   </td>
+                                   {!(user?.role === "armazem" && ["pendente", "processando"].includes(editingOrder.status?.toLowerCase())) && (
+                                      <td className="px-5 py-4 text-right">
+                                         <button 
+                                            onClick={() => handleUpdateOrderItem(editingOrder.id, item.id, 0)}
+                                            className="w-10 h-10 rounded-lg bg-rose-500/5 text-rose-500/70 hover:bg-rose-500/10 hover:text-rose-500 flex items-center justify-center transition-all ml-auto"
+                                            title="Remover Item"
+                                         >
+                                            <Trash2 className="w-4 h-4" />
+                                         </button>
+                                      </td>
+                                   )}
                                 </tr>
                              ))}
                              {(!editingOrder.pedido_itens || editingOrder.pedido_itens.length === 0) && (
                                 <tr>
-                                   <td colSpan={4} className="px-6 py-12 text-center">
+                                   <td colSpan={user?.role === "armazem" && ["pendente", "processando"].includes(editingOrder.status?.toLowerCase()) ? 3 : 4} className="px-6 py-12 text-center">
                                        <Package className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
                                        <p className="text-sm font-medium text-zinc-400">Nenhum produto listado</p>
                                        <p className="text-xs text-zinc-600 mt-1">A encomenda será cancelada se permanecer vazia.</p>
@@ -1647,20 +1726,21 @@ export default function AdminOrders() {
                     </div>
                     <button 
                       onClick={() => handleAddOrderItem(editingOrder.id)}
-                      disabled={!newItemProductId || newItemQuantity <= 0}
-                      className="px-4 h-full bg-zinc-100 hover:bg-white disabled:opacity-50 disabled:hover:bg-zinc-100 text-zinc-950 font-bold tracking-tight rounded-lg text-sm transition-all shadow-sm whitespace-nowrap"
+                      disabled={!newItemProductId || newItemQuantity <= 0 || isAddingItem || isSavingOrderEdit}
+                      className="px-4 h-full bg-zinc-100 hover:bg-white disabled:opacity-50 disabled:pointer-events-none text-zinc-950 font-bold tracking-tight rounded-lg text-sm transition-all shadow-sm whitespace-nowrap"
                     >
-                      Inserir
+                      {isAddingItem ? "A Inserir..." : "Inserir"}
                     </button>
                  </div>
                  
                  <div className="w-full md:w-auto flex justify-end shrink-0">
                    <button 
                       type="button" 
-                      onClick={() => setEditingOrder(null)} 
-                      className="px-8 h-10 text-sm font-semibold text-emerald-950 bg-emerald-500 hover:bg-emerald-400 rounded-lg shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center whitespace-nowrap"
+                      disabled={isSavingOrderEdit || isAddingItem}
+                      onClick={handleSaveEditingOrder} 
+                      className="px-8 h-10 text-sm font-semibold text-emerald-950 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:pointer-events-none rounded-lg shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center whitespace-nowrap cursor-pointer"
                    >
-                     Salvar Alterações
+                     {isSavingOrderEdit ? "A Guardar..." : "Salvar Alterações"}
                    </button>
                  </div>
               </div>

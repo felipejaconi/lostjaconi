@@ -46,11 +46,12 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       let dividaFornecedores = 0;
       
       (faturasC || []).forEach(f => {
+         if (f.tipo === 'entrada_stock' || f.tipo === 'compra') return;
          dividaFornecedores += Number(f.valor_pendente || 0);
          const isThisMonth = new Date(f.data_emissao) > startOfMonth;
          if (isThisMonth) {
-            if (f.tipo === 'compra') comprasMes += Number(f.valor_total || 0);
-            if (f.tipo === 'despesa') despesasMes += Number(f.valor_total || 0);
+            if (f.tipo === 'compra_financeiro') comprasMes += Number(f.valor_total || 0);
+            if (f.tipo === 'despesa' || f.tipo?.startsWith('despesa')) despesasMes += Number(f.valor_total || 0);
          }
       });
 
@@ -128,7 +129,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const today = new Date();
       today.setHours(0,0,0,0);
 
-      let faturasQuery = supabase.from("faturas").select("valor_pendente, valor_total, data_vencimento, data_emissao, status_pagamento");
+      let faturasQuery = supabase.from("faturas").select("tipo, valor_pendente, valor_total, data_vencimento, data_emissao, status_pagamento").neq("tipo", "entrada_stock").neq("tipo", "compra");
       let pedidosQuery = supabase.from("pedidos").select("total, created_at, status");
 
       if (startDate) {
@@ -151,6 +152,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       let totalPagarGeral = 0;
       let totalPagarVencido = 0;
       (faturas || []).forEach((f: any) => {
+        if (f.tipo === "entrada_stock" || f.tipo === "compra") return;
         if (["pendente", "parcial"].includes(f.status_pagamento)) {
           const pendente = Number(f.valor_pendente ?? f.valor_total ?? 0);
           totalPagarGeral += pendente;
@@ -204,8 +206,11 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         { data: pedidos }
       ] = await Promise.all([
         supabase.from("faturas")
-          .select("tipo, valor_total, valor_pendente, data_vencimento, data_emissao, valor_iva, fornecedor:fornecedores(nome)")
-          .neq("status_pagamento", "pago"),
+          .select("tipo, status_pagamento, valor_total, valor_pendente, data_vencimento, data_emissao, valor_iva, fornecedor:fornecedores(nome)")
+          .neq("status_pagamento", "pago")
+          .neq("status_pagamento", "em_conferencia")
+          .neq("tipo", "entrada_stock")
+          .neq("tipo", "compra"),
         supabase.from("pedidos")
           .select("total, status, created_at, pedido_itens(quantidade, preco_unitario, iva, produto:produtos(iva))")
           .in("status", ["pronto", "entregue", "concluido"])
@@ -221,8 +226,9 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const currentYear = today.getFullYear();
 
       (faturas || []).forEach((f: any) => {
+        if (f.tipo === 'entrada_stock' || f.tipo === 'compra' || f.status_pagamento === 'em_conferencia') return;
         const pend = Number(f.valor_pendente ?? f.valor_total ?? 0);
-        if (f.tipo === 'compra') totalPendenteCompras += pend;
+        if (f.tipo === 'compra_financeiro') totalPendenteCompras += pend;
         else totalPendenteDespesas += pend;
 
         let isOverdue = false;
@@ -432,8 +438,8 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
           if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
             const day = d.getDate().toString();
             if (chartMap[day]) {
-               if (f.tipo === 'despesa') chartMap[day].despesas += (f.valor_total || 0);
-               if (f.tipo === 'compra') chartMap[day].compras += (f.valor_total || 0);
+               if (f.tipo === 'despesa' || f.tipo?.startsWith('despesa')) chartMap[day].despesas += (f.valor_total || 0);
+               if (f.tipo === 'compra_financeiro') chartMap[day].compras += (f.valor_total || 0);
             }
           }
         });
@@ -675,7 +681,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       ] = await Promise.all([
         supabase.from('pedidos').select('total, user_id, user:users(name)').gte('created_at', startOfMonth.toISOString()).in('status', ['pronto', 'entregue', 'concluido']),
         supabase.from('pedidos').select('pedido_itens(quantidade, produto:produtos(nome))').gte('created_at', startOfMonth.toISOString()).in('status', ['pronto', 'entregue', 'concluido']),
-        supabase.from('faturas').select('valor_total, fornecedor:fornecedores(nome)').eq('tipo', 'compra').gte('data_emissao', startOfMonth.toISOString().split('T')[0])
+        supabase.from('faturas').select('valor_total, fornecedor:fornecedores(nome)').in('tipo', ['compra', 'entrada_stock', 'compra_financeiro']).gte('data_emissao', startOfMonth.toISOString().split('T')[0])
       ]);
         
       const storeTotals: Record<string, {name: string, total: number}> = {};

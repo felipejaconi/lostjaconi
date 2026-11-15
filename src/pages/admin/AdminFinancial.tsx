@@ -11,6 +11,7 @@ import { clsx, type ClassValue } from "clsx";
 import { Modal } from "../../components/ui/Modal";
 import { BrandTitle } from "../../components/BrandTitle";
 import AdminExpenseEntries from "./AdminExpenseEntries";
+import AdminPurchaseEntries from "./AdminPurchaseEntries";
 import { useAuth } from "../../context/AuthContext";
 import { useSearchParams } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
@@ -92,6 +93,7 @@ export default function AdminFinancial() {
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
   const [checkoutFormData, setCheckoutFormData] = useState({ valor_liquido: "", valor_iva: "", valor_total: "" });
   const [isStoreModalOpen, setIsStoreModalOpen] = useState(false);
+  const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [selectedStore, setSelectedStore] = useState<any>(null);
   const [selectedFatura, setSelectedFatura] = useState<any>(null);
 
@@ -214,13 +216,13 @@ export default function AdminFinancial() {
     }
   };
 
-  const lazyLoadTab = async (tab: string, forcePeriod?: string) => {
-     if (financialCache && tab === "dashboard") return;
+  const lazyLoadTab = async (tab: string, forcePeriod?: string, forceRefresh?: boolean) => {
+     if (financialCache && tab === "dashboard" && !forceRefresh) return;
      
      setIsTabLoading(true);
      try {
         if (tab === "faturas_compras" || tab === "faturas_despesas") {
-           if (faturas.length === 0) {
+           if (faturas.length === 0 || forceRefresh) {
               const [fatRes, fornRes, usersRes] = await Promise.all([
                  api.get("/admin/faturas"),
                  api.get("/admin/fornecedores"),
@@ -244,7 +246,7 @@ export default function AdminFinancial() {
            }
         } else if (tab === "fornecedores") { // Actually "Faturas a Receber"
            const targetPeriod = forcePeriod || filterDataAReceber.periodo;
-           if (pedidos.length === 0 || forcePeriod) {
+           if (pedidos.length === 0 || forcePeriod || forceRefresh) {
               const [pedRes, usersRes] = await Promise.all([
                  api.get(`/admin/financial/pedidos?period=${targetPeriod}`),
                  api.get("/admin/users")
@@ -271,14 +273,14 @@ export default function AdminFinancial() {
      }
   };
 
-  const fetchDados = async () => {
+  const fetchDados = async (targetTab?: "dashboard" | "faturas_compras" | "faturas_despesas" | "fornecedores") => {
     // Redefine fetchDados to refresh everything if needed (called on mutations)
     summaryCache = null;
     financialCache = null;
     setPedidos([]);
     setFaturas([]);
     await fetchSummary();
-    await lazyLoadTab(activeTab);
+    await lazyLoadTab(targetTab || activeTab, undefined, true);
   };
 
   const refreshSummaryOnly = async () => {
@@ -572,10 +574,11 @@ export default function AdminFinancial() {
      const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
 
      faturas.forEach(f => {
+        if (f.tipo === 'entrada_stock' || f.tipo === 'compra' || f.status_pagamento === 'em_conferencia') return;
         const val = new Decimal(f.valor_total || 0);
         const pend = new Decimal(f.valor_pendente || 0);
         
-        const isCompra = f.tipo === 'compra';
+        const isCompra = f.tipo === 'compra_financeiro';
         if (isCompra) {
            totalCompras = totalCompras.add(val);
            totalPendenteCompras = totalPendenteCompras.add(pend);
@@ -721,17 +724,18 @@ export default function AdminFinancial() {
   };
 
   const filteredFaturas = faturas.filter(f => {
+    if (f.tipo === 'entrada_stock' || f.tipo === 'compra' || f.status_pagamento === 'em_conferencia') return false;
     const textMatch = (f.numero_fatura || "").toLowerCase().includes(search.toLowerCase()) || 
                       (f.fornecedor?.nome || "").toLowerCase().includes(search.toLowerCase());
     
     let tipoMatch = true;
     if (activeTab === 'faturas_compras') {
-       tipoMatch = f.tipo === 'compra';
+       tipoMatch = f.tipo === 'compra_financeiro';
     } else if (activeTab === 'faturas_despesas') {
-       tipoMatch = f.tipo !== 'compra';
+       tipoMatch = f.tipo !== 'compra_financeiro';
     } else {
-       if (filterTipo === 'compra') tipoMatch = f.tipo === 'compra';
-       else if (filterTipo === 'despesa') tipoMatch = f.tipo !== 'compra';
+       if (filterTipo === 'compra') tipoMatch = f.tipo === 'compra_financeiro';
+       else if (filterTipo === 'despesa') tipoMatch = f.tipo !== 'compra_financeiro';
     }
 
     const periodMatch = filterByPeriod(f.data_emissao, filterDataAPagar.periodo);
@@ -752,7 +756,7 @@ export default function AdminFinancial() {
     if (filterDataAPagar.loja !== "todos") {
        if (filterDataAPagar.loja === "armazem") {
           let isArmazemDespesa = false;
-          if (f.tipo?.startsWith('despesa') || f.tipo !== 'compra') {
+          if (f.tipo?.startsWith('despesa') || f.tipo !== 'compra_financeiro') {
              if (!f.descrição || f.descrição === "null") {
                 isArmazemDespesa = true;
              } else {
@@ -763,7 +767,14 @@ export default function AdminFinancial() {
                 }
              }
           }
-          lojaMatch = f.tipo === 'compra' || isArmazemDespesa;
+          let hasSpecificStore = false;
+          try {
+             if (f.descrição && f.descrição !== "null") {
+                const desc = JSON.parse(f.descrição);
+                if (desc.loja_id) hasSpecificStore = true;
+             }
+          } catch(e) {}
+          lojaMatch = (f.tipo === 'compra_financeiro' && !hasSpecificStore) || isArmazemDespesa;
        } else {
           try {
              if (f.descrição && f.descrição !== "null") {
@@ -791,7 +802,18 @@ export default function AdminFinancial() {
         const baseNum = match[1];
         const currentP = match[2];
         const totalP = match[3];
-        const groupKey = `${f.fornecedor_id}-${baseNum}-${totalP}`;
+        const baseGroupKey = `${f.fornecedor_id}-${baseNum}-${totalP}`;
+        let groupKey = baseGroupKey;
+        let dupIdx = 1;
+        while (
+          groups.has(groupKey) &&
+          groups.get(groupKey).installments.some((inst: any) =>
+            inst.numero_fatura?.endsWith(`-P${currentP}/${totalP}`)
+          )
+        ) {
+          dupIdx += 1;
+          groupKey = `${baseGroupKey}#${dupIdx}`;
+        }
         
         if (!groups.has(groupKey)) {
           const groupObj = {
@@ -865,11 +887,11 @@ export default function AdminFinancial() {
       <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-2 -mt-2 md:-mt-4 mb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
         <BrandTitle title="Financeiro" titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0" hideUnderline />
            
-        <div className="flex flex-wrap items-center gap-1.5 min-w-max mt-2">
+        <div className="flex flex-wrap items-center gap-1.5 mt-2">
           <button
             onClick={() => setActiveTab("dashboard")}
             className={cn(
-              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
+              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all whitespace-nowrap shrink-0",
               activeTab === "dashboard"
                 ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
                 : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
@@ -880,7 +902,7 @@ export default function AdminFinancial() {
           <button
             onClick={() => setActiveTab("faturas_compras")}
             className={cn(
-              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
+              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all whitespace-nowrap shrink-0",
               activeTab === "faturas_compras"
                 ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
                 : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
@@ -891,7 +913,7 @@ export default function AdminFinancial() {
           <button
             onClick={() => setActiveTab("faturas_despesas")}
             className={cn(
-              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
+              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all whitespace-nowrap shrink-0",
               activeTab === "faturas_despesas"
                 ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
                 : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
@@ -902,7 +924,7 @@ export default function AdminFinancial() {
           <button
             onClick={() => setActiveTab("fornecedores")}
             className={cn(
-              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
+              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all whitespace-nowrap shrink-0",
               activeTab === "fornecedores"
                 ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
                 : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
@@ -911,6 +933,15 @@ export default function AdminFinancial() {
             FATURAS A RECEBER
           </button>
 
+          {user?.role === "admin" && (
+            <button
+              onClick={() => setIsPurchaseModalOpen(true)}
+              className="ml-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 shadow-sm whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Receipt size={15} />
+              Registrar Compra
+            </button>
+          )}
         </div>
       </div>
 
@@ -1162,6 +1193,15 @@ export default function AdminFinancial() {
                                  <p className="text-zinc-400 font-medium text-sm">
                                     {isCompras ? "Nenhuma fatura de compra encontrada." : "Nenhuma fatura de despesa encontrada."}
                                  </p>
+                                 {isCompras && user?.role === "admin" && (
+                                    <button
+                                       onClick={() => setIsPurchaseModalOpen(true)}
+                                       className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm cursor-pointer"
+                                    >
+                                       <Receipt size={14} />
+                                       Registrar Compra
+                                    </button>
+                                 )}
                               </td>
                            </tr>
                         ) : (
@@ -1180,8 +1220,8 @@ export default function AdminFinancial() {
                                           )}
                                           <div>
                                              <p className="text-sm font-bold text-zinc-100">{f.numero_fatura}</p>
-                                             <p className={cn("text-[10px] font-bold uppercase tracking-wider mt-0.5", f.tipo === 'compra' ? "text-blue-500" : "text-rose-500")}>
-                                                {f.tipo?.replace('despesa_', 'Despesa: ')} {f.isGroup && <span className="text-zinc-500 ml-1">({f.totalInstallments} parcelas)</span>}
+                                             <p className={cn("text-[10px] font-bold uppercase tracking-wider mt-0.5", f.tipo === 'compra_financeiro' ? "text-blue-500" : "text-rose-500")}>
+                                                {f.tipo === 'compra_financeiro' ? 'Compra' : f.tipo?.replace('despesa_', 'Despesa: ')} {f.isGroup && <span className="text-zinc-500 ml-1">({f.totalInstallments} parcelas)</span>}
                                              </p>
                                           </div>
                                        </div>
@@ -1190,9 +1230,28 @@ export default function AdminFinancial() {
                                        <p className="text-sm font-semibold text-zinc-300">{f.fornecedor?.nome}</p>
                                        <p className="text-[11px] text-zinc-500 uppercase mt-0.5">NIF: {f.fornecedor?.nif || "-"}</p>
                                        {(() => {
+                                          const metodoLabels: Record<string, string> = {
+                                             transferencia: "Transferência",
+                                             dinheiro: "Dinheiro",
+                                             debito_direto: "Débito Direto",
+                                             pago: "Pago"
+                                          };
                                           try {
                                              if (f.descrição) {
                                                 const desc = JSON.parse(f.descrição);
+                                                if (desc.classificacao_nome || desc.forma_pagamento) {
+                                                   const label = desc.classificacao_tipo === "conta_analise" ? "Conta Análise" : "Centro de Custo";
+                                                   return (
+                                                      <div className="mt-1 space-y-0.5">
+                                                         {desc.classificacao_nome && (
+                                                            <p className="text-[10px] font-bold text-blue-400 uppercase tracking-wider">{label}: {desc.classificacao_nome}</p>
+                                                         )}
+                                                         {desc.forma_pagamento && (
+                                                            <p className="text-[10px] text-zinc-400">Pagamento: {metodoLabels[desc.forma_pagamento] || desc.forma_pagamento}</p>
+                                                         )}
+                                                      </div>
+                                                   );
+                                                }
                                                 if (desc.loja_id) {
                                                    const s = stores.find((s: any) => String(s.id) === String(desc.loja_id));
                                                    if (s) {
@@ -1582,9 +1641,28 @@ export default function AdminFinancial() {
                  </h2>
                  <p className="text-sm font-medium text-zinc-400 mt-1">{selectedFatura.fornecedor?.nome}</p>
                  {(() => {
+                    const metodoLabels: Record<string, string> = {
+                       transferencia: "Transferência",
+                       dinheiro: "Dinheiro",
+                       debito_direto: "Débito Direto",
+                       pago: "Pago"
+                    };
                     try {
                        if (selectedFatura.descrição) {
                           const desc = JSON.parse(selectedFatura.descrição);
+                          if (desc.classificacao_nome || desc.forma_pagamento) {
+                             const label = desc.classificacao_tipo === "conta_analise" ? "Conta Análise" : "Centro de Custo";
+                             return (
+                                <div className="mt-1 space-y-0.5">
+                                   {desc.classificacao_nome && (
+                                      <p className="text-[11px] font-bold text-blue-400 uppercase tracking-wider">{label}: {desc.classificacao_nome}</p>
+                                   )}
+                                   {desc.forma_pagamento && (
+                                      <p className="text-[11px] text-zinc-400">Forma de Pagamento: {metodoLabels[desc.forma_pagamento] || desc.forma_pagamento}</p>
+                                   )}
+                                </div>
+                             );
+                          }
                           if (desc.loja_id) {
                              const s = stores.find((s: any) => String(s.id) === String(desc.loja_id));
                              if (s) {
@@ -1729,7 +1807,16 @@ export default function AdminFinancial() {
                {Number(selectedFatura.valor_pendente) > 0 && (
                   <button 
                      onClick={() => {
-                        setPayFormData({ valor: selectedFatura.valor_pendente, data_pagamento: new Date().toISOString().split("T")[0], metodo: "transferencia" });
+                        let initialMetodo = "transferencia";
+                        try {
+                           if (selectedFatura.descrição) {
+                              const desc = JSON.parse(selectedFatura.descrição);
+                              if (["transferencia", "dinheiro", "debito_direto", "mbway"].includes(desc.forma_pagamento)) {
+                                 initialMetodo = desc.forma_pagamento;
+                              }
+                           }
+                        } catch {}
+                        setPayFormData({ valor: selectedFatura.valor_pendente, data_pagamento: new Date().toISOString().split("T")[0], metodo: initialMetodo });
                         setIsDetailsModalOpen(false);
                         setIsPayModalOpen(true);
                      }}
@@ -1749,12 +1836,26 @@ export default function AdminFinancial() {
       <Modal isOpen={isStoreModalOpen} onClose={() => { setIsStoreModalOpen(false); setSelectedStore(null); }} title={`Nova Despesa: ${selectedStore?.name || ""}`} maxWidth="2xl">
           <div className="pt-2 sm:pt-4">
              {selectedStore && <AdminExpenseEntries compact={true} lojaId={selectedStore.id} onSuccess={() => {
-                 fetchDados();
+                 fetchDados("faturas_despesas");
                  setIsStoreModalOpen(false);
                  setActiveTab("faturas_despesas");
                  setFilterDataAPagar({...filterDataAPagar, loja: String(selectedStore.id)});
                  setSelectedStore(null);
              }} />}
+          </div>
+      </Modal>
+
+      {/* Modal Nova Fatura de Compra */}
+      <Modal isOpen={isPurchaseModalOpen} onClose={() => setIsPurchaseModalOpen(false)} title="Registrar Fatura de Compra" maxWidth="2xl">
+          <div className="pt-2 sm:pt-4">
+             <AdminPurchaseEntries
+                compact={true}
+                onSuccess={() => {
+                   setIsPurchaseModalOpen(false);
+                   setActiveTab("faturas_compras");
+                   fetchDados("faturas_compras");
+                }}
+             />
           </div>
       </Modal>
 

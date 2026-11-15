@@ -335,6 +335,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
     if (rType === "pagar" || rType === "faturas_pagas") {
       const filtered = faturasInput.filter((f) => {
+        if (f.tipo === "entrada_stock" || f.tipo === "compra" || f.status_pagamento === "em_conferencia") return false;
         const periodMatch = filterByDateRange(f.data_emissao, sDate, eDate);
         const statusMatch = rType === "pagar" ? f.status_pagamento !== "pago" : f.status_pagamento === "pago";
 
@@ -634,7 +635,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       faturas.forEach((f) => {
         const lojaId = getFaturaLojaId(f);
         if (lojaId && lojaStats[lojaId]) {
-          if (f.tipo === "compra") lojaStats[lojaId].compras_diretas += Number(f.valor_total || 0);
+          if (f.tipo === "compra_financeiro") lojaStats[lojaId].compras_diretas += Number(f.valor_total || 0);
           if (f.tipo === "despesa" || f.tipo?.startsWith("despesa")) lojaStats[lojaId].despesas += Number(f.valor_total || 0);
         }
       });
