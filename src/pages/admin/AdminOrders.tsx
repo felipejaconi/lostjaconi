@@ -172,7 +172,22 @@ export default function AdminOrders() {
     }
   };
 
+  const getZeroPriceItems = (order: any) =>
+    (order?.pedido_itens || []).filter((item: any) => Number(item?.preco_unitario || 0) <= 0);
+
   const handleWmsExit = async (order: any) => {
+    const zeroPriceItems = getZeroPriceItems(order);
+    if (zeroPriceItems.length > 0) {
+      const productNames = zeroPriceItems
+        .map((item: any) => item.produto?.nome || "Produto sem nome")
+        .join(", ");
+      return Swal.fire(
+        "Picking Bloqueado",
+        `Não é possível finalizar o picking porque existem itens com valor unitário € 0,00: ${productNames}.`,
+        "warning"
+      );
+    }
+
     const itensToSubmit = order.pedido_itens
       .map((item: any) => {
         const conf = conferidos[item.produto_id];
@@ -1244,9 +1259,10 @@ export default function AdminOrders() {
          const objProd = products.find(p => p.id === item.produto_id);
          const maxStock = objProd ? Number(objProd.stock_armazem) || 0 : 0;
          const maxFill = Number(item.quantidade);
+         const isZeroPrice = Number(item.preco_unitario || 0) <= 0;
          
          return (
-           <tr key={item.id} className="hover:bg-zinc-800/30 transition-colors">
+           <tr key={item.id} className={`transition-colors ${isZeroPrice ? "bg-rose-500/[0.05] hover:bg-rose-500/[0.09]" : "hover:bg-zinc-800/30"}`}>
               <td className="px-3 py-3 text-center pl-4 bg-zinc-900/10">
                  <div className="inline-flex flex-col items-center justify-center">
                     <span className="text-base font-black text-zinc-100 tabular-nums">{item.quantidade}</span>
@@ -1262,6 +1278,9 @@ export default function AdminOrders() {
                     )}
                     {item.produto?.is_peso_variavel && (
                        <span className="text-[9px] font-bold uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 px-1.5 py-0.5 rounded shadow-sm">Balança</span>
+                    )}
+                    {isZeroPrice && (
+                       <span className="text-[9px] font-bold uppercase tracking-wider bg-rose-500/15 text-rose-400 border border-rose-500/30 px-1.5 py-0.5 rounded shadow-sm">Valor Unit. € 0,00</span>
                     )}
                  </div>
               </td>
@@ -1322,8 +1341,8 @@ export default function AdminOrders() {
               </td>
               <td className="px-3 py-3 text-right border-l border-zinc-800/50 bg-zinc-900/10 pr-4">
                 <div className="flex flex-col items-end">
-                   <span className="text-[13px] font-semibold text-emerald-400 tabular-nums">€ {((Number(conf.quantidade) || 0) * Number(item.preco_unitario || 0)).toFixed(2)}</span>
-                   <span className="text-[9px] text-zinc-500 mt-0.5 tabular-nums">€ {Number(item.preco_unitario || 0).toFixed(2)} / {objProd?.unidade_base || 'un'}</span>
+                   <span className={`text-[13px] font-semibold tabular-nums ${isZeroPrice ? "text-rose-400" : "text-emerald-400"}`}>€ {((Number(conf.quantidade) || 0) * Number(item.preco_unitario || 0)).toFixed(2)}</span>
+                   <span className={`text-[9px] mt-0.5 tabular-nums ${isZeroPrice ? "text-rose-400 font-bold" : "text-zinc-500"}`}>€ {Number(item.preco_unitario || 0).toFixed(2)} / {objProd?.unidade_base || 'un'}</span>
                 </div>
               </td>
            </tr>
@@ -1376,7 +1395,7 @@ export default function AdminOrders() {
                                                   </td>
                                                )}
                                                <td className="px-4 py-2 text-right border-l border-zinc-800/50">
-                                                  <span className="text-xs font-medium text-zinc-400 tabular-nums">€ {Number(item.preco_unitario).toFixed(2)}</span>
+                                                  <span className={`text-xs tabular-nums ${Number(item.preco_unitario || 0) <= 0 ? "font-bold text-rose-400" : "font-medium text-zinc-400"}`}>€ {Number(item.preco_unitario || 0).toFixed(2)}</span>
                                                </td>
                                                <td className="px-4 py-2 text-right pr-4 border-l border-zinc-800/50">
                                                   <span className="text-sm font-semibold text-emerald-400 tabular-nums">€ {(displayQty * item.preco_unitario).toFixed(2)}</span>
@@ -1424,6 +1443,20 @@ export default function AdminOrders() {
                                 </div>
                              )}
 
+                             {activePreparationId === order.id && getZeroPriceItems(order).length > 0 && (
+                                <div className="mb-4 p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-start gap-3">
+                                   <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                                   <div className="text-xs text-rose-200 leading-relaxed">
+                                      <span className="font-bold text-rose-400">Não é possível finalizar o picking:</span>{" "}
+                                      existem itens neste pedido com valor unitário <span className="font-bold text-rose-300">€ 0,00</span> (
+                                      <span className="font-semibold text-white">
+                                         {getZeroPriceItems(order).map((it: any) => it.produto?.nome || "Produto").join(", ")}
+                                      </span>
+                                      ). Corrija o valor unitário em <span className="font-bold">Editar</span> antes de finalizar.
+                                   </div>
+                                </div>
+                             )}
+
                              {/* Action Footer */}
                              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 border border-zinc-800 rounded-xl bg-zinc-900/50">
                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
@@ -1455,8 +1488,9 @@ export default function AdminOrders() {
                       </button>
                       <button 
                         onClick={() => handleWmsExit(order)} 
-                        disabled={loadingExit}
-                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-black rounded-xl text-sm transition-all shadow-md disabled:opacity-50"
+                        disabled={loadingExit || getZeroPriceItems(order).length > 0}
+                        title={getZeroPriceItems(order).length > 0 ? "Existem itens com valor unitário € 0,00 neste pedido" : undefined}
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-black rounded-xl text-sm transition-all shadow-md disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-emerald-500"
                       >
                           <Send className="w-4 h-4" /> 2. Finalizar Picking
                       </button>
@@ -1623,18 +1657,18 @@ export default function AdminOrders() {
                                    <td className="px-5 py-4 text-center">
                                       {isAdmin ? (
                                         <input 
-                                           key={`price-${item.id}-${item.preco_unitario || item.produto?.preco || 0}`}
+                                           key={`price-${item.id}-${item.preco_unitario ?? 0}`}
                                            type="number" min="0" step="0.01"
-                                           defaultValue={Number(item.preco_unitario || item.produto?.preco || 0)}
+                                           defaultValue={Number(item.preco_unitario ?? 0)}
                                            onBlur={(e) => handleUpdateOrderItem(editingOrder.id, item.id, item.quantidade, parseFloat(e.target.value))}
-                                           className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded-lg px-3 text-sm font-semibold text-center text-zinc-100 focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all"
+                                           className={`w-full h-10 bg-zinc-900 rounded-lg px-3 text-sm font-semibold text-center focus:border-emerald-500/50 focus:bg-zinc-950 outline-none transition-all border ${Number(item.preco_unitario || 0) <= 0 ? "border-rose-500/60 text-rose-400" : "border-zinc-800 text-zinc-100"}`}
                                         />
                                       ) : (
                                         <div 
-                                          className="w-full h-10 bg-zinc-900/60 border border-zinc-800/80 rounded-lg px-3 flex items-center justify-center text-sm font-semibold text-zinc-400 select-none cursor-not-allowed"
+                                          className={`w-full h-10 bg-zinc-900/60 border rounded-lg px-3 flex items-center justify-center text-sm font-semibold select-none cursor-not-allowed ${Number(item.preco_unitario || 0) <= 0 ? "border-rose-500/50 text-rose-400" : "border-zinc-800/80 text-zinc-400"}`}
                                           title="Apenas administradores podem alterar valores"
                                         >
-                                          € {Number(item.preco_unitario || item.produto?.preco || 0).toFixed(2)}
+                                          € {Number(item.preco_unitario ?? 0).toFixed(2)}
                                         </div>
                                       )}
                                    </td>

@@ -84,6 +84,25 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
         return res.status(400).json({ error: "Nenhum item conferido" });
       }
 
+      const { data: existingOrderItems, error: checkItemsErr } = await supabase
+        .from("pedido_itens")
+        .select("id, preco_unitario, produto:produtos(nome)")
+        .in("pedido_id", pedidos_ids);
+
+      if (checkItemsErr) throw checkItemsErr;
+
+      const zeroPriceItems = (existingOrderItems || []).filter(
+        (it: any) => Number(it.preco_unitario || 0) <= 0
+      );
+      if (zeroPriceItems.length > 0) {
+        const names = zeroPriceItems
+          .map((it: any) => it.produto?.nome || "Produto sem nome")
+          .join(", ");
+        return res.status(400).json({
+          error: `Não é possível finalizar o picking porque existem itens com valor unitário € 0,00: ${names}`
+        });
+      }
+
       await Promise.all(itens_conferidos.map(async (item: any) => {
         const prodId = item.produto_id;
         const qtyVenda = Number(item.quantidade);
