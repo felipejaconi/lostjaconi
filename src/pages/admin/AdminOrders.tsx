@@ -1432,11 +1432,6 @@ export default function AdminOrders() {
                        1. Iniciar Preparação
                    </button>
                  )}
-                 {order.status === 'processando' && (
-                   <button onClick={() => updateStatus(order.id, 'pendente')} className="flex-1 sm:flex-none px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 font-bold rounded-xl text-sm transition-all shadow-md">
-                       Reverter p/ Pendente
-                   </button>
-                 )}
                  { order.status !== 'cancelado' && !( (order.status === 'entregue' || order.status === 'concluido' || order.status === 'pronto') && user?.role === 'armazem' ) && (
                    <button onClick={() => setEditingOrder(order)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 font-bold rounded-xl text-sm transition-all shadow-md">
                       <Edit className="w-4 h-4" /> Editar
@@ -1448,42 +1443,44 @@ export default function AdminOrders() {
                    </button>
                  )}
               </div>
-              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                 {activePreparationId === order.id ? (
-                    <>
-                    <button 
-                      onClick={() => handleSaveDraft(order)} 
-                      className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 bg-blue-500/20 text-blue-400 font-bold rounded-xl border border-blue-500/30 hover:bg-blue-500/30 text-sm transition-all shadow-md"
-                    >
-                        <Clock className="w-4 h-4" /> Guardar Progresso
-                    </button>
-                    <button 
-                      onClick={() => handleWmsExit(order)} 
-                      disabled={loadingExit}
-                      className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-black rounded-xl text-sm transition-all shadow-md disabled:opacity-50"
-                    >
-                        <Send className="w-4 h-4" /> 2. Finalizar Picking
-                    </button>
-                    <button onClick={() => handlePrintOrder(order)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl border border-zinc-700/50 text-sm transition-all">
-                        <Printer className="w-4 h-4" /> PDF
-                    </button>
-                    </>
-                 ) : (
-                    <>
-                       {['pronto', 'entregue', 'concluido'].includes(order.status?.toLowerCase()) && (
-                           <button onClick={() => generateTransportGuide(order.id)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl border border-zinc-700/50 text-sm transition-all">
-                               <Truck className="w-4 h-4" /> Guia
-                           </button>
-                       )}
-                       <button onClick={() => handlePrintOrder(order)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl border border-zinc-700/50 text-sm transition-all">
-                           <Printer className="w-4 h-4" /> PDF
-                       </button>
-                       <button onClick={() => handleExportExcel(order)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl border border-zinc-700/50 text-sm transition-all">
-                           <FileText className="w-4 h-4" /> CSV
-                       </button>
-                    </>
-                 )}
-              </div>
+              {order.status?.toLowerCase() !== 'pendente' && (
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                   {activePreparationId === order.id ? (
+                      <>
+                      <button 
+                        onClick={() => handleSaveDraft(order)} 
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 bg-blue-500/20 text-blue-400 font-bold rounded-xl border border-blue-500/30 hover:bg-blue-500/30 text-sm transition-all shadow-md"
+                      >
+                          <Clock className="w-4 h-4" /> Guardar Progresso
+                      </button>
+                      <button 
+                        onClick={() => handleWmsExit(order)} 
+                        disabled={loadingExit}
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-black rounded-xl text-sm transition-all shadow-md disabled:opacity-50"
+                      >
+                          <Send className="w-4 h-4" /> 2. Finalizar Picking
+                      </button>
+                      <button onClick={() => handlePrintOrder(order)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl border border-zinc-700/50 text-sm transition-all">
+                          <Printer className="w-4 h-4" /> PDF
+                      </button>
+                      </>
+                   ) : (
+                      <>
+                         {['pronto', 'entregue', 'concluido'].includes(order.status?.toLowerCase()) && (
+                             <button onClick={() => generateTransportGuide(order.id)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl border border-zinc-700/50 text-sm transition-all">
+                                 <Truck className="w-4 h-4" /> Guia
+                             </button>
+                         )}
+                         <button onClick={() => handlePrintOrder(order)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl border border-zinc-700/50 text-sm transition-all">
+                             <Printer className="w-4 h-4" /> PDF
+                         </button>
+                         <button onClick={() => handleExportExcel(order)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl border border-zinc-700/50 text-sm transition-all">
+                             <FileText className="w-4 h-4" /> CSV
+                         </button>
+                      </>
+                   )}
+                </div>
+              )}
                              </div>
                          </div>
                       </motion.div>

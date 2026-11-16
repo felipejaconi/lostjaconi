@@ -12,17 +12,6 @@ import "dotenv/config";
 import NodeCache from "node-cache";
 import compression from "compression";
 
-import { setupAuthRoutes } from "./src/routes/auth";
-import { setupStatsRoutes } from "./src/routes/stats";
-import { setupUsersRoutes } from "./src/routes/users";
-import { setupStockRoutes } from "./src/routes/stock";
-import { setupFinanceRoutes } from "./src/routes/finance";
-import { setupProductsRoutes } from "./src/routes/products";
-import { setupOrdersRoutes } from "./src/routes/orders";
-import { setupWmsRoutes } from "./src/routes/wms";
-import { setupConfigRoutes } from "./src/routes/config";
-import { setupFleetRoutes } from "./src/routes/fleet";
-
 const cache = new NodeCache({ stdTTL: 60 }); // 60 seconds default cache
 
 // Ensure uploads directory exists
@@ -175,31 +164,75 @@ app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
 
   // --- API ROUTES ---
 
-  // Invalidate cache on mutations and prevent browser API caching
-  app.use('/api', (req: any, res: any, next: any) => {
+  const routesRouter = express.Router();
+
+  const routesReadyPromise = (async () => {
+    const [
+      { setupAuthRoutes },
+      { setupStatsRoutes },
+      { setupUsersRoutes },
+      { setupStockRoutes },
+      { setupFinanceRoutes },
+      { setupProductsRoutes },
+      { setupOrdersRoutes },
+      { setupWmsRoutes },
+      { setupConfigRoutes },
+      { setupFleetRoutes },
+    ] = await Promise.all([
+      import("./src/routes/auth"),
+      import("./src/routes/stats"),
+      import("./src/routes/users"),
+      import("./src/routes/stock"),
+      import("./src/routes/finance"),
+      import("./src/routes/products"),
+      import("./src/routes/orders"),
+      import("./src/routes/wms"),
+      import("./src/routes/config"),
+      import("./src/routes/fleet"),
+    ]);
+
+    const routeDependencies = {
+      app: routesRouter,
+      supabase,
+      authenticateToken,
+      upload,
+      uploadToSupabase,
+      deleteFromSupabase,
+      JWT_SECRET,
+      cache,
+    };
+
+    setupAuthRoutes(routeDependencies);
+    setupStatsRoutes(routeDependencies);
+    setupUsersRoutes(routeDependencies);
+    setupStockRoutes(routeDependencies);
+    setupFinanceRoutes(routeDependencies);
+    setupProductsRoutes(routeDependencies);
+    setupOrdersRoutes(routeDependencies);
+    setupWmsRoutes(routeDependencies);
+    setupConfigRoutes(routeDependencies);
+    setupFleetRoutes(routeDependencies);
+  })();
+
+  // Invalidate cache on mutations, prevent browser API caching, and ensure routes are mounted
+  app.use('/api', async (req: any, res: any, next: any) => {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    
+
     if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
       cache.flushAll();
     }
-    next();
+
+    try {
+      await routesReadyPromise;
+      next();
+    } catch (err) {
+      next(err);
+    }
   });
 
-  // Setup extracted routes
-  const routeDependencies = { app, supabase, authenticateToken, upload, uploadToSupabase, deleteFromSupabase, JWT_SECRET, cache };
-  
-  setupAuthRoutes(routeDependencies);
-  setupStatsRoutes(routeDependencies);
-  setupUsersRoutes(routeDependencies);
-  setupStockRoutes(routeDependencies);
-  setupFinanceRoutes(routeDependencies);
-  setupProductsRoutes(routeDependencies);
-  setupOrdersRoutes(routeDependencies);
-  setupWmsRoutes(routeDependencies);
-  setupConfigRoutes(routeDependencies);
-  setupFleetRoutes(routeDependencies);
+  app.use(routesRouter);
 
   // --- VITE / STATIC MIDDLEWARE & SERVER STARTUP ---
 export async function startServer() {
@@ -207,7 +240,30 @@ export async function startServer() {
   const isProd = process.env.NODE_ENV === "production";
 
   let activeFrontendHandler: express.RequestHandler | null = null;
-  let initVitePromise: Promise<void> | null = null;
+
+  const initVitePromise: Promise<void> | null = !isProd
+    ? (async () => {
+        try {
+          const { createServer: createViteServer } = await import("vite");
+          const vite = await createViteServer({
+            server: {
+              middlewareMode: true,
+              hmr: false,
+            },
+            appType: "spa",
+          });
+          activeFrontendHandler = vite.middlewares as any;
+        } catch (e) {
+          console.warn("Vite not found, falling back to static dist...");
+          const fallbackRouter = express.Router();
+          fallbackRouter.use(express.static(distPath));
+          fallbackRouter.get("*", (_req, res) => {
+            res.sendFile(path.join(distPath, "index.html"));
+          });
+          activeFrontendHandler = fallbackRouter;
+        }
+      })()
+    : null;
 
   if (!isProd) {
     app.use((req, res, next) => {
@@ -230,9 +286,7 @@ export async function startServer() {
     });
   } else {
     console.log("[Production] Configurando express.static para servir a pasta dist com compressão...");
-    
-    // Set caching headers: static assets inside assets/ are immutable (Vite hashes them)
-    // index.html must NEVER be cached to ensure users always get the latest version
+
     app.use(express.static(distPath, {
       etag: false,
       lastModified: false,
@@ -246,7 +300,7 @@ export async function startServer() {
         }
       }
     }));
-    
+
     app.get("*", (_req, res) => {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
@@ -264,30 +318,6 @@ export async function startServer() {
         console.log(`Server running on socket ${PORT}`);
         console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
       });
-
-  if (!isProd) {
-    initVitePromise = (async () => {
-      try {
-        const { createServer: createViteServer } = await import("vite");
-        const vite = await createViteServer({
-          server: {
-            middlewareMode: true,
-            hmr: false,
-          },
-          appType: "spa",
-        });
-        activeFrontendHandler = vite.middlewares as any;
-      } catch (e) {
-        console.warn("Vite not found, falling back to static dist...");
-        const fallbackRouter = express.Router();
-        fallbackRouter.use(express.static(distPath));
-        fallbackRouter.get("*", (_req, res) => {
-          res.sendFile(path.join(distPath, "index.html"));
-        });
-        activeFrontendHandler = fallbackRouter;
-      }
-    })();
-  }
 
   return server;
 }
