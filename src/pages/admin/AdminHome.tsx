@@ -4,8 +4,6 @@ import api from "../../lib/api";
 import { supabase } from "../../lib/supabase";
 import {
   Package,
-  ShoppingCart,
-  Store,
   DollarSign,
   TrendingUp,
   Activity,
@@ -14,40 +12,18 @@ import {
   TrendingDown,
   Layers,
   Box,
-  AlertTriangle,
   ArrowRight,
   Users,
   FileCode2,
   FileText,
   BarChart3,
-  Star,
-  Award,
-  MapPin,
+  PieChart,
+  Tags,
+  Car,
+  History,
 } from "lucide-react";
 import { BrandTitle } from "../../components/BrandTitle";
 import { useAuth } from "../../context/AuthContext";
-import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
-import "leaflet/dist/leaflet.css";
-import L from "leaflet";
-
-const pinIcon = new L.DivIcon({
-  className: "custom-pin",
-  html: '<div style="width: 20px; height: 20px; background-color: #f43f5e; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(244,63,94,0.8); animation: pulse 2s infinite;"></div>',
-  iconSize: [20, 20],
-  iconAnchor: [10, 10],
-});
-
-const storeLocations: { name: string; pos: [number, number] }[] = [
-  { name: "Arruda dos Vinhos", pos: [38.9839, -9.0769] },
-  { name: "Carregado (Loja 1)", pos: [39.0208, -8.9769] },
-  { name: "Carregado (Loja 2)", pos: [39.0258, -8.9699] },
-  { name: "Alenquer (Loja 1)", pos: [39.0533, -9.0097] },
-  { name: "Alenquer (Loja 2)", pos: [39.0573, -9.0207] },
-  { name: "Benavente", pos: [38.9753, -8.8105] },
-  { name: "Cartaxo", pos: [39.1606, -8.7869] },
-  { name: "Castanheira do Ribatejo", pos: [38.995, -8.97] },
-  { name: "Povos, Vila Franca de Xira", pos: [38.9665, -8.977] },
-];
 import {
   AreaChart,
   Area,
@@ -64,16 +40,11 @@ import {
 
 export default function AdminHome() {
   const [stats, setStats] = useState<any>(null);
-  const [recentOrders, setRecentOrders] = useState<any[]>([]);
-  const [produtosAlertas, setProdutosAlertas] = useState<any[]>([]);
   const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
   const [totalFornecedores, setTotalFornecedores] = useState(0);
-  const [extendedStats, setExtendedStats] = useState<any>(null);
   const [chartData, setChartData] = useState<any[]>([]);
   const [chartMonth, setChartMonth] = useState(new Date().getMonth());
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
-  const [dashboardTab, setDashboardTab] = useState<"lojas" | "produtos" | "fornecedores">("lojas");
-  const [alertsTab, setAlertsTab] = useState<"alertas" | "movimentacoes">("alertas");
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -83,15 +54,9 @@ export default function AdminHome() {
       .then((res) => setStats(res.data))
       .catch(console.error);
     api
-      .get("/admin/dashboard-extended")
-      .then((res) => setExtendedStats(res.data))
-      .catch(console.error);
-    api
       .get("/admin/home-summary")
       .then((res: any) => {
-        setRecentOrders(res.data.recentOrders);
         setPendingOrdersCount(res.data.pendingOrdersCount);
-        setProdutosAlertas(res.data.produtosAlertas);
         setTotalFornecedores(res.data.totalFornecedores || 0);
       })
       .catch(console.error);
@@ -158,11 +123,20 @@ export default function AdminHome() {
     vendasMes: 0,
   };
 
+  const formatEuro = (val: number) => {
+    const num = Number(val || 0);
+    const absFormatted = Math.abs(num).toLocaleString("pt-PT", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return num < 0 ? `-€ ${absFormatted}` : `€ ${absFormatted}`;
+  };
+
   if (!isAdmin) {
     return (
       <div className="h-full flex flex-col p-4 sm:p-6 lg:p-8 gap-4 sm:gap-6 max-w-6xl mx-auto w-full">
         <div className="flex flex-col items-center justify-center shrink-0 w-full mb-2">
-          <BrandTitle />
+          <BrandTitle showLogo />
           <h2
             className="text-lg sm:text-2xl lg:text-3xl text-[#facc15] mt-0 text-center tracking-wide"
             style={{
@@ -288,221 +262,365 @@ export default function AdminHome() {
 
   return (
     <div className="pt-2 px-4 md:pt-4 md:px-6 lg:px-8 pb-10">
-      <div className="flex flex-col mb-4 items-center md:items-start w-full">
-        <BrandTitle titleClassName="-mt-[14.992646px]" titleStyle={{ marginTop: "-14.992646px" }} />
-        <h2 className="text-lg sm:text-xl mt-2 ml-[89px] flex items-center gap-2 text-[#facc15] tracking-wider leading-tight" style={{ fontFamily: "'Yellowtail', cursive", textShadow: "2px 2px 4px rgba(0,0,0,0.5)" }}>
-          <span className="truncate">
-            Logística e Financeiro
-          </span>
+      <div className="flex flex-col items-center justify-center shrink-0 w-full mb-6">
+        <BrandTitle showLogo />
+        <h2 className="text-lg sm:text-2xl lg:text-3xl text-[#facc15] mt-0 text-center tracking-wide font-['Yellowtail',cursive] [text-shadow:2px_2px_4px_rgba(0,0,0,0.5)]">
+          {user?.name || "Logística e Financeiro"}
         </h2>
       </div>
 
+      {/* Operacional Overview */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4 lg:gap-5">
+        {/* 1. Nova Fatura */}
+        <div
+          onClick={() => navigate("/admin/armazem/fatura")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-emerald-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-emerald-500/10 group-hover:border-emerald-500/30 transition-colors">
+              <FileCode2 className="text-emerald-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Nova Fatura
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-emerald-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            CRIAR FATURA <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 2. Faturas */}
+        <div
+          onClick={() => navigate("/admin/armazem/faturas-subidas")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-blue-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-blue-500/10 group-hover:border-blue-500/30 transition-colors">
+              <FileText className="text-blue-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Faturas
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-blue-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Aceder Faturas <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 3. Pedidos */}
+        <div
+          onClick={() => navigate("/admin/armazem/pedidos")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-yellow-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 relative group-hover:bg-yellow-500/10 group-hover:border-yellow-500/30 transition-colors">
+              <Activity className="text-yellow-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+              {pendingOrdersCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-3 h-3 sm:w-4 sm:h-4 bg-yellow-500 rounded-full border-2 border-[#0a0a0a]"></span>
+              )}
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Pedidos
+            </h3>
+            <p className="text-yellow-500 text-lg sm:text-2xl lg:text-3xl font-medium mt-0 sm:mt-1 lg:mt-2 tracking-tighter tabular-nums whitespace-nowrap">
+              {pendingOrdersCount}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-yellow-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Ver Pedidos <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 4. Armazém */}
+        <div
+          onClick={() => navigate("/admin/estoque-global")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-orange-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-orange-500/10 group-hover:border-orange-500/30 transition-colors">
+              <Layers className="text-orange-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Armazém
+            </h3>
+            <p className="text-orange-500 text-lg sm:text-2xl lg:text-3xl font-medium mt-0 sm:mt-1 lg:mt-2 tracking-tighter tabular-nums whitespace-nowrap">
+              {Number(stats?.totalStockQty || 0).toLocaleString("pt-PT", { maximumFractionDigits: 2 })}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-orange-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Aceder Armazém <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 5. Produtos */}
+        <div
+          onClick={() => navigate("/admin/armazem/produtos")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-sky-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-sky-500/10 group-hover:border-sky-500/30 transition-colors">
+              <Package className="text-sky-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Produtos
+            </h3>
+            <p className="text-sky-500 text-lg sm:text-2xl lg:text-3xl font-medium mt-0 sm:mt-1 lg:mt-2 tracking-tighter tabular-nums whitespace-nowrap">
+              {stats?.totalProdutos || 0}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-sky-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Aceder Produtos <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 6. Fornecedores */}
+        <div
+          onClick={() => navigate("/admin/fornecedores")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-purple-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-purple-500/10 group-hover:border-purple-500/30 transition-colors">
+              <Users className="text-purple-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Fornecedores
+            </h3>
+            <p className="text-purple-500 text-lg sm:text-2xl lg:text-3xl font-medium mt-0 sm:mt-1 lg:mt-2 tracking-tighter tabular-nums whitespace-nowrap">
+              {totalFornecedores}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-purple-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Aceder Fornecedores <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 5. Financeiro */}
+        <div
+          onClick={() => navigate("/admin/financeiro")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-red-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-red-500/10 group-hover:border-red-500/30 transition-colors">
+              <Banknote className="text-red-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Financeiro
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-red-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Aceder Financeiro <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 8. Consumo */}
+        <div
+          onClick={() => navigate("/admin/consumo")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-cyan-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-cyan-500/10 group-hover:border-cyan-500/30 transition-colors">
+              <PieChart className="text-cyan-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Consumo
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-cyan-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Ver Consumo <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 9. Média de Consumo */}
+        <div
+          onClick={() => navigate("/admin/giro")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-rose-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-rose-500/10 group-hover:border-rose-500/30 transition-colors">
+              <History className="text-rose-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-base tracking-tight mb-1 leading-tight">
+              Média de Consumo
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-rose-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Ver Média <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 10. Margem e Preços */}
+        <div
+          onClick={() => navigate("/admin/precos")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-amber-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-amber-500/10 group-hover:border-amber-500/30 transition-colors">
+              <Tags className="text-amber-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Margem e Preços
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-amber-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Gerir Preços <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 9. Relatórios */}
+        <div
+          onClick={() => navigate("/admin/relatorios")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-indigo-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-indigo-500/10 group-hover:border-indigo-500/30 transition-colors">
+              <FileText className="text-indigo-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Relatórios
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-indigo-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Ver Relatórios <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+
+        {/* 10. Frotas */}
+        <div
+          onClick={() => navigate("/admin/frotas")}
+          className="bg-[#0a0a0a] border border-white/10 p-4 sm:p-5 rounded-xl relative overflow-hidden group hover:border-teal-500/50 transition-colors cursor-pointer flex flex-col items-center text-center shadow-lg min-h-[160px] lg:min-h-[200px] justify-between"
+        >
+          <div className="flex flex-col items-center justify-center flex-1 group-hover:-translate-y-1 transition-transform duration-300 w-full">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 shrink-0 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mb-2 sm:mb-3 group-hover:bg-teal-500/10 group-hover:border-teal-500/30 transition-colors">
+              <Car className="text-teal-500 w-5 h-5 sm:w-7 sm:h-7" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-white font-semibold text-[13px] sm:text-[15px] lg:text-lg tracking-tight mb-1 leading-tight whitespace-nowrap">
+              Frotas
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-500 group-hover:text-teal-500 mt-2 transition-colors w-full justify-center shrink-0 whitespace-nowrap">
+            Aceder Frotas <ArrowRight className="group-hover:translate-x-1 transition-transform w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          </div>
+        </div>
+      </div>
+
       {isAdmin && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4">
-          <div className="bg-[#0a0a0a] p-4 sm:p-6 rounded-2xl border border-white/5 shadow-lg relative overflow-hidden flex flex-col justify-between group hover:border-white/10 transition-colors">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl -mr-10 -mt-10 transition-all group-hover:bg-blue-500/10"></div>
-            <div className="flex items-center justify-between mb-2 sm:mb-4 relative z-10">
-              <h3 className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest line-clamp-1">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 mt-5 sm:mt-6">
+          {/* 1. Faturação (Mês) */}
+          <div
+            onClick={() => navigate("/admin/relatorios")}
+            className="bg-[#0a0a0a] px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-lg border border-white/[0.08] hover:border-white/20 flex flex-col justify-between group transition-colors cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider truncate">
                 Faturação (Mês)
-              </h3>
-              <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
-                <TrendingUp className="text-blue-500 w-4 h-4 shrink-0" />
-              </div>
+              </span>
+              <TrendingUp className="text-zinc-500 group-hover:text-zinc-300 w-3.5 h-3.5 shrink-0 transition-colors" strokeWidth={1.5} />
             </div>
-            <div className="relative z-10">
-              <p className="text-xl sm:text-3xl font-black text-white truncate">
-                €{" "}
-                {erp.vendasMes.toLocaleString("pt-PT", {
-                  minimumFractionDigits: 2,
-                })}
-              </p>
-            </div>
+
+            <p className="text-base sm:text-lg lg:text-xl font-semibold text-zinc-100 tracking-tight tabular-nums leading-tight mt-1">
+              {formatEuro(erp.vendasMes)}
+            </p>
+
+            <span className="text-[10px] text-zinc-500 mt-1 truncate">
+              Margem bruta:{" "}
+              <span className="text-zinc-400 font-medium tabular-nums">
+                {formatEuro(erp.lucroBruto)}
+              </span>
+            </span>
           </div>
 
-          <div className="bg-[#0a0a0a] p-4 sm:p-6 rounded-2xl border border-white/5 shadow-lg relative overflow-hidden flex flex-col justify-between group hover:border-white/10 transition-colors">
-            <div
-              className={`absolute top-0 right-0 w-32 h-32 rounded-full blur-3xl -mr-10 -mt-10 transition-all ${erp.lucroLiquido < 0 ? "bg-red-500/5 group-hover:bg-red-500/10" : "bg-emerald-500/5 group-hover:bg-emerald-500/10"}`}
-            ></div>
-            <div className="flex items-center justify-between mb-2 sm:mb-4 relative z-10">
-              <h3 className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest line-clamp-1">
+          {/* 2. Lucro Líquido */}
+          <div
+            onClick={() => navigate("/admin/financeiro")}
+            className="bg-[#0a0a0a] px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-lg border border-white/[0.08] hover:border-white/20 flex flex-col justify-between group transition-colors cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider truncate">
                 Lucro Líquido
-              </h3>
-              <div
-                className={`w-8 h-8 rounded-full flex items-center justify-center border ${erp.lucroLiquido < 0 ? "bg-red-500/10 border-red-500/20" : "bg-emerald-500/10 border-emerald-500/20"}`}
-              >
-                <DollarSign
-                  className={`w-4 h-4 shrink-0 ${erp.lucroLiquido < 0 ? "text-red-500" : "text-emerald-500"}`}
-                />
-              </div>
+              </span>
+              {erp.lucroLiquido < 0 ? (
+                <TrendingDown className="text-zinc-500 group-hover:text-zinc-300 w-3.5 h-3.5 shrink-0 transition-colors" strokeWidth={1.5} />
+              ) : (
+                <DollarSign className="text-zinc-500 group-hover:text-zinc-300 w-3.5 h-3.5 shrink-0 transition-colors" strokeWidth={1.5} />
+              )}
             </div>
-            <div className="relative z-10">
-              <p
-                className={`text-xl sm:text-3xl font-black truncate ${erp.lucroLiquido < 0 ? "text-red-400" : "text-emerald-400"}`}
-              >
-                €{" "}
-                {erp.lucroLiquido.toLocaleString("pt-PT", {
-                  minimumFractionDigits: 2,
-                })}
-              </p>
-            </div>
+
+            <p className="text-base sm:text-lg lg:text-xl font-semibold text-zinc-100 tracking-tight tabular-nums leading-tight mt-1">
+              {formatEuro(erp.lucroLiquido)}
+            </p>
+
+            <span className="text-[10px] text-zinc-500 mt-1 truncate">
+              Despesas mês:{" "}
+              <span className="text-zinc-400 font-medium tabular-nums">
+                {formatEuro(erp.despesasMes)}
+              </span>
+            </span>
           </div>
 
-          <div className="bg-[#0a0a0a] p-4 sm:p-6 rounded-2xl border border-white/5 shadow-lg relative overflow-hidden flex flex-col justify-between group hover:border-white/10 transition-colors">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl -mr-10 -mt-10 transition-all group-hover:bg-purple-500/10"></div>
-            <div className="flex items-center justify-between mb-2 sm:mb-4 relative z-10">
-              <h3 className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest line-clamp-1">
+          {/* 3. Cap. Stock */}
+          <div
+            onClick={() => navigate("/admin/estoque-global")}
+            className="bg-[#0a0a0a] px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-lg border border-white/[0.08] hover:border-white/20 flex flex-col justify-between group transition-colors cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider truncate">
                 Cap. Stock
-              </h3>
-              <div className="w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
-                <Box className="text-purple-500 w-4 h-4 shrink-0" />
-              </div>
+              </span>
+              <Box className="text-zinc-500 group-hover:text-zinc-300 w-3.5 h-3.5 shrink-0 transition-colors" strokeWidth={1.5} />
             </div>
-            <div className="relative z-10">
-              <p className="text-xl sm:text-3xl font-black text-white truncate">
-                €{" "}
-                {erp.capitalStock.toLocaleString("pt-PT", {
-                  minimumFractionDigits: 2,
-                })}
-              </p>
-            </div>
+
+            <p className="text-base sm:text-lg lg:text-xl font-semibold text-zinc-100 tracking-tight tabular-nums leading-tight mt-1">
+              {formatEuro(erp.capitalStock)}
+            </p>
+
+            <span className="text-[10px] text-zinc-500 mt-1 truncate">
+              Imobilizado:{" "}
+              <span className="text-zinc-400 font-medium tabular-nums">
+                {stats?.totalProdutos || 0} referências
+              </span>
+            </span>
           </div>
 
-          <div className="bg-[#0a0a0a] p-4 sm:p-6 rounded-2xl border border-white/5 shadow-lg relative overflow-hidden flex flex-col justify-between group hover:border-white/10 transition-colors">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 rounded-full blur-3xl -mr-10 -mt-10 transition-all group-hover:bg-orange-500/10"></div>
-            <div className="flex items-center justify-between mb-2 sm:mb-4 relative z-10">
-              <h3 className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest line-clamp-1">
+          {/* 4. A Pagar */}
+          <div
+            onClick={() => navigate("/admin/financeiro")}
+            className="bg-[#0a0a0a] px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-lg border border-white/[0.08] hover:border-white/20 flex flex-col justify-between group transition-colors cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider truncate">
                 A Pagar
-              </h3>
-              <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center border border-orange-500/20">
-                <Clock className="text-orange-500 w-4 h-4 shrink-0" />
-              </div>
+              </span>
+              <Clock className="text-zinc-500 group-hover:text-zinc-300 w-3.5 h-3.5 shrink-0 transition-colors" strokeWidth={1.5} />
             </div>
-            <div className="relative z-10">
-              <p className="text-xl sm:text-3xl font-black text-white truncate">
-                €{" "}
-                {erp.dividaFornecedores.toLocaleString("pt-PT", {
-                  minimumFractionDigits: 2,
-                })}
-              </p>
-            </div>
+
+            <p className="text-base sm:text-lg lg:text-xl font-semibold text-zinc-100 tracking-tight tabular-nums leading-tight mt-1">
+              {formatEuro(erp.dividaFornecedores)}
+            </p>
+
+            <span className="text-[10px] text-zinc-500 mt-1 truncate">
+              Compras mês:{" "}
+              <span className="text-zinc-400 font-medium tabular-nums">
+                {formatEuro(erp.comprasMes)}
+              </span>
+            </span>
           </div>
         </div>
       )}
 
-      {/* Operacional Overview */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 mt-3 sm:mt-4">
-        <div
-          className="bg-[#0a0a0a]/80 backdrop-blur-md p-3 sm:p-4 rounded-2xl border border-emerald-500/10 shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer group hover:border-emerald-500/20 transition-all"
-          onClick={() => navigate("/admin/armazem/fatura")}
-        >
-          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-3xl -mr-10 -mt-10 transition-all group-hover:bg-emerald-500/10"></div>
-          <div className="flex items-center justify-between mb-1 sm:mb-2 relative z-10">
-            <h3 className="text-[9px] sm:text-[11px] font-bold text-slate-400 group-hover:text-emerald-400 transition-colors uppercase tracking-widest line-clamp-1">
-              Nova Fatura
-            </h3>
-            <FileCode2 className="text-emerald-500 w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 transition-transform group-hover:scale-110" />
-          </div>
-          <div className="flex items-end justify-between mt-1 relative z-10">
-            <p className="text-lg sm:text-2xl font-black text-white group-hover:text-emerald-50 transition-colors">
-              Criar
-            </p>
-            <span className="text-[10px] sm:text-[11px] text-emerald-600/70 group-hover:text-emerald-500 font-bold flex items-center transition-colors">
-              Acessar <ArrowRight className="w-3 h-3 ml-1" />
-            </span>
-          </div>
-        </div>
-
-        <div
-          className="bg-[#0a0a0a]/80 backdrop-blur-md p-3 sm:p-4 rounded-2xl border border-yellow-500/10 shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer group hover:border-yellow-500/20 transition-all"
-          onClick={() => navigate("/admin/pedidos")}
-        >
-          <div className="absolute top-0 right-0 w-24 h-24 bg-yellow-500/5 rounded-full blur-3xl -mr-10 -mt-10 transition-all group-hover:bg-yellow-500/10"></div>
-          <div className="flex items-center justify-between mb-1 sm:mb-2 relative z-10">
-            <h3 className="text-[9px] sm:text-[11px] font-bold text-slate-400 group-hover:text-yellow-400 transition-colors uppercase tracking-widest line-clamp-1">
-              Pedidos
-            </h3>
-            <Activity className="text-yellow-500 w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 transition-transform group-hover:scale-110" />
-          </div>
-          <div className="flex items-end justify-between mt-1 relative z-10">
-            <p className="text-lg sm:text-2xl font-black text-white group-hover:text-yellow-50 transition-colors">
-              {pendingOrdersCount}
-            </p>
-            <span className="text-[10px] sm:text-[11px] text-yellow-600/70 group-hover:text-yellow-500 font-bold flex items-center transition-colors">
-              Acessar <ArrowRight className="w-3 h-3 ml-1" />
-            </span>
-          </div>
-        </div>
-
-        <div
-          className="bg-[#0a0a0a]/80 backdrop-blur-md p-3 sm:p-4 rounded-2xl border border-orange-500/10 shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer group hover:border-orange-500/20 transition-all"
-          onClick={() => navigate("/admin/estoque-global")}
-        >
-          <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/5 rounded-full blur-3xl -mr-10 -mt-10 transition-all group-hover:bg-orange-500/10"></div>
-          <div className="flex items-center justify-between mb-1 sm:mb-2 relative z-10">
-            <h3 className="text-[9px] sm:text-[11px] font-bold text-slate-400 group-hover:text-orange-400 transition-colors uppercase tracking-widest line-clamp-1">
-              Armazém
-            </h3>
-            <Package className="text-orange-500 w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 transition-transform group-hover:scale-110" />
-          </div>
-          <div className="flex items-end justify-between mt-1 relative z-10">
-            <p className="text-lg sm:text-2xl font-black text-white group-hover:text-orange-50 transition-colors">
-              {stats?.totalStockQty || 0}
-            </p>
-            <span className="text-[10px] sm:text-[11px] text-orange-600/70 group-hover:text-orange-500 font-bold flex items-center transition-colors">
-              Acessar <ArrowRight className="w-3 h-3 ml-1" />
-            </span>
-          </div>
-        </div>
-
-        <div
-          className="bg-[#0a0a0a]/80 backdrop-blur-md p-3 sm:p-4 rounded-2xl border border-purple-500/10 shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer group hover:border-purple-500/20 transition-all"
-          onClick={() => navigate("/admin/fornecedores")}
-        >
-          <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 rounded-full blur-3xl -mr-10 -mt-10 transition-all group-hover:bg-purple-500/10"></div>
-          <div className="flex items-center justify-between mb-1 sm:mb-2 relative z-10">
-            <h3 className="text-[9px] sm:text-[11px] font-bold text-slate-400 group-hover:text-purple-400 transition-colors uppercase tracking-widest line-clamp-1">
-              Fornecedores
-            </h3>
-            <Users className="text-purple-500 w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 transition-transform group-hover:scale-110" />
-          </div>
-          <div className="flex items-end justify-between mt-1 relative z-10">
-            <p className="text-lg sm:text-2xl font-black text-white group-hover:text-purple-50 transition-colors">
-              {totalFornecedores}
-            </p>
-            <span className="text-[10px] sm:text-[11px] text-purple-600/70 group-hover:text-purple-500 font-bold flex items-center transition-colors">
-              Acessar <ArrowRight className="w-3 h-3 ml-1" />
-            </span>
-          </div>
-        </div>
-
-        {isAdmin && (
-          <div
-            className="bg-[#0a0a0a]/80 backdrop-blur-md p-3 sm:p-4 rounded-2xl border border-red-500/10 shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer group hover:border-red-500/20 transition-all"
-            onClick={() => navigate("/admin/financeiro")}
-          >
-            <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full blur-3xl -mr-10 -mt-10 transition-all group-hover:bg-red-500/10"></div>
-            <div className="flex items-center justify-between mb-1 sm:mb-2 relative z-10">
-              <h3 className="text-[9px] sm:text-[11px] font-bold text-slate-400 group-hover:text-red-400 transition-colors uppercase tracking-widest line-clamp-1">
-                Financeiro
-              </h3>
-              <button className="text-red-500 w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 transition-transform group-hover:scale-110">
-                <Banknote size={16} />
-              </button>
-            </div>
-            <div className="flex items-end justify-between mt-1 relative z-10">
-              <p className="text-lg sm:text-2xl font-black text-white group-hover:text-red-50 transition-colors">
-                Gerir
-              </p>
-              <span className="text-[10px] sm:text-[11px] text-red-600/70 group-hover:text-red-500 font-bold flex items-center transition-colors">
-                Acessar <ArrowRight className="w-3 h-3 ml-1" />
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
-
       {isAdmin && (
-        <div className="mt-4 sm:mt-6 bg-[#0a0a0a] p-4 sm:p-6 rounded-2xl border border-white/5 shadow-lg w-full">
+        <div className="mt-3 bg-[#0a0a0a] p-4 sm:p-6 rounded-xl border border-white/[0.08] shadow-lg w-full">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
             <div>
               <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
@@ -632,328 +750,6 @@ export default function AdminHome() {
                 />
               </AreaChart>
             </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div className="bg-[#0a0a0a] rounded-xl border border-white/10 flex flex-col h-[400px] mt-4 sm:mt-6 overflow-hidden">
-          <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/5 shrink-0 overflow-x-auto custom-scrollbar">
-            <div className="flex items-center gap-6 min-w-max">
-              <button
-                onClick={() => setDashboardTab("lojas")}
-                className={`text-sm font-semibold flex items-center gap-2 pb-1 transition-colors relative ${dashboardTab === "lojas" ? "text-white" : "text-slate-500 hover:text-slate-300"}`}
-              >
-                <Store className={`w-4 h-4 ${dashboardTab === "lojas" ? "text-purple-500" : ""}`} /> Top Lojas
-                {dashboardTab === "lojas" && <span className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-purple-500 rounded-t-full"></span>}
-              </button>
-              <button
-                onClick={() => setDashboardTab("produtos")}
-                className={`text-sm font-semibold flex items-center gap-2 pb-1 transition-colors relative ${dashboardTab === "produtos" ? "text-white" : "text-slate-500 hover:text-slate-300"}`}
-              >
-                <Star className={`w-4 h-4 ${dashboardTab === "produtos" ? "text-emerald-500" : ""}`} /> Top Produtos
-                {dashboardTab === "produtos" && <span className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-emerald-500 rounded-t-full"></span>}
-              </button>
-              <button
-                onClick={() => setDashboardTab("fornecedores")}
-                className={`text-sm font-semibold flex items-center gap-2 pb-1 transition-colors relative ${dashboardTab === "fornecedores" ? "text-white" : "text-slate-500 hover:text-slate-300"}`}
-              >
-                <Award className={`w-4 h-4 ${dashboardTab === "fornecedores" ? "text-blue-500" : ""}`} /> Top Fornecedores
-                {dashboardTab === "fornecedores" && <span className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-blue-500 rounded-t-full"></span>}
-              </button>
-            </div>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6">
-            {dashboardTab === "lojas" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {!extendedStats || extendedStats.topLojas?.length === 0 ? (
-                  <div className="text-center py-6 text-sm text-slate-500 font-medium col-span-full">
-                    Sem dados.
-                  </div>
-                ) : (
-                  extendedStats.topLojas?.map((loja: any, i: number) => (
-                    <div
-                      key={i}
-                      className="flex justify-between items-center bg-white/[0.02] p-3 sm:p-4 rounded-xl border border-white/5 hover:border-white/10 transition-colors"
-                    >
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        <div className="w-6 h-6 rounded-full bg-purple-500/10 flex items-center justify-center shrink-0">
-                          <span className="text-[10px] font-bold text-purple-400">
-                            {i + 1}
-                          </span>
-                        </div>
-                        <p className="text-sm font-medium text-slate-300 truncate">
-                          {loja.name}
-                        </p>
-                      </div>
-                      <p className="text-sm font-semibold text-white ml-2">
-                        €{" "}
-                        {loja.total.toLocaleString("pt-PT", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </p>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-            
-            {dashboardTab === "produtos" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {!extendedStats || extendedStats.topProdutos?.length === 0 ? (
-                  <div className="text-center py-6 text-sm text-slate-500 font-medium col-span-full">
-                    Sem dados.
-                  </div>
-                ) : (
-                  extendedStats.topProdutos?.map((prod: any, i: number) => (
-                    <div
-                      key={i}
-                      className="flex justify-between items-center bg-white/[0.02] p-3 sm:p-4 rounded-xl border border-white/5 hover:border-white/10 transition-colors"
-                    >
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        <div className="w-6 h-6 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
-                          <span className="text-[10px] font-bold text-emerald-400">
-                            {i + 1}
-                          </span>
-                        </div>
-                        <p className="text-sm font-medium text-slate-300 truncate">
-                          {prod.name}
-                        </p>
-                      </div>
-                      <p className="text-sm font-bold text-emerald-500 bg-emerald-500/10 px-2.5 py-1 rounded-lg ml-2 shrink-0">
-                        {prod.quantity.toLocaleString("pt-PT", {
-                          maximumFractionDigits: 2,
-                        })}{" "}
-                        <span className="text-[10px] font-medium text-emerald-600/70">
-                          {prod.unidade || "Un"}
-                        </span>
-                      </p>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-            
-            {dashboardTab === "fornecedores" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {!extendedStats || extendedStats.topFornecedores?.length === 0 ? (
-                  <div className="text-center py-6 text-sm text-slate-500 font-medium col-span-full">
-                    Sem dados.
-                  </div>
-                ) : (
-                  extendedStats.topFornecedores?.map((forn: any, i: number) => (
-                    <div
-                      key={i}
-                      className="flex justify-between items-center bg-white/[0.02] p-3 sm:p-4 rounded-xl border border-white/5 hover:border-white/10 transition-colors"
-                    >
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        <div className="w-6 h-6 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
-                          <span className="text-[10px] font-bold text-blue-400">
-                            {i + 1}
-                          </span>
-                        </div>
-                        <p className="text-sm font-medium text-slate-300 truncate">
-                          {forn.name}
-                        </p>
-                      </div>
-                      <p className="text-sm font-semibold text-white ml-2">
-                        €{" "}
-                        {forn.total.toLocaleString("pt-PT", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </p>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div className="bg-[#0a0a0a] rounded-xl border border-white/10 flex flex-col h-[500px] mt-4 sm:mt-6 overflow-hidden">
-          <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/5 shrink-0 overflow-x-auto custom-scrollbar">
-            <div className="flex items-center gap-6 min-w-max">
-              <button
-                onClick={() => setAlertsTab("alertas")}
-                className={`text-sm font-semibold flex items-center gap-2 pb-1 transition-colors relative ${alertsTab === "alertas" ? "text-white" : "text-slate-500 hover:text-slate-300"}`}
-              >
-                <AlertTriangle className={`w-4 h-4 ${alertsTab === "alertas" ? "text-yellow-500" : ""}`} /> Alertas de Produtos
-                {alertsTab === "alertas" && <span className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-yellow-500 rounded-t-full"></span>}
-              </button>
-              <button
-                onClick={() => setAlertsTab("movimentacoes")}
-                className={`text-sm font-semibold flex items-center gap-2 pb-1 transition-colors relative ${alertsTab === "movimentacoes" ? "text-white" : "text-slate-500 hover:text-slate-300"}`}
-              >
-                <ShoppingCart className={`w-4 h-4 ${alertsTab === "movimentacoes" ? "text-blue-500" : ""}`} /> Movimentações Recentes
-                {alertsTab === "movimentacoes" && <span className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-blue-500 rounded-t-full"></span>}
-              </button>
-            </div>
-            
-            {alertsTab === "movimentacoes" && (
-              <button
-                onClick={() => navigate("/admin/pedidos")}
-                className="text-[10px] sm:text-[11px] text-blue-500 hover:text-blue-400 font-medium flex items-center gap-1 bg-blue-500/10 px-3 py-1.5 rounded-full transition-colors ml-4 shrink-0"
-              >
-                Grelha <ArrowRight className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-          
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 space-y-2">
-            {alertsTab === "alertas" && (
-              <>
-                {produtosAlertas.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full p-8 bg-white/[0.02] rounded-xl border border-white/5">
-                    <div className="w-10 h-10 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mb-3">
-                      <Package size={20} />
-                    </div>
-                    <p className="text-sm font-semibold text-white">
-                      Stock Saudável
-                    </p>
-                    <p className="text-[10px] text-slate-500 mt-1">
-                      Nenhum produto a reportar no momento.
-                    </p>
-                  </div>
-                ) : (
-                  produtosAlertas.map((prod, i) => {
-                    const preco = Number(prod.preco || 0);
-                    const custo = Number(prod.preco_custo || 0);
-                    const stock = Number(prod.stock_armazem || 0);
-                    const mrg = custo > 0 ? ((preco - custo) / (custo || 1)) * 100 : preco > 0 ? 100 : 0;
-                    
-                    return (
-                      <div
-                        key={prod.id || i}
-                        className="flex flex-col p-3 bg-white/[0.02] rounded-lg border border-white/5 hover:border-white/10 transition-colors group"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1 pr-3">
-                            <p className="text-sm font-semibold text-white leading-snug mb-2 group-hover:text-amber-400 transition-colors">
-                              {prod.nome}
-                            </p>
-                            <div className="flex flex-wrap gap-2 text-[11px] font-medium">
-                              <span className={`px-2 py-0.5 rounded border ${stock < 10 ? "bg-red-500/10 text-red-500 border-red-500/20" : "bg-white/5 text-slate-400 border-white/10"}`}>
-                                Stock: {stock.toLocaleString("pt-PT", { maximumFractionDigits: 2 })} {prod.unidade_base || "un"}
-                              </span>
-                              {isAdmin && (
-                                <span className={`px-2 py-0.5 rounded border ${mrg < 15 ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/20" : "bg-white/5 text-slate-400 border-white/10"}`}>
-                                  Margem: {mrg.toFixed(1)}%
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => navigate("/admin/produtos?search=" + encodeURIComponent(prod.nome))}
-                            className="p-2 text-slate-500 hover:text-white hover:bg-white/5 rounded-lg transition-colors shrink-0 tooltip-trigger"
-                            title="Ver Produto"
-                          >
-                            <ArrowRight size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </>
-            )}
-
-            {alertsTab === "movimentacoes" && (
-              <>
-                {recentOrders.length === 0 ? (
-                  <div className="text-center py-12 text-sm text-slate-500 font-medium bg-white/[0.02] rounded-xl border border-white/5 h-full flex items-center justify-center">
-                    Sem pedidos recentes.
-                  </div>
-                ) : (
-                  recentOrders.map((order) => (
-                    <div
-                      key={order.id}
-                      onClick={() => navigate("/admin/pedidos")}
-                      className="flex items-center justify-between p-3 bg-white/[0.02] rounded-lg border border-white/5 hover:border-white/10 transition-colors cursor-pointer group"
-                    >
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        <div className="w-10 h-10 rounded-lg bg-blue-500/10 text-blue-400 font-bold border border-blue-500/20 flex flex-col items-center justify-center shrink-0">
-                          <span className="text-[9px] text-blue-500/70 font-medium uppercase tracking-widest leading-none mb-0.5">
-                            ID
-                          </span>
-                          <span className="text-sm leading-none">
-                            {order.id.toString().slice(-3)}
-                          </span>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-white mb-0.5 truncate group-hover:text-blue-400 transition-colors">
-                            {order.loja_nome || order.user?.name || "Loja Desconhecida"}
-                          </p>
-                          <p className="text-[10px] text-slate-400 flex items-center gap-1.5">
-                            <Clock className="w-3 h-3 text-slate-500" />{" "}
-                            {new Date(order.created_at).toLocaleString("pt-PT", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              day: "2-digit",
-                              month: "short",
-                            })}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        {isAdmin && (
-                          <p className="text-sm font-bold text-white">
-                            € {Number(order.total || 0).toLocaleString("pt-PT", { minimumFractionDigits: 2 })}
-                          </p>
-                        )}
-                        <p className={`text-[9px] font-black mt-1 uppercase tracking-widest px-2 py-0.5 rounded inline-block ${order.status === "pendente" ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" : order.status === "concluido" || order.status === "entregue" ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" : "bg-blue-500/10 text-blue-500 border border-blue-500/20"}`}>
-                          {order.status}
-                        </p>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Real Map Section */}
-      {isAdmin && (
-        <div className="bg-[#0a0a0a] p-4 sm:p-6 rounded-xl border border-white/10 mt-4 sm:mt-6 flex flex-col h-[500px]">
-          <div className="flex items-center justify-between mb-4 sm:mb-5 shrink-0">
-            <div>
-              <h3 className="text-sm sm:text-base font-semibold text-white flex items-center gap-2">
-                <MapPin className="text-rose-500 w-4 h-4 sm:w-5 sm:h-5" />{" "}
-                Distribuição de Lojas
-              </h3>
-              <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
-                Mapa de localização em tempo real
-              </p>
-            </div>
-          </div>
-          <div className="flex-1 w-full relative rounded-lg overflow-hidden border border-white/5 z-0">
-            <MapContainer
-              center={[39.04, -8.95]}
-              zoom={11}
-              className="w-full h-full bg-[#0a0a0a]"
-              zoomControl={true}
-              scrollWheelZoom={false}
-            >
-              <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-              />
-              {storeLocations.map((store, idx) => (
-                <Marker key={idx} position={store.pos} icon={pinIcon}>
-                  <Popup className="custom-popup">
-                    <div className="text-center font-bold text-slate-800 text-xs">
-                      {store.name}
-                    </div>
-                  </Popup>
-                </Marker>
-              ))}
-            </MapContainer>
           </div>
         </div>
       )}

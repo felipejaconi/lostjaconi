@@ -10,7 +10,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
     // Check Cache
     const cacheKey = "admin_stats";
     const cachedStats = cache.get(cacheKey);
-    if (cachedStats) {
+    if (cachedStats && cachedStats.erp?.ivaCreditoMes !== undefined) {
       return res.json(cachedStats);
     }
 
@@ -19,6 +19,8 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       startOfMonth.setDate(1);
       startOfMonth.setHours(0,0,0,0);
       const startOfMonthIso = startOfMonth.toISOString();
+      const currentMonth = startOfMonth.getMonth();
+      const currentYear = startOfMonth.getFullYear();
 
       const [
         { data: vendas },
@@ -33,7 +35,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         supabase.from("pedidos").select("*", { count: "exact", head: true }).in("status", ["pendente", "processando"]),
         supabase.from("produtos").select("*", { count: "exact", head: true }),
         supabase.from("users").select("*", { count: "exact", head: true }).eq("role", "loja"),
-        supabase.from("faturas").select("tipo, valor_total, valor_pendente, data_emissao"),
+        supabase.from("faturas").select("id, tipo, status_pagamento, valor_total, valor_pendente, valor_iva, data_emissao"),
         supabase.from("produtos").select("stock_armazem, preco_custo"),
         supabase.from("pedidos").select("id, total, created_at").in("status", ["pronto", "entregue", "concluido"]).gte("created_at", startOfMonthIso)
       ]);
@@ -44,16 +46,47 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       let comprasMes = 0;
       let despesasMes = 0;
       let dividaFornecedores = 0;
+      let ivaCreditoMes = 0;
+      const missingIvaFaturaIds: any[] = [];
       
-      (faturasC || []).forEach(f => {
-         if (f.tipo === 'entrada_stock' || f.tipo === 'compra') return;
+      (faturasC || []).forEach((f: any) => {
+         if (f.tipo === 'entrada_stock' || f.tipo === 'compra' || f.status_pagamento === 'em_conferencia') return;
          dividaFornecedores += Number(f.valor_pendente || 0);
-         const isThisMonth = new Date(f.data_emissao) > startOfMonth;
+         const emissaoDate = f.data_emissao ? new Date(f.data_emissao) : null;
+         const isThisMonth =
+           emissaoDate &&
+           emissaoDate.getMonth() === currentMonth &&
+           emissaoDate.getFullYear() === currentYear;
          if (isThisMonth) {
             if (f.tipo === 'compra_financeiro') comprasMes += Number(f.valor_total || 0);
             if (f.tipo === 'despesa' || f.tipo?.startsWith('despesa')) despesasMes += Number(f.valor_total || 0);
+            if (f.valor_iva !== undefined && f.valor_iva !== null) {
+              ivaCreditoMes += Number(f.valor_iva || 0);
+            } else if (f.id) {
+              missingIvaFaturaIds.push(f.id);
+            }
          }
       });
+
+      if (missingIvaFaturaIds.length > 0) {
+        const { data: missingFaturaItens } = await supabase
+          .from("fatura_itens")
+          .select("fatura_id, quantidade, preco_custo, preco_unitario, iva, valor_iva, valor_liquido, produto:produtos(iva)")
+          .in("fatura_id", missingIvaFaturaIds);
+
+        (missingFaturaItens || []).forEach((item: any) => {
+          if (item.valor_iva !== undefined && item.valor_iva !== null && item.valor_liquido !== undefined && item.valor_liquido !== null) {
+            ivaCreditoMes += Number(item.valor_iva || 0);
+          } else {
+            const q = Number(item.quantidade || 0);
+            const c = Number(item.preco_custo || item.preco_unitario || 0);
+            const liq = q * c;
+            const prodObj = Array.isArray(item.produto) ? item.produto[0] : item.produto;
+            const ivaP = item.iva !== undefined && item.iva !== null ? Number(item.iva) : Number(prodObj?.iva || 0);
+            ivaCreditoMes += liq * (ivaP / 100);
+          }
+        });
+      }
 
       let capitalStock = 0;
       let totalStockQty = 0;
@@ -65,23 +98,32 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       });
 
       let cmv = 0;
-      let totalVendasLiquidas = 0;
       let vendasMes = 0;
+      let ivaDebitoMes = 0;
       
       if (monthOrders && monthOrders.length > 0) {
          monthOrders.forEach(v => { vendasMes += Number(v.total || 0); });
          const monthOrderIds = monthOrders.map(o => o.id);
          
          const { data: orderItems } = await supabase.from("pedido_itens")
-            .select("pedido_id, quantidade, produto:produtos(preco_custo, fator_conversao_venda)")
+            .select("pedido_id, quantidade, preco_unitario, iva, produto:produtos(preco_custo, fator_conversao_venda, iva)")
             .in("pedido_id", monthOrderIds);
             
          (orderItems || []).forEach((item: any) => {
             const qtyVenda = Number(item.quantidade || 0);
-            const fator = Number(item.produto?.fator_conversao_venda || 1);
+            const prodObj = Array.isArray(item.produto) ? item.produto[0] : item.produto;
+            const fator = Number(prodObj?.fator_conversao_venda || 1);
             const qtyBase = qtyVenda * fator;
-            const custoBase = Number(item.produto?.preco_custo || 0);
+            const custoBase = Number(prodObj?.preco_custo || 0);
             cmv += (qtyBase * custoBase);
+
+            const precoVenda = Number(item.preco_unitario || 0);
+            const liqVenda = qtyVenda * precoVenda;
+            const ivaPerc =
+              item.iva !== undefined && item.iva !== null
+                ? Number(item.iva)
+                : Number(prodObj?.iva || 0);
+            ivaDebitoMes += liqVenda * (ivaPerc / 100);
          });
       }
 
@@ -98,6 +140,8 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
           capitalStock,
           vendasMes,
           cmv,
+          ivaCreditoMes,
+          ivaDebitoMes,
           lucroBruto: vendasMes - cmv,
           lucroLiquido: vendasMes - cmv - despesasMes
         }

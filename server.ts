@@ -206,21 +206,28 @@ export async function startServer() {
   const distPath = path.join(process.cwd(), "dist");
   const isProd = process.env.NODE_ENV === "production";
 
+  let activeFrontendHandler: express.RequestHandler | null = null;
+  let initVitePromise: Promise<void> | null = null;
+
   if (!isProd) {
-    try {
-      const { createServer: createViteServer } = await import("vite");
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: "spa",
-      });
-      app.use(vite.middlewares);
-    } catch (e) {
-      console.warn("Vite not found, falling back to static dist...");
-      app.use(express.static(distPath));
-      app.get("*", (_req, res) => {
-        res.sendFile(path.join(distPath, "index.html"));
-      });
-    }
+    app.use((req, res, next) => {
+      if (activeFrontendHandler) {
+        return activeFrontendHandler(req, res, next);
+      }
+      if (initVitePromise) {
+        initVitePromise
+          .then(() => {
+            if (activeFrontendHandler) {
+              activeFrontendHandler(req, res, next);
+            } else {
+              next();
+            }
+          })
+          .catch(next);
+      } else {
+        next();
+      }
+    });
   } else {
     console.log("[Production] Configurando express.static para servir a pasta dist com compressão...");
     
@@ -229,8 +236,8 @@ export async function startServer() {
     app.use(express.static(distPath, {
       etag: false,
       lastModified: false,
-      setHeaders: (res, path) => {
-        if (path.includes('/assets/')) {
+      setHeaders: (res, filePath) => {
+        if (filePath.includes('/assets/')) {
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         } else {
           res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -257,6 +264,30 @@ export async function startServer() {
         console.log(`Server running on socket ${PORT}`);
         console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
       });
+
+  if (!isProd) {
+    initVitePromise = (async () => {
+      try {
+        const { createServer: createViteServer } = await import("vite");
+        const vite = await createViteServer({
+          server: {
+            middlewareMode: true,
+            hmr: false,
+          },
+          appType: "spa",
+        });
+        activeFrontendHandler = vite.middlewares as any;
+      } catch (e) {
+        console.warn("Vite not found, falling back to static dist...");
+        const fallbackRouter = express.Router();
+        fallbackRouter.use(express.static(distPath));
+        fallbackRouter.get("*", (_req, res) => {
+          res.sendFile(path.join(distPath, "index.html"));
+        });
+        activeFrontendHandler = fallbackRouter;
+      }
+    })();
+  }
 
   return server;
 }
