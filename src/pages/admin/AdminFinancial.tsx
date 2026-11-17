@@ -106,6 +106,9 @@ function extractFaturaMeta(f: any, storesList: any[]) {
     centroCusto = "DISTRIBUIDORA";
   } else if (
     lowerCC === "lost wind lda" ||
+    lowerCC === "lost wind unipessoal" ||
+    lowerCC === "lost wind unipessoal,lda" ||
+    lowerCC === "lost wind unipessoal, lda" ||
     lowerCC === "administração / sede" ||
     lowerCC === "administracao / sede"
   ) {
@@ -743,6 +746,63 @@ export default function AdminFinancial() {
      };
   }, [faturas, pedidos, summaryData]);
 
+  const storeCostTotals = useMemo(() => {
+    const map: Record<string, number> = {};
+    stores.forEach((s: any) => {
+      const sId = String(s.id);
+      const sNameLower = String(s.name || "").trim().toLowerCase();
+
+      if (faturas.length > 0) {
+        let sum = new Decimal(0);
+        faturas.forEach((f) => {
+          if (f.tipo === "entrada_stock" || f.tipo === "compra" || f.status_pagamento === "em_conferencia") return;
+          const meta = extractFaturaMeta(f, stores);
+          const matchesStore =
+            meta.lojaId === sId ||
+            Boolean(sNameLower && meta.centroCusto.toLowerCase() === sNameLower);
+          if (matchesStore) {
+            sum = sum.add(new Decimal(f.valor_total || 0));
+          }
+        });
+        map[sId] = sum.toNumber();
+      } else {
+        const byId = Number(summaryData?.custosPorLojaId?.[sId] || 0);
+        const byName = sNameLower ? Number(summaryData?.custosPorCentroNome?.[sNameLower] || 0) : 0;
+        map[sId] = byId + byName;
+      }
+    });
+    return map;
+  }, [stores, faturas, summaryData]);
+
+  const companyCostTotals = useMemo(() => {
+    if (faturas.length > 0) {
+      let dist = new Decimal(0);
+      let lostWind = new Decimal(0);
+      faturas.forEach((f) => {
+        if (f.tipo === "entrada_stock" || f.tipo === "compra" || f.status_pagamento === "em_conferencia") return;
+        const meta = extractFaturaMeta(f, stores);
+        const val = new Decimal(f.valor_total || 0);
+        if (
+          meta.centroCusto.toUpperCase() === "DISTRIBUIDORA" ||
+          (!meta.centroCusto && !meta.lojaId && f.tipo === "compra_financeiro")
+        ) {
+          dist = dist.add(val);
+        } else if (meta.centroCusto.toUpperCase() === "LOST WIND UNIPESSOAL,LDA") {
+          lostWind = lostWind.add(val);
+        }
+      });
+      return {
+        distribuidora: dist.toNumber(),
+        lostWind: lostWind.toNumber(),
+      };
+    }
+
+    return {
+      distribuidora: Number(summaryData?.custosPorCentroNome?.["distribuidora"] || 0),
+      lostWind: Number(summaryData?.custosPorCentroNome?.["lost wind unipessoal,lda"] || 0),
+    };
+  }, [faturas, stores, summaryData]);
+
   const getVencimentoText = (dateString: string, statusPagamento: string) => {
     if (!dateString || statusPagamento === 'pago') return null;
     const venc = new Date(dateString);
@@ -1035,16 +1095,17 @@ export default function AdminFinancial() {
     <div className="">
       
       {/* Header */}
-      <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-2 -mt-2 md:-mt-4 mb-0 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shrink-0">
-        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 sm:gap-5">
+      <div className="sticky top-0 z-40 bg-[#050505]/95 backdrop-blur-sm pt-1.5 md:pt-3 pb-2 -mt-2 md:-mt-4 mb-0 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 shrink-0">
+        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 sm:gap-4">
           <BrandTitle title="Financeiro" titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0" hideUnderline />
 
           {user?.role === "admin" && (
             <button
+              type="button"
               onClick={() => setIsPurchaseModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all shadow-sm shadow-emerald-500/20 border border-emerald-500/40 whitespace-nowrap shrink-0 cursor-pointer"
+              className="inline-flex items-center gap-1.5 h-8 px-3 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-lg text-xs font-semibold tracking-wide transition-all border border-emerald-400/30 whitespace-nowrap shrink-0 cursor-pointer"
             >
-              <Plus size={12} strokeWidth={2.75} />
+              <Plus className="w-3.5 h-3.5 shrink-0" strokeWidth={2.5} />
               <span>Nova Fatura</span>
             </button>
           )}
@@ -1061,10 +1122,10 @@ export default function AdminFinancial() {
             aria-selected={activeTab === "dashboard"}
             onClick={() => setActiveTab("dashboard")}
             className={cn(
-              "group inline-flex items-center gap-2 h-9 px-3.5 text-xs font-semibold tracking-wide rounded-lg border transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600",
+              "group inline-flex items-center gap-1.5 h-8 px-3 text-xs font-semibold tracking-wide rounded-lg border transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer active:scale-[0.99] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-600",
               activeTab === "dashboard"
-                ? "bg-zinc-800/95 text-white border-zinc-700/90 shadow-sm"
-                : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/80"
+                ? "bg-zinc-800/95 text-white border-zinc-700/80 shadow-xs"
+                : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/70"
             )}
           >
             <LayoutDashboard
@@ -1084,10 +1145,10 @@ export default function AdminFinancial() {
             aria-selected={activeTab === "faturas_compras" || activeTab === "faturas_despesas"}
             onClick={() => setActiveTab("faturas_compras")}
             className={cn(
-              "group inline-flex items-center gap-2 h-9 px-3.5 text-xs font-semibold tracking-wide rounded-lg border transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600",
+              "group inline-flex items-center gap-1.5 h-8 px-3 text-xs font-semibold tracking-wide rounded-lg border transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer active:scale-[0.99] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-600",
               activeTab === "faturas_compras" || activeTab === "faturas_despesas"
-                ? "bg-zinc-800/95 text-white border-zinc-700/90 shadow-sm"
-                : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/80"
+                ? "bg-zinc-800/95 text-white border-zinc-700/80 shadow-xs"
+                : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/70"
             )}
           >
             <Receipt
@@ -1107,10 +1168,10 @@ export default function AdminFinancial() {
             aria-selected={activeTab === "fornecedores"}
             onClick={() => setActiveTab("fornecedores")}
             className={cn(
-              "group inline-flex items-center gap-2 h-9 px-3.5 text-xs font-semibold tracking-wide rounded-lg border transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600",
+              "group inline-flex items-center gap-1.5 h-8 px-3 text-xs font-semibold tracking-wide rounded-lg border transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer active:scale-[0.99] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-600",
               activeTab === "fornecedores"
-                ? "bg-zinc-800/95 text-white border-zinc-700/90 shadow-sm"
-                : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/80"
+                ? "bg-zinc-800/95 text-white border-zinc-700/80 shadow-xs"
+                : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/70"
             )}
           >
             <Wallet
@@ -1137,101 +1198,185 @@ export default function AdminFinancial() {
             <>
 
           {activeTab === "dashboard" && (
-            <div className="space-y-6 mt-6">
-               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="space-y-4 mt-3.5">
+               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {/* 1. Faturas a Pagar (Compras) */}
-                  <div 
+                  <div
                      onClick={() => setActiveTab("faturas_compras")}
-                     className="bg-zinc-950 border border-zinc-800 hover:border-blue-500/50 rounded-xl p-4 shadow-sm cursor-pointer transition-all hover:bg-zinc-900/40 group"
+                     className="bg-zinc-950 border border-zinc-800/90 hover:border-blue-500/40 rounded-xl px-4 py-3 cursor-pointer transition-all duration-150 hover:bg-zinc-900/50 flex items-center justify-between gap-3 group"
                   >
-                     <div className="flex items-center justify-between mb-3">
-                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500 border border-blue-500/20 group-hover:scale-105 transition-transform">
+                     <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 shrink-0 group-hover:scale-105 transition-transform">
                            <Receipt className="w-4 h-4" />
                         </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded">Pendente</span>
+                        <div className="min-w-0">
+                           <p className="text-xs font-semibold text-zinc-200 truncate leading-tight">
+                              Faturas a Pagar <span className="text-zinc-500 font-normal">(Compras)</span>
+                           </p>
+                           <p className="text-[11px] font-medium text-blue-400/90 leading-tight mt-0.5">
+                              Pendente
+                           </p>
+                        </div>
                      </div>
-                     <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-0.5">Faturas a Pagar</p>
-                     <p className="text-[11px] font-bold text-blue-400 uppercase tracking-wider mb-1">(Compras)</p>
-                     <p className="text-xl font-bold text-zinc-100">€ {stats.totalPendenteCompras.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
+                     <p className="text-lg font-bold font-mono tabular-nums text-zinc-100 whitespace-nowrap shrink-0">
+                        € {stats.totalPendenteCompras.toLocaleString("pt-PT", { minimumFractionDigits: 2 })}
+                     </p>
                   </div>
 
-                  {/* 2. Faturas a Pagar (Despesas) */}
-                  <div 
-                     onClick={() => setActiveTab("faturas_despesas")}
-                     className="bg-zinc-950 border border-zinc-800 hover:border-amber-500/50 rounded-xl p-4 shadow-sm cursor-pointer transition-all hover:bg-zinc-900/40 group"
+                  {/* 2. Contas Vencidas */}
+                  <div
+                     onClick={() => {
+                        setActiveTab("faturas_compras");
+                        const nextFilter = { ...DEFAULT_FATURAS_FILTER, status: "vencido" };
+                        setDraftFilterAPagar(nextFilter);
+                        setAppliedFilterAPagar(nextFilter);
+                        setHasSearchedFaturas(true);
+                     }}
+                     className="bg-zinc-950 border border-zinc-800/90 hover:border-rose-500/40 rounded-xl px-4 py-3 cursor-pointer transition-all duration-150 hover:bg-zinc-900/50 flex items-center justify-between gap-3 group"
                   >
-                     <div className="flex items-center justify-between mb-3">
-                        <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500 border border-amber-500/20 group-hover:scale-105 transition-transform">
-                           <TrendingDown className="w-4 h-4" />
-                        </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">Pendente</span>
-                     </div>
-                     <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-0.5">Faturas a Pagar</p>
-                     <p className="text-[11px] font-bold text-amber-400 uppercase tracking-wider mb-1">(Despesas)</p>
-                     <p className="text-xl font-bold text-amber-500">€ {stats.totalPendenteDespesas.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
-                  </div>
-                  
-                  {/* 2.5 Contas Vencidas */}
-                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-sm relative overflow-hidden group">
-                     <div className="flex items-center justify-between mb-3 relative z-10">
-                        <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-500 border border-rose-500/20">
+                     <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0 group-hover:scale-105 transition-transform">
                            <AlertCircle className="w-4 h-4" />
                         </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-rose-500 bg-rose-500/10 px-2 py-0.5 rounded">Atrasado</span>
+                        <div className="min-w-0">
+                           <p className="text-xs font-semibold text-zinc-200 truncate leading-tight">
+                              Contas Vencidas
+                           </p>
+                           <p className="text-[11px] font-medium text-rose-400/90 leading-tight mt-0.5">
+                              Atrasado
+                           </p>
+                        </div>
                      </div>
-                     <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider mb-1 relative z-10">Contas Vencidas</p>
-                     <p className="text-xl font-bold text-rose-500 relative z-10">€ {stats.totalVencido.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
-                     <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-rose-500/5 blur-2xl rounded-full group-hover:bg-rose-500/10 transition-colors"></div>
+                     <p className="text-lg font-bold font-mono tabular-nums text-rose-400 whitespace-nowrap shrink-0">
+                        € {stats.totalVencido.toLocaleString("pt-PT", { minimumFractionDigits: 2 })}
+                     </p>
                   </div>
 
-                  {/* 3. Credito IVA */}
-                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-sm relative overflow-hidden group">
-                     <div className="flex items-center justify-between mb-3 relative z-10">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500 border border-emerald-500/20">
+                  {/* 4. Crédito IVA (Compras) */}
+                  <div className="bg-zinc-950 border border-zinc-800/90 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+                     <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
                            <Receipt className="w-4 h-4" />
                         </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded">Recuperável</span>
+                        <div className="min-w-0">
+                           <p className="text-xs font-semibold text-zinc-200 truncate leading-tight">
+                              Crédito IVA <span className="text-zinc-500 font-normal">(Compras)</span>
+                           </p>
+                           <p className="text-[11px] font-medium text-emerald-400/90 leading-tight mt-0.5">
+                              Recuperável
+                           </p>
+                        </div>
                      </div>
-                     <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider mb-1 relative z-10">Crédito IVA (Compras)</p>
-                     <p className="text-xl font-bold text-emerald-400 relative z-10">€ {stats.totalIvaCredito.toLocaleString('pt-PT', {minimumFractionDigits:2})}</p>
-                     <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-emerald-500/5 blur-2xl rounded-full group-hover:bg-emerald-500/10 transition-colors"></div>
+                     <p className="text-lg font-bold font-mono tabular-nums text-emerald-400 whitespace-nowrap shrink-0">
+                        € {stats.totalIvaCredito.toLocaleString("pt-PT", { minimumFractionDigits: 2 })}
+                     </p>
                   </div>
                </div>
 
-               {/* Alertas */}
-               <div className="grid grid-cols-1 gap-6">                  {/* Lojas Gestão */}
-                  <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-sm overflow-hidden flex flex-col">
-                     <div className="p-5 border-b border-zinc-800">
-                        <h3 className="text-lg font-semibold text-zinc-100 flex items-center gap-2">
-                           <Store className="w-4 h-4 text-amber-500" /> Gestão por Loja
-                        </h3>
-                     </div>
-                     <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+               {/* Cards Distribuidora e Lost Wind Unipessoal */}
+               <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+                  <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                     {[
+                        {
+                           key: "distribuidora",
+                           label: "Distribuidora",
+                           filterValue: "cc:DISTRIBUIDORA",
+                           total: companyCostTotals.distribuidora,
+                        },
+                        {
+                           key: "lost_wind",
+                           label: "Lost Wind Unipessoal, Lda",
+                           filterValue: "cc:LOST WIND UNIPESSOAL,LDA",
+                           total: companyCostTotals.lostWind,
+                        },
+                     ].map((item) => (
+                        <div
+                           key={item.key}
+                           className="relative group bg-[#0a0a0a] border border-amber-500/30 rounded-xl p-3.5 transition-all duration-200 shadow-[0_0_24px_-8px_rgba(245,158,11,0.1)] flex flex-col justify-between overflow-hidden"
+                        >
+                           <div className="absolute top-0 right-0 p-2.5 opacity-10 pointer-events-none">
+                              <Building2 className="w-11 h-11 text-amber-500 transform rotate-12" />
+                           </div>
+
+                           <div className="relative z-10 flex-1 mt-0.5 mb-3 flex flex-col items-center justify-center min-w-0">
+                              <h4
+                                 className="text-xl text-center text-[#facc15] tracking-wider leading-tight truncate max-w-full px-1"
+                                 style={{ fontFamily: "'Yellowtail', cursive", textShadow: "2px 2px 4px rgba(0,0,0,0.5)" }}
+                                 title={item.label}
+                              >
+                                 {item.label}
+                              </h4>
+                              <div className="mt-1.5 text-center">
+                                 <p className="text-[11px] font-medium text-zinc-400 leading-none">Centro de Custo</p>
+                                 <p className="text-lg font-bold font-mono tabular-nums text-zinc-100 mt-1 leading-none">
+                                    € {(item.total || 0).toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                 </p>
+                              </div>
+                           </div>
+
+                           <div className="relative z-10">
+                              <button
+                                 type="button"
+                                 onClick={() => {
+                                    setActiveTab("faturas_compras");
+                                    const nextFilter = { ...DEFAULT_FATURAS_FILTER, centroCusto: item.filterValue };
+                                    setDraftFilterAPagar(nextFilter);
+                                    setAppliedFilterAPagar(nextFilter);
+                                    setHasSearchedFaturas(true);
+                                 }}
+                                 className="w-full flex items-center justify-center gap-1.5 py-2 px-2 bg-white/5 hover:bg-rose-500/10 text-zinc-300 hover:text-rose-400 rounded-lg transition-colors border border-white/5 hover:border-rose-500/20 group/btn whitespace-nowrap cursor-pointer"
+                                 title={`Faturas — ${item.label}`}
+                              >
+                                 <Receipt size={13} className="shrink-0 group-hover/btn:scale-110 transition-transform" />
+                                 <span className="text-[10px] font-bold uppercase tracking-wide">Faturas</span>
+                              </button>
+                           </div>
+                        </div>
+                     ))}
+                  </div>
+               </div>
+
+               {/* Lojas Gestão */}
+               <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+                  <div className="px-4 py-3.5 border-b border-zinc-800">
+                     <h3 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
+                        <Store className="w-4 h-4 text-amber-500" /> Gestão por Loja
+                     </h3>
+                  </div>
+                     <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
                         {stores.map(store => (
-                           <div key={store.id} className="relative group bg-[#0a0a0a] border border-amber-500/30 rounded-2xl p-5 transition-all duration-300 shadow-[0_0_30px_-5px_rgba(245,158,11,0.1)] flex flex-col justify-between overflow-hidden">
-                              <div className="absolute top-0 right-0 p-4 opacity-10">
-                                 <Store className="w-16 h-16 text-amber-500 transform rotate-12" />
+                           <div key={store.id} className="relative group bg-[#0a0a0a] border border-amber-500/30 rounded-xl p-3.5 transition-all duration-200 shadow-[0_0_24px_-8px_rgba(245,158,11,0.1)] flex flex-col justify-between overflow-hidden">
+                              <div className="absolute top-0 right-0 p-2.5 opacity-10 pointer-events-none">
+                                 <Store className="w-11 h-11 text-amber-500 transform rotate-12" />
                               </div>
                               
-                              <div className="relative z-10 flex-1 mt-2 mb-6 flex items-center justify-center">
-                                 <h4 className="text-xl text-center text-[#facc15] tracking-wider leading-tight" style={{ fontFamily: "'Yellowtail', cursive", textShadow: "2px 2px 4px rgba(0,0,0,0.5)" }} title={store.name}>
+                              <div className="relative z-10 flex-1 mt-0.5 mb-3 flex flex-col items-center justify-center min-w-0">
+                                 <h4 className="text-xl text-center text-[#facc15] tracking-wider leading-tight truncate max-w-full px-1" style={{ fontFamily: "'Yellowtail', cursive", textShadow: "2px 2px 4px rgba(0,0,0,0.5)" }} title={store.name}>
                                     {store.name}
                                  </h4>
+                                 <div className="mt-1.5 text-center">
+                                    <p className="text-[11px] font-medium text-zinc-400 leading-none">Centro de Custo</p>
+                                    <p className="text-lg font-bold font-mono tabular-nums text-zinc-100 mt-1 leading-none">
+                                       € {(storeCostTotals[String(store.id)] || 0).toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </p>
+                                 </div>
                               </div>
                               
-                              <div className="relative z-10 grid grid-cols-2 gap-2">
+                              <div className="relative z-10 grid grid-cols-2 gap-1.5">
                                  <button 
+                                    type="button"
                                     onClick={() => { 
                                        setActiveTab("fornecedores");
                                        setFilterDataAReceber({...filterDataAReceber, loja: String(store.id)});
                                     }}
-                                    className="flex flex-col items-center justify-center gap-1.5 py-2.5 px-1 bg-white/5 hover:bg-blue-500/10 text-zinc-400 hover:text-blue-400 rounded-xl transition-colors border border-white/5 hover:border-blue-500/20 group/btn"
+                                    className="flex items-center justify-center gap-1.5 py-2 px-2 bg-white/5 hover:bg-blue-500/10 text-zinc-300 hover:text-blue-400 rounded-lg transition-colors border border-white/5 hover:border-blue-500/20 group/btn whitespace-nowrap cursor-pointer"
                                     title="Compras"
                                  >
-                                    <ShoppingCart size={14} className="group-hover/btn:scale-110 transition-transform" />
-                                    <span className="text-[9px] font-bold uppercase tracking-wider">Compras</span>
+                                    <ShoppingCart size={13} className="shrink-0 group-hover/btn:scale-110 transition-transform" />
+                                    <span className="text-[10px] font-bold uppercase tracking-wide">Compras</span>
                                  </button>
                                  <button 
+                                    type="button"
                                     onClick={() => { 
                                        setActiveTab("faturas_compras");
                                        const nextFilter = { ...DEFAULT_FATURAS_FILTER, centroCusto: `loja:${store.id}` };
@@ -1239,24 +1384,22 @@ export default function AdminFinancial() {
                                        setAppliedFilterAPagar(nextFilter);
                                        setHasSearchedFaturas(true);
                                     }}
-                                    className="flex flex-col items-center justify-center gap-1.5 py-2.5 px-1 bg-white/5 hover:bg-rose-500/10 text-zinc-400 hover:text-rose-400 rounded-xl transition-colors border border-white/5 hover:border-rose-500/20 group/btn"
+                                    className="flex items-center justify-center gap-1.5 py-2 px-2 bg-white/5 hover:bg-rose-500/10 text-zinc-300 hover:text-rose-400 rounded-lg transition-colors border border-white/5 hover:border-rose-500/20 group/btn whitespace-nowrap cursor-pointer"
                                     title="Faturas da Loja"
                                  >
-                                    <Receipt size={14} className="group-hover/btn:scale-110 transition-transform" />
-                                    <span className="text-[9px] font-bold uppercase tracking-wider">Faturas</span>
+                                    <Receipt size={13} className="shrink-0 group-hover/btn:scale-110 transition-transform" />
+                                    <span className="text-[10px] font-bold uppercase tracking-wide">Faturas</span>
                                  </button>
                               </div>
                            </div>
                         ))}
                         {stores.length === 0 && (
-                           <div className="col-span-full text-center p-8">
+                           <div className="col-span-full text-center p-6">
                               <p className="text-sm text-zinc-500">Nenhuma loja encontrada.</p>
                            </div>
                         )}
                      </div>
                   </div>
-
-               </div>
             </div>
          )}
 

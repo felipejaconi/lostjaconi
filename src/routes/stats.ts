@@ -250,8 +250,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         { data: pedidos }
       ] = await Promise.all([
         supabase.from("faturas")
-          .select("tipo, status_pagamento, valor_total, valor_pendente, data_vencimento, data_emissao, valor_iva, fornecedor:fornecedores(nome)")
-          .neq("status_pagamento", "pago")
+          .select("tipo, status_pagamento, valor_total, valor_pendente, data_vencimento, data_emissao, valor_iva, descrição, fornecedor:fornecedores(nome)")
           .neq("status_pagamento", "em_conferencia")
           .neq("tipo", "entrada_stock")
           .neq("tipo", "compra"),
@@ -265,26 +264,69 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       let totalVencido = 0;
       let totalIvaCredito = 0;
       const expiringBills: any[] = [];
+      const custosPorLojaId: Record<string, number> = {};
+      const custosPorCentroNome: Record<string, number> = {};
       
       const currentMonth = today.getMonth();
       const currentYear = today.getFullYear();
 
       (faturas || []).forEach((f: any) => {
         if (f.tipo === 'entrada_stock' || f.tipo === 'compra' || f.status_pagamento === 'em_conferencia') return;
-        const pend = Number(f.valor_pendente ?? f.valor_total ?? 0);
-        if (f.tipo === 'compra_financeiro') totalPendenteCompras += pend;
-        else totalPendenteDespesas += pend;
 
-        let isOverdue = false;
-        const vencDate = f.data_vencimento || f.data_emissao;
-        if (vencDate) {
-          const vd = new Date(vencDate);
-          if (vd < today) {
-            isOverdue = true;
-            totalVencido += pend;
+        const valTotal = Number(f.valor_total || 0);
+        if (valTotal > 0) {
+          let lojaId = "";
+          let centroCusto = "";
+          if (f.descrição && f.descrição !== "null") {
+            try {
+              const desc = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
+              lojaId = desc?.loja_id ? String(desc.loja_id).trim() : "";
+              centroCusto = String(
+                desc?.centro_custo ||
+                  (desc?.classificacao_tipo !== "conta_analise" ? desc?.classificacao_nome : "") ||
+                  ""
+              ).trim();
+            } catch {}
           }
-          if (vd <= nextWeek && pend > 0) {
-            expiringBills.push(f);
+
+          const lowerCC = centroCusto.toLowerCase();
+          if (lowerCC === "armazém central" || lowerCC === "armazem central") {
+            centroCusto = "DISTRIBUIDORA";
+          } else if (
+            lowerCC === "lost wind lda" ||
+            lowerCC === "lost wind unipessoal" ||
+            lowerCC === "lost wind unipessoal,lda" ||
+            lowerCC === "lost wind unipessoal, lda" ||
+            lowerCC === "administração / sede" ||
+            lowerCC === "administracao / sede"
+          ) {
+            centroCusto = "LOST WIND UNIPESSOAL,LDA";
+          } else if (!centroCusto && !lojaId && f.tipo === "compra_financeiro") {
+            centroCusto = "DISTRIBUIDORA";
+          }
+
+          if (lojaId) {
+            custosPorLojaId[lojaId] = (custosPorLojaId[lojaId] || 0) + valTotal;
+          } else if (centroCusto) {
+            const key = centroCusto.toLowerCase();
+            custosPorCentroNome[key] = (custosPorCentroNome[key] || 0) + valTotal;
+          }
+        }
+
+        if (f.status_pagamento !== "pago") {
+          const pend = Number(f.valor_pendente ?? f.valor_total ?? 0);
+          if (f.tipo === 'compra_financeiro') totalPendenteCompras += pend;
+          else totalPendenteDespesas += pend;
+
+          const vencDate = f.data_vencimento || f.data_emissao;
+          if (vencDate) {
+            const vd = new Date(vencDate);
+            if (vd < today) {
+              totalVencido += pend;
+            }
+            if (vd <= nextWeek && pend > 0) {
+              expiringBills.push(f);
+            }
           }
         }
 
@@ -316,11 +358,6 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
           const preco = Number(item.preco_unitario || 0);
           const liq = qty * preco;
           
-          // Get IVA: Priority order:
-          // 1. Explicit 'iva' column in pedido_itens (if exists)
-          // 2. 'iva' from joined product object
-          // 3. 'iva' from joined product if it's an array (rare but happens)
-          // 4. Default to 23%
           let ivaPerc = 23;
           
           if (item.iva !== undefined && item.iva !== null) {
@@ -338,8 +375,6 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
 
         let orderTotalWithIva = (orderLiq + orderIva);
         
-        // Robustness: If calculation from items resulted in 0 but the pedido has a stored total, use it.
-        // We assume p.total is the net value, so we add 23% IVA as a safe estimate if we couldn't calculate it precisely.
         if (orderTotalWithIva <= 0 && p.total > 0) {
            const storedTotal = Number(p.total);
            orderTotalWithIva = storedTotal * 1.23; // Estimate with standard IVA
@@ -362,6 +397,8 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         totalIvaCredito,
         totalIvaDebito,
         totalReceber,
+        custosPorLojaId,
+        custosPorCentroNome,
         expiringBills: expiringBills.sort((a,b) => new Date(a.data_vencimento || a.data_emissao).getTime() - new Date(b.data_vencimento || b.data_emissao).getTime()).slice(0, 10)
       });
     } catch (error: any) {
