@@ -17,14 +17,19 @@ import {
   Receipt,
   Users,
   Search,
-  RotateCcw
+  RotateCcw,
+  Package,
+  Check
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { motion } from "motion/react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import { printGenericDocument } from "../../lib/printGenericDocument";
 import { cn } from "../../lib/utils";
 import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
 import { BrandTitle } from "../../components/BrandTitle";
+import { sortCategories, sortGroupedCategories } from "../../lib/categoryUtils";
 
 type ReportType =
   | "receber"
@@ -35,7 +40,8 @@ type ReportType =
   | "consumo_lojas"
   | "fornecedores"
   | "despesas"
-  | "fechos";
+  | "fechos"
+  | "estoque";
 
 interface AppliedSearchFilters {
   reportType: ReportType;
@@ -43,6 +49,8 @@ interface AppliedSearchFilters {
   endDate: string;
   status: string;
   entity: string;
+  stockDate: string;
+  stockCategories: string[];
 }
 
 interface QuickSuggestion {
@@ -61,6 +69,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const [endDate, setEndDate] = useState("");
   const [status, setStatus] = useState("todos");
   const [entity, setEntity] = useState("todos");
+  const [stockDate, setStockDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
+  const [selectedStockCategories, setSelectedStockCategories] = useState<string[]>([]);
 
   // Bottom box state — starts empty and ONLY queries DB when clicking "Pesquisar"
   const [appliedSearch, setAppliedSearch] = useState<AppliedSearchFilters | null>(null);
@@ -72,9 +82,11 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const [searchedFaturas, setSearchedFaturas] = useState<any[]>([]);
   const [searchedPedidos, setSearchedPedidos] = useState<any[]>([]);
   const [searchedFechos, setSearchedFechos] = useState<any[]>([]);
+  const [searchedEstoque, setSearchedEstoque] = useState<any[]>([]);
 
   const [fornecedores, setFornecedores] = useState<any[]>([]);
   const [lojas, setLojas] = useState<any[]>([]);
+  const [categorias, setCategorias] = useState<any[]>([]);
 
   // Metrics
   const [totalPagarVencido, setTotalPagarVencido] = useState(0);
@@ -86,15 +98,19 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   useEffect(() => {
     const fetchGlobalMetrics = async () => {
       try {
-        const [fornRes, userRes, metricsRes] = await Promise.all([
+        const [fornRes, userRes, metricsRes, catRes] = await Promise.all([
           api.get("/admin/fornecedores").catch(() => ({ data: [] })),
           api.get("/admin/users").catch(() => ({ data: [] })),
-          api.get("/admin/reports/summary-metrics").catch(() => ({ data: {} }))
+          api.get("/admin/reports/summary-metrics").catch(() => ({ data: {} })),
+          api.get("/categorias").catch(() => ({ data: [] }))
         ]);
 
         if (Array.isArray(fornRes.data)) setFornecedores(fornRes.data);
         if (Array.isArray(userRes.data)) {
           setLojas(userRes.data.filter((u: any) => u.role === "loja"));
+        }
+        if (Array.isArray(catRes.data)) {
+          setCategorias(sortCategories(catRes.data));
         }
 
         const m = (metricsRes.data as any) || {};
@@ -115,6 +131,13 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
   const isDirtySinceLastSearch = useMemo(() => {
     if (!appliedSearch) return false;
+    if (reportType === "estoque" || appliedSearch.reportType === "estoque") {
+      if (appliedSearch.reportType !== reportType) return true;
+      if (appliedSearch.stockDate !== stockDate) return true;
+      const prevCats = [...(appliedSearch.stockCategories || [])].sort().join(",");
+      const curCats = [...selectedStockCategories].sort().join(",");
+      return prevCats !== curCats;
+    }
     return (
       appliedSearch.reportType !== reportType ||
       appliedSearch.startDate !== startDate ||
@@ -122,7 +145,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       appliedSearch.status !== status ||
       appliedSearch.entity !== normalizedEntity
     );
-  }, [appliedSearch, reportType, startDate, endDate, status, normalizedEntity]);
+  }, [appliedSearch, reportType, startDate, endDate, status, normalizedEntity, stockDate, selectedStockCategories]);
 
   const parseRecordDate = (dateString: string): Date | null => {
     if (!dateString) return null;
@@ -217,14 +240,238 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const formatCurrency = (val: number) =>
     `€ ${val.toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  const fetchDatasetsForType = async (targetType: ReportType, targetStartDate: string) => {
+  const formatStockQty = (val: number, unit?: string) => {
+    const num = Number(val || 0);
+    const rounded = Math.round(num * 1000) / 1000;
+    const formatted = Number.isInteger(rounded)
+      ? rounded.toLocaleString("pt-PT")
+      : rounded.toLocaleString("pt-PT", { minimumFractionDigits: 1, maximumFractionDigits: 3 });
+    return unit ? `${formatted} ${unit}` : formatted;
+  };
+
+  const filterAndGroupEstoque = (estoqueInput: any[], selectedCats: string[], searchFilter = "") => {
+    let filtered = estoqueInput;
+    if (selectedCats && selectedCats.length > 0) {
+      filtered = filtered.filter((item) => selectedCats.includes(String(item.categoria_id)));
+    }
+    if (searchFilter.trim() !== "") {
+      const term = searchFilter.trim().toLowerCase();
+      filtered = filtered.filter(
+        (item) =>
+          String(item.nome || "").toLowerCase().includes(term) ||
+          String(item.categoria_nome || "").toLowerCase().includes(term)
+      );
+    }
+
+    const groupedMap = new Map<string, any[]>();
+    filtered.forEach((item) => {
+      const catName = item.categoria_nome || "Sem Categoria";
+      if (!groupedMap.has(catName)) groupedMap.set(catName, []);
+      groupedMap.get(catName)!.push(item);
+    });
+
+    const sortedGroups = sortGroupedCategories(Array.from(groupedMap.entries())).map(
+      ([catName, items]) => [
+        catName,
+        [...items].sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || ""), "pt-PT"))
+      ] as [string, any[]]
+    );
+
+    const flatItems = sortedGroups.flatMap(([, items]) => items);
+    return { sortedGroups, flatItems };
+  };
+
+  const generateEstoquePdf = (
+    estoqueInput: any[],
+    selectedCats: string[],
+    targetDateIso: string,
+    searchFilter = ""
+  ) => {
+    const { sortedGroups, flatItems } = filterAndGroupEstoque(estoqueInput, selectedCats, searchFilter);
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const marginX = 12;
+
+    const todayIso = new Date().toISOString().split("T")[0];
+    const effectiveDateIso = targetDateIso || todayIso;
+    const dateLabel = formatIsoInputDate(effectiveDateIso);
+    const emittedNow = new Date();
+    const emittedLabel = `${emittedNow.toLocaleDateString("pt-PT")} ${emittedNow.toLocaleTimeString("pt-PT", {
+      hour: "2-digit",
+      minute: "2-digit"
+    })}`;
+
+    const catLabel =
+      !selectedCats || selectedCats.length === 0
+        ? "Todas as Categorias"
+        : selectedCats
+            .map((cid) =>
+              cid === "sem_categoria"
+                ? "Sem Categoria"
+                : categorias.find((c) => String(c.id) === String(cid))?.nome || cid
+            )
+            .join(", ");
+
+    // Top Header
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.3);
+    doc.line(marginX, 28, pageWidth - marginX, 28);
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("RELATÓRIO DE ESTOQUE", marginX, 13);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    doc.text("Lost Wind — Armazém Central · Folha de Contagem e Conferência", marginX, 18.5);
+
+    const catTextTrimmed = catLabel.length > 78 ? `${catLabel.slice(0, 75)}...` : catLabel;
+    doc.text(`Categorias: ${catTextTrimmed}`, marginX, 24);
+
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(15, 23, 42);
+    doc.text(`Data: ${dateLabel}`, pageWidth - marginX, 13, { align: "right" });
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Total de Artigos: ${flatItems.length}`, pageWidth - marginX, 18.5, { align: "right" });
+    doc.text(`Emissão: ${emittedLabel}`, pageWidth - marginX, 24, { align: "right" });
+
+    const tableBody: any[] = [];
+    sortedGroups.forEach(([catName, items]) => {
+      tableBody.push([
+        {
+          content: `${catName.toUpperCase()} (${items.length})`,
+          colSpan: 3,
+          __isSection: true,
+          styles: {
+            fillColor: [226, 232, 240],
+            textColor: [15, 23, 42],
+            fontStyle: "bold",
+            fontSize: 8.5,
+            halign: "left",
+            cellPadding: { top: 2, bottom: 2, left: 3, right: 3 }
+          }
+        }
+      ]);
+
+      items.forEach((item) => {
+        tableBody.push([
+          item.nome,
+          formatStockQty(item.quantidade_atual, item.unidade_base),
+          ""
+        ]);
+      });
+    });
+
+    if (tableBody.length === 0) {
+      tableBody.push([
+        {
+          content: "Nenhum artigo encontrado para os filtros selecionados.",
+          colSpan: 3,
+          __isSection: true,
+          styles: { halign: "center", textColor: [100, 116, 139], cellPadding: 6 }
+        }
+      ]);
+    }
+
+    autoTable(doc, {
+      startY: 32,
+      margin: { left: marginX, right: marginX, top: 14, bottom: 18 },
+      head: [["NOME DO ARTIGO", "QUANTIDADE ATUAL", "NOVA QUANTIDADE"]],
+      body: tableBody,
+      theme: "grid",
+      styles: {
+        font: "helvetica",
+        fontSize: 9,
+        textColor: [15, 23, 42],
+        lineColor: [203, 213, 225],
+        lineWidth: 0.2,
+        minCellHeight: 8.5,
+        valign: "middle",
+        cellPadding: { top: 1.8, bottom: 1.8, left: 3, right: 3 }
+      },
+      headStyles: {
+        fillColor: [30, 41, 59],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+        fontSize: 8.5,
+        minCellHeight: 8
+      },
+      columnStyles: {
+        0: { cellWidth: 104, halign: "left" },
+        1: { cellWidth: 38, halign: "right", fontStyle: "bold" },
+        2: { cellWidth: 44, halign: "center" }
+      },
+      didParseCell: (data: any) => {
+        if (data.section === "head") {
+          if (data.column.index === 1) data.cell.styles.halign = "right";
+          if (data.column.index === 2) data.cell.styles.halign = "center";
+        }
+      },
+      didDrawCell: (data: any) => {
+        if (
+          data.section === "body" &&
+          data.column.index === 2 &&
+          !(data.row.raw as any)?.[0]?.__isSection
+        ) {
+          const boxX = data.cell.x + 3;
+          const boxY = data.cell.y + 1.5;
+          const boxW = data.cell.width - 6;
+          const boxH = data.cell.height - 3;
+          doc.setDrawColor(148, 163, 184);
+          doc.setLineWidth(0.25);
+          doc.setFillColor(255, 255, 255);
+          doc.roundedRect(boxX, boxY, boxW, boxH, 0.8, 0.8, "FD");
+        }
+      }
+    });
+
+    // Signature strip after table
+    const finalY = (doc as any).lastAutoTable?.finalY || 40;
+    let sigY = finalY + 12;
+    if (sigY > pageHeight - 22) {
+      doc.addPage();
+      sigY = 24;
+    }
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text(
+      "Conferido por: ___________________________________________      Data da Contagem: ____ / ____ / ________",
+      marginX,
+      sigY
+    );
+
+    const totalPages = doc.getNumberOfPages();
+    for (let p = 1; p <= totalPages; p++) {
+      doc.setPage(p);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Lost Wind — Relatório de Estoque (${dateLabel})`, marginX, pageHeight - 7);
+      doc.text(`Página ${p} de ${totalPages}`, pageWidth - marginX, pageHeight - 7, { align: "right" });
+    }
+
+    doc.save(`Relatorio_Estoque_${effectiveDateIso}.pdf`);
+  };
+
+  const fetchDatasetsForType = async (
+    targetType: ReportType,
+    targetStartDate: string,
+    targetStockDate = ""
+  ) => {
     const needsFaturas = ["pagar", "faturas_pagas", "iva_credito", "despesas", "consumo_lojas", "fornecedores"].includes(targetType);
     const needsPedidos = ["receber", "debito_iva", "consumo_lojas"].includes(targetType);
     const needsFechos = targetType === "fechos";
+    const needsEstoque = targetType === "estoque";
 
     let faturasData: any[] = [];
     let pedidosData: any[] = [];
     let fechosData: any[] = [];
+    let estoqueData: any[] = [];
 
     const tasks: PromiseLike<void>[] = [];
 
@@ -270,8 +517,23 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       );
     }
 
+    if (needsEstoque) {
+      tasks.push(
+        api
+          .get("/admin/reports/estoque", {
+            params: { date: targetStockDate || undefined }
+          })
+          .then((res) => {
+            estoqueData = Array.isArray(res.data) ? res.data : [];
+          })
+          .catch(() => {
+            estoqueData = [];
+          })
+      );
+    }
+
     await Promise.all(tasks);
-    return { faturasData, pedidosData, fechosData };
+    return { faturasData, pedidosData, fechosData, estoqueData };
   };
 
   // Explicit search handler — ONLY called when clicking the "Pesquisar" button
@@ -281,7 +543,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       startDate,
       endDate,
       status,
-      entity: normalizedEntity
+      entity: normalizedEntity,
+      stockDate,
+      stockCategories: [...selectedStockCategories]
     };
 
     setPreviewLoading(true);
@@ -290,10 +554,15 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     setAppliedSearch(nextFilters);
 
     try {
-      const { faturasData, pedidosData, fechosData } = await fetchDatasetsForType(nextFilters.reportType, nextFilters.startDate);
+      const { faturasData, pedidosData, fechosData, estoqueData } = await fetchDatasetsForType(
+        nextFilters.reportType,
+        nextFilters.startDate,
+        nextFilters.stockDate
+      );
       setSearchedFaturas(faturasData);
       setSearchedPedidos(pedidosData);
       setSearchedFechos(fechosData);
+      setSearchedEstoque(estoqueData);
     } catch (err) {
       console.error("Erro ao pesquisar relatórios:", err);
       Swal.fire("Erro", "Falha ao consultar os dados do relatório.", "error");
@@ -307,6 +576,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     faturasInput: any[],
     pedidosInput: any[],
     fechosInput: any[],
+    estoqueInput: any[] = [],
     searchFilter = ""
   ): {
     title: string;
@@ -707,11 +977,30 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       summaryTotal = grandTotal;
       summaryLabel = "Total Faturado";
       totalRow = ["TOTAL", "", "", String(grandCount), grandTotal.toFixed(2), grandPendente.toFixed(2)];
+    } else if (rType === "estoque") {
+      const { flatItems } = filterAndGroupEstoque(estoqueInput, activeFilters.stockCategories || [], "");
+      headers = ["Categoria", "Nome do Artigo", "Quantidade Atual", "Nova Quantidade"];
+      numericColumns = [2];
+      title = "Relatório de Estoque";
+
+      rows = flatItems.map((item) => [
+        item.categoria_nome || "Sem Categoria",
+        item.nome || "Artigo",
+        formatStockQty(item.quantidade_atual, item.unidade_base),
+        "________________"
+      ]);
+
+      summaryTotal = rows.length;
+      summaryLabel = "Total de Artigos";
+      totalRow = null;
     }
 
     if (searchFilter.trim() !== "") {
       const term = searchFilter.trim().toLowerCase();
       rows = rows.filter((r) => r.some((cell) => String(cell).toLowerCase().includes(term)));
+      if (rType === "estoque") {
+        summaryTotal = rows.length;
+      }
     }
 
     return { title, headers, rows, totalRow, summaryTotal, summaryLabel, numericColumns };
@@ -719,8 +1008,15 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
   const livePreview = useMemo(() => {
     if (!appliedSearch) return null;
-    return computeReportResult(appliedSearch, searchedFaturas, searchedPedidos, searchedFechos, quickSearch);
-  }, [appliedSearch, searchedFaturas, searchedPedidos, searchedFechos, quickSearch, fornecedores, lojas]);
+    return computeReportResult(
+      appliedSearch,
+      searchedFaturas,
+      searchedPedidos,
+      searchedFechos,
+      searchedEstoque,
+      quickSearch
+    );
+  }, [appliedSearch, searchedFaturas, searchedPedidos, searchedFechos, searchedEstoque, quickSearch, fornecedores, lojas]);
 
   // Suggestions computed strictly in-memory over the dataset fetched by "Pesquisar" (zero extra DB calls)
   const smartSuggestions = useMemo<QuickSuggestion[]>(() => {
@@ -734,6 +1030,36 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     } = appliedSearch;
 
     const list: QuickSuggestion[] = [];
+
+    if (rType === "estoque") {
+      if (!appliedSearch.stockCategories || appliedSearch.stockCategories.length === 0) {
+        const catCounts = new Map<string, { id: string; nome: string; count: number }>();
+        searchedEstoque.forEach((item) => {
+          const cid = String(item.categoria_id || "sem_categoria");
+          const cnome = item.categoria_nome || "Sem Categoria";
+          const cur = catCounts.get(cid) || { id: cid, nome: cnome, count: 0 };
+          cur.count += 1;
+          catCounts.set(cid, cur);
+        });
+
+        Array.from(catCounts.values())
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 6)
+          .forEach((cat) => {
+            list.push({
+              id: `sug_est_cat_${cat.id}`,
+              label: cat.nome,
+              meta: `${cat.count} art.`,
+              apply: () => {
+                setSelectedStockCategories([cat.id]);
+                setAppliedSearch((prev) => (prev ? { ...prev, stockCategories: [cat.id] } : null));
+                setVisibleLimit(50);
+              }
+            });
+          });
+      }
+      return list;
+    }
 
     // 1. In-memory date-range refinements when no dates were entered yet
     if (!sDate && !eDate) {
@@ -968,7 +1294,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     }
 
     return list;
-  }, [appliedSearch, searchedFaturas, searchedPedidos, searchedFechos, fornecedores, lojas]);
+  }, [appliedSearch, searchedFaturas, searchedPedidos, searchedFechos, searchedEstoque, fornecedores, lojas]);
 
   const handleExport = async () => {
     setLoading(true);
@@ -978,47 +1304,106 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         startDate,
         endDate,
         status,
-        entity: normalizedEntity
+        entity: normalizedEntity,
+        stockDate,
+        stockCategories: [...selectedStockCategories]
       };
 
       let faturasData = searchedFaturas;
       let pedidosData = searchedPedidos;
       let fechosData = searchedFechos;
+      let estoqueData = searchedEstoque;
 
       // Only query DB on export if we haven't already fetched for the exact current filters
       if (!appliedSearch || isDirtySinceLastSearch) {
-        const fetched = await fetchDatasetsForType(exportFilters.reportType, exportFilters.startDate);
+        const fetched = await fetchDatasetsForType(
+          exportFilters.reportType,
+          exportFilters.startDate,
+          exportFilters.stockDate
+        );
         faturasData = fetched.faturasData;
         pedidosData = fetched.pedidosData;
         fechosData = fetched.fechosData;
+        estoqueData = fetched.estoqueData;
       }
 
-      const computed = computeReportResult(exportFilters, faturasData, pedidosData, fechosData, !isDirtySinceLastSearch ? quickSearch : "");
-      const exportRows = computed.totalRow ? [...computed.rows, computed.totalRow] : computed.rows;
+      const activeQuickSearch = !isDirtySinceLastSearch ? quickSearch : "";
 
-      if (format === "pdf") {
-        printGenericDocument({
-          title: computed.title,
-          headers: computed.headers,
-          data: exportRows,
-          docNumber: `FIN-${new Date().getFullYear()}-${reportType.toUpperCase()}`,
-          footerNotes: "Relatório Financeiro gerado pelo sistema ERP Lost Wind."
-        });
+      if (reportType === "estoque") {
+        if (format === "pdf") {
+          generateEstoquePdf(
+            estoqueData,
+            exportFilters.stockCategories,
+            exportFilters.stockDate,
+            activeQuickSearch
+          );
+        } else {
+          const { flatItems } = filterAndGroupEstoque(
+            estoqueData,
+            exportFilters.stockCategories,
+            activeQuickSearch
+          );
+          const csvRows = [
+            ["Categoria", "Nome do Artigo", "Quantidade Atual", "Unidade", "Nova Quantidade"].join(";"),
+            ...flatItems.map((it) =>
+              [
+                `"${String(it.categoria_nome || "Sem Categoria").replace(/"/g, '""')}"`,
+                `"${String(it.nome || "").replace(/"/g, '""')}"`,
+                `"${formatStockQty(it.quantidade_atual)}"`,
+                `"${it.unidade_base || "un"}"`,
+                `""`
+              ].join(";")
+            )
+          ].join("\n");
+
+          const blob = new Blob(["\uFEFF" + csvRows], { type: "text/csv;charset=utf-8;" });
+          const link = document.createElement("a");
+          const url = URL.createObjectURL(blob);
+          link.setAttribute("href", url);
+          link.setAttribute(
+            "download",
+            `Relatorio_Estoque_${exportFilters.stockDate || new Date().toISOString().split("T")[0]}.csv`
+          );
+          link.style.visibility = "hidden";
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
       } else {
-        const csvContent = [
-          computed.headers.join(","),
-          ...exportRows.map((row) => row.map((cell: any) => `"${cell}"`).join(","))
-        ].join("\n");
+        const computed = computeReportResult(
+          exportFilters,
+          faturasData,
+          pedidosData,
+          fechosData,
+          estoqueData,
+          activeQuickSearch
+        );
+        const exportRows = computed.totalRow ? [...computed.rows, computed.totalRow] : computed.rows;
 
-        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-        const link = document.createElement("a");
-        const url = URL.createObjectURL(blob);
-        link.setAttribute("href", url);
-        link.setAttribute("download", `${computed.title}.csv`);
-        link.style.visibility = "hidden";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        if (format === "pdf") {
+          printGenericDocument({
+            title: computed.title,
+            headers: computed.headers,
+            data: exportRows,
+            docNumber: `FIN-${new Date().getFullYear()}-${reportType.toUpperCase()}`,
+            footerNotes: "Relatório Financeiro gerado pelo sistema ERP Lost Wind."
+          });
+        } else {
+          const csvContent = [
+            computed.headers.join(","),
+            ...exportRows.map((row) => row.map((cell: any) => `"${cell}"`).join(","))
+          ].join("\n");
+
+          const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+          const link = document.createElement("a");
+          const url = URL.createObjectURL(blob);
+          link.setAttribute("href", url);
+          link.setAttribute("download", `${computed.title}.csv`);
+          link.style.visibility = "hidden";
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
       }
 
       Swal.fire({
@@ -1049,7 +1434,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     { id: "despesas", title: "Despesas", icon: Receipt, color: "text-purple-500", bg: "bg-purple-500/10", border: "border-purple-500" },
     { id: "consumo_lojas", title: "Totais Lojas", icon: Store, color: "text-blue-500", bg: "bg-blue-500/10", border: "border-blue-500" },
     { id: "fechos", title: "Fechos de Caixa", icon: Store, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500" },
-    { id: "fornecedores", title: "Fornecedores", icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10", border: "border-cyan-500" }
+    { id: "fornecedores", title: "Fornecedores", icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10", border: "border-cyan-500" },
+    { id: "estoque", title: "Estoque", icon: Package, color: "text-teal-400", bg: "bg-teal-500/10", border: "border-teal-500" }
   ];
 
   const getEntityOptionsForType = (rType: ReportType) => [
@@ -1078,6 +1464,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
   const appliedPeriodLabel = useMemo(() => {
     if (!appliedSearch) return "Todas as datas";
+    if (appliedSearch.reportType === "estoque") {
+      return appliedSearch.stockDate ? formatIsoInputDate(appliedSearch.stockDate) : "Atual (Hoje)";
+    }
     const { startDate: s, endDate: e } = appliedSearch;
     if (s && e) return `${formatIsoInputDate(s)} a ${formatIsoInputDate(e)}`;
     if (s) return `Desde ${formatIsoInputDate(s)}`;
@@ -1086,22 +1475,43 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   }, [appliedSearch]);
 
   const appliedEntityLabel = useMemo(() => {
-    if (!appliedSearch || appliedSearch.entity === "todos") return "Todos(as)";
+    if (!appliedSearch) return "Todos(as)";
+    if (appliedSearch.reportType === "estoque") {
+      const cats = appliedSearch.stockCategories || [];
+      if (cats.length === 0) return "Todas as Categorias";
+      return cats
+        .map((cid) =>
+          cid === "sem_categoria"
+            ? "Sem Categoria"
+            : categorias.find((c) => String(c.id) === String(cid))?.nome || cid
+        )
+        .join(", ");
+    }
+    if (appliedSearch.entity === "todos") return "Todos(as)";
     const opts = getEntityOptionsForType(appliedSearch.reportType);
     const found = opts.find((o) => String(o.id) === String(appliedSearch.entity));
     return found ? found.nome : appliedSearch.entity;
-  }, [appliedSearch, fornecedores, lojas]);
+  }, [appliedSearch, fornecedores, lojas, categorias]);
+
+  const toggleStockCategory = (catId: string) => {
+    setSelectedStockCategories((prev) =>
+      prev.includes(catId) ? prev.filter((id) => id !== catId) : [...prev, catId]
+    );
+  };
 
   const handleResetFilters = () => {
     setStartDate("");
     setEndDate("");
     setStatus("todos");
     setEntity("todos");
+    setStockDate(new Date().toISOString().split("T")[0]);
+    setSelectedStockCategories([]);
     setQuickSearch("");
     setAppliedSearch(null);
     setSearchedFaturas([]);
     setSearchedPedidos([]);
     setSearchedFechos([]);
+    setSearchedEstoque([]);
   };
 
   return (
@@ -1235,71 +1645,150 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
           </div>
 
           <div className="space-y-6">
-            <div>
-              <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
-                <Calendar size={14} /> Período do Relatório
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {reportType === "estoque" ? (
+              <>
                 <div>
-                  <span className="block text-[10px] font-medium text-zinc-500 mb-1.5">Data Inicial</span>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 transition-colors tabular-nums"
-                  />
+                  <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
+                    <Calendar size={14} /> Data do Estoque
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={stockDate}
+                      onChange={(e) => setStockDate(e.target.value)}
+                      className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 font-medium outline-none focus:border-teal-500 transition-colors tabular-nums"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setStockDate(new Date().toISOString().split("T")[0])}
+                      className="px-3.5 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-xs font-semibold text-zinc-300 transition-colors whitespace-nowrap cursor-pointer"
+                    >
+                      Hoje
+                    </button>
+                  </div>
                 </div>
+
                 <div>
-                  <span className="block text-[10px] font-medium text-zinc-500 mb-1.5">Data Final</span>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 transition-colors tabular-nums"
-                  />
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest">
+                      <Layers size={14} /> Filtrar por Categorias
+                    </label>
+                    {selectedStockCategories.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStockCategories([])}
+                        className="text-[10px] font-semibold text-teal-400 hover:text-teal-300 transition-colors cursor-pointer"
+                      >
+                        Selecionar todas
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStockCategories([])}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer",
+                        selectedStockCategories.length === 0
+                          ? "bg-teal-500/15 border-teal-500 text-teal-300"
+                          : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+                      )}
+                    >
+                      {selectedStockCategories.length === 0 && <Check size={12} />}
+                      Todas as Categorias
+                    </button>
+                    {categorias.map((cat) => {
+                      const cid = String(cat.id);
+                      const isActive = selectedStockCategories.includes(cid);
+                      return (
+                        <button
+                          key={cid}
+                          type="button"
+                          onClick={() => toggleStockCategory(cid)}
+                          className={cn(
+                            "px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer",
+                            isActive
+                              ? "bg-teal-500/15 border-teal-500 text-teal-300"
+                              : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+                          )}
+                        >
+                          {isActive && <Check size={12} />}
+                          {cat.nome}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            </div>
-
-            <div>
-              <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
-                <Building2 size={14} />{" "}
-                {["pagar", "faturas_pagas"].includes(reportType)
-                  ? "Filtrar por Loja ou Fornecedor"
-                  : ["iva_credito", "fornecedores"].includes(reportType)
-                  ? "Filtrar por Fornecedor"
-                  : reportType === "despesas"
-                  ? "Filtrar por Loja ou Armazém"
-                  : "Filtrar por Loja"}
-              </label>
-              <div className="relative">
-                <SearchableCombobox
-                  value={entity}
-                  onChange={(val) => setEntity(val || "todos")}
-                  placeholder="Pesquisar..."
-                  options={entityOptions}
-                />
-              </div>
-            </div>
-
-            {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar", "fechos"].includes(reportType) && (
-              <div>
-                <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
-                  <Filter size={14} /> Status de Pagamento
-                </label>
-                <div className="relative">
-                  <select
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 appearance-none transition-colors"
-                  >
-                    <option value="todos">Todos os Status</option>
-                    <option value="pago">{reportType === "despesas" ? "Pagos" : "Recebidos"}</option>
-                    <option value="nao_pago">{reportType === "despesas" ? "Pendentes" : "A Receber"}</option>
-                  </select>
-                  <ChevronDown size={16} className="absolute right-4 top-3.5 text-zinc-500 pointer-events-none" />
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
+                    <Calendar size={14} /> Período do Relatório
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <span className="block text-[10px] font-medium text-zinc-500 mb-1.5">Data Inicial</span>
+                      <input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 transition-colors tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <span className="block text-[10px] font-medium text-zinc-500 mb-1.5">Data Final</span>
+                      <input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 transition-colors tabular-nums"
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
+
+                <div>
+                  <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
+                    <Building2 size={14} />{" "}
+                    {["pagar", "faturas_pagas"].includes(reportType)
+                      ? "Filtrar por Loja ou Fornecedor"
+                      : ["iva_credito", "fornecedores"].includes(reportType)
+                      ? "Filtrar por Fornecedor"
+                      : reportType === "despesas"
+                      ? "Filtrar por Loja ou Armazém"
+                      : "Filtrar por Loja"}
+                  </label>
+                  <div className="relative">
+                    <SearchableCombobox
+                      value={entity}
+                      onChange={(val) => setEntity(val || "todos")}
+                      placeholder="Pesquisar..."
+                      options={entityOptions}
+                    />
+                  </div>
+                </div>
+
+                {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar", "fechos"].includes(reportType) && (
+                  <div>
+                    <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
+                      <Filter size={14} /> Status de Pagamento
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={status}
+                        onChange={(e) => setStatus(e.target.value)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 appearance-none transition-colors"
+                      >
+                        <option value="todos">Todos os Status</option>
+                        <option value="pago">{reportType === "despesas" ? "Pagos" : "Recebidos"}</option>
+                        <option value="nao_pago">{reportType === "despesas" ? "Pendentes" : "A Receber"}</option>
+                      </select>
+                      <ChevronDown size={16} className="absolute right-4 top-3.5 text-zinc-500 pointer-events-none" />
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
             <div>
@@ -1354,10 +1843,12 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   {livePreview?.title || "Resultados da Pesquisa"}
                 </h3>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400 mt-1 tabular-nums">
-                  <span>Período: {appliedPeriodLabel}</span>
+                  <span>{appliedSearch.reportType === "estoque" ? "Data" : "Período"}: {appliedPeriodLabel}</span>
                   <span aria-hidden="true">·</span>
-                  <span className="truncate max-w-[240px]">Filtro: {appliedEntityLabel}</span>
-                  {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar", "fechos"].includes(appliedSearch.reportType) && appliedSearch.status !== "todos" && (
+                  <span className="truncate max-w-[300px]">
+                    {appliedSearch.reportType === "estoque" ? "Categorias" : "Filtro"}: {appliedEntityLabel}
+                  </span>
+                  {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar", "fechos", "estoque"].includes(appliedSearch.reportType) && appliedSearch.status !== "todos" && (
                     <>
                       <span aria-hidden="true">·</span>
                       <span>
@@ -1375,11 +1866,17 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   {livePreview && !previewLoading && (
                     <>
                       <span aria-hidden="true">·</span>
-                      <span className="text-zinc-200 font-medium">{livePreview.rows.length} registos</span>
-                      <span aria-hidden="true">·</span>
-                      <span className="text-zinc-100 font-semibold">
-                        {livePreview.summaryLabel}: {formatCurrency(livePreview.summaryTotal)}
+                      <span className="text-zinc-200 font-medium">
+                        {livePreview.rows.length} {appliedSearch.reportType === "estoque" ? "artigos" : "registos"}
                       </span>
+                      {appliedSearch.reportType !== "estoque" && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-zinc-100 font-semibold">
+                            {livePreview.summaryLabel}: {formatCurrency(livePreview.summaryTotal)}
+                          </span>
+                        </>
+                      )}
                     </>
                   )}
                   {isDirtySinceLastSearch && !previewLoading && (

@@ -468,4 +468,72 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
     }
   });
 
+  // GET Stock Report (current stock or historical stock reconstructed at end of target date)
+  app.get("/api/admin/reports/estoque", authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+
+    try {
+      const dateParam = String(req.query.date || "").trim();
+      const todayIso = new Date().toISOString().split("T")[0];
+
+      const { data: prods, error: prodErr } = await supabase
+        .from("produtos")
+        .select("id, nome, stock_armazem, unidade_base, categoria_id, created_at, categorias(nome)");
+
+      if (prodErr) throw prodErr;
+
+      const deltaAfterDate = new Map<string, number>();
+
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateParam) && dateParam < todayIso) {
+        const cutoffIso = `${dateParam}T23:59:59.999Z`;
+        const pageSize = 1000;
+        let offset = 0;
+
+        while (true) {
+          const { data: movs, error: movErr } = await supabase
+            .from("movimentacoes_stock")
+            .select("id, produto_id, tipo, quantidade")
+            .gt("created_at", cutoffIso)
+            .order("id", { ascending: true })
+            .range(offset, offset + pageSize - 1);
+
+          if (movErr) throw movErr;
+          if (!movs || movs.length === 0) break;
+
+          for (const m of movs) {
+            if (m.produto_id == null) continue;
+            const pid = String(m.produto_id);
+            const qty = Number(m.quantidade || 0);
+            const signed = m.tipo === "entrada" ? qty : -qty;
+            deltaAfterDate.set(pid, (deltaAfterDate.get(pid) || 0) + signed);
+          }
+
+          if (movs.length < pageSize) break;
+          offset += pageSize;
+        }
+      }
+
+      const result = (prods || []).map((p: any) => {
+        const pid = String(p.id);
+        const currentStock = Number(p.stock_armazem || 0);
+        const netAfter = deltaAfterDate.get(pid) || 0;
+        const stockAtDate = Math.round((currentStock - netAfter) * 1000) / 1000;
+
+        return {
+          id: p.id,
+          nome: p.nome || "Artigo sem nome",
+          categoria_id: p.categoria_id != null ? String(p.categoria_id) : "sem_categoria",
+          categoria_nome: p.categorias?.nome || "Sem Categoria",
+          unidade_base: p.unidade_base || "un",
+          quantidade_atual: stockAtDate,
+        };
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("Erro em GET /api/admin/reports/estoque:", error);
+      res.status(500).json({ error: error.message || "Erro ao gerar relatório de estoque" });
+    }
+  });
+
 }

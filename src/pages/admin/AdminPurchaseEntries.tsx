@@ -1,21 +1,11 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Save } from "lucide-react";
+import { Save, Plus } from "lucide-react";
 import Swal from "sweetalert2";
 import api from "../../lib/api";
 import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
 import Decimal from "decimal.js";
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
-
-const DEFAULT_CONTAS_ANALISE = [
-  "Compras de Mercadorias",
-  "Matérias-Primas e Subsidiárias",
-  "Bebidas e Cafetaria",
-  "Embalagens e Consumíveis",
-  "FSE - Fornecimentos e Serviços Externos",
-  "Equipamentos e Utensílios",
-  "Outras Compras",
-];
 
 export default function AdminPurchaseEntries({
   onSuccess,
@@ -29,18 +19,20 @@ export default function AdminPurchaseEntries({
   const [fornecedores, setFornecedores] = useState<any[]>([]);
   const [stores, setStores] = useState<any[]>([]);
   const [existingFaturas, setExistingFaturas] = useState<any[]>([]);
+  const [savedContasAnalise, setSavedContasAnalise] = useState<string[]>([]);
+  const [isAddingConta, setIsAddingConta] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Classificação acima de Entidade (Fornecedor): Centro de Custo vs Conta Análise
-  const [classificacaoTipo, setClassificacaoTipo] = useState<"centro_custo" | "conta_analise">(
-    "centro_custo"
-  );
-  const [useNovaClassificacao, setUseNovaClassificacao] = useState(false);
+  // Classificação unificada: 1) Centro de Custo e 2) Conta de Análise na mesma fatura
+  const [useNovoCentroCusto, setUseNovoCentroCusto] = useState(false);
   const [centroCustoSelecionado, setCentroCustoSelecionado] = useState<string>(
     lojaId ? `loja:${lojaId}` : "armazem_central"
   );
+  const [centroCustoNovo, setCentroCustoNovo] = useState<string>("");
+
+  const [useNovaContaAnalise, setUseNovaContaAnalise] = useState(false);
   const [contaAnaliseSelecionada, setContaAnaliseSelecionada] = useState<string>("");
-  const [classificacaoNova, setClassificacaoNova] = useState<string>("");
+  const [contaAnaliseNova, setContaAnaliseNova] = useState<string>("");
 
   const [useNovaEntidade, setUseNovaEntidade] = useState(false);
   const [fornecedorExistente, setFornecedorExistente] = useState("");
@@ -80,10 +72,11 @@ export default function AdminPurchaseEntries({
 
   const fetchData = async () => {
     try {
-      const [resForn, resUsers, resFaturas] = await Promise.all([
+      const [resForn, resUsers, resFaturas, resContas] = await Promise.all([
         api.get("/admin/fornecedores").catch(() => ({ data: [] })),
         api.get("/admin/users").catch(() => ({ data: [] })),
         api.get("/admin/faturas").catch(() => ({ data: [] })),
+        api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] })),
       ]);
       setFornecedores(resForn.data || []);
       setStores(
@@ -92,111 +85,154 @@ export default function AdminPurchaseEntries({
           .sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""))
       );
       setExistingFaturas(Array.isArray(resFaturas.data) ? resFaturas.data : []);
+      setSavedContasAnalise(Array.isArray(resContas.data) ? resContas.data : []);
     } catch (err) {
       console.error(err);
     }
   };
 
-  // Extrai Centros de Custo e Contas de Análise personalizados já usados anteriormente
+  const handleAddContaAnalise = async () => {
+    const clean = contaAnaliseNova.trim();
+    if (!clean) return;
+    try {
+      setIsAddingConta(true);
+      const res = await api.post("/admin/financeiro/contas-analise", { nome: clean });
+      if (Array.isArray(res.data)) {
+        setSavedContasAnalise(res.data);
+      } else {
+        setSavedContasAnalise((prev) =>
+          prev.some((c) => c.toLowerCase() === clean.toLowerCase()) ? prev : [...prev, clean]
+        );
+      }
+      setContaAnaliseSelecionada(clean);
+      setContaAnaliseNova("");
+      setUseNovaContaAnalise(false);
+    } catch (err: any) {
+      Swal.fire({
+        icon: "error",
+        title: "Erro",
+        text: err.response?.data?.error || "Não foi possível incluir a Conta de Análise",
+        background: "#18181b",
+        color: "#fff",
+      });
+    } finally {
+      setIsAddingConta(false);
+    }
+  };
+
+  // Extrai Centros de Custo e Contas de Análise personalizados já criados pelo utilizador
   const customHistory = useMemo(() => {
     const centros = new Set<string>();
-    const contas = new Set<string>();
+    const contasMap = new Map<string, string>();
     const storeNames = new Set(stores.map((s) => (s.name || "").toLowerCase()));
     const builtInCentros = new Set([
+      "distribuidora",
+      "lost wind lda",
+      "lost wind unipessoal,lda",
+      "lost wind unipessoal, lda",
       "armazém central",
+      "armazem central",
       "administração / sede",
+      "administracao / sede",
       "logística / frota",
+      "logistica / frota",
+      "logistica/frota",
+      "logística/frota",
+      "a",
     ]);
-    const builtInContas = new Set(DEFAULT_CONTAS_ANALISE.map((c) => c.toLowerCase()));
+
+    savedContasAnalise.forEach((ca) => {
+      const clean = String(ca || "").trim();
+      if (clean && !contasMap.has(clean.toLowerCase())) {
+        contasMap.set(clean.toLowerCase(), clean);
+      }
+    });
 
     existingFaturas.forEach((f) => {
       if (!f?.descrição) return;
       try {
         const parsed = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
-        const nome = String(parsed?.classificacao_nome || "").trim();
-        if (!nome) return;
-        if (parsed.classificacao_tipo === "conta_analise") {
-          if (!builtInContas.has(nome.toLowerCase())) contas.add(nome);
-        } else if (parsed.classificacao_tipo === "centro_custo") {
-          if (!builtInCentros.has(nome.toLowerCase()) && !storeNames.has(nome.toLowerCase())) {
-            centros.add(nome);
-          }
+        const ccNome = String(
+          parsed?.centro_custo ||
+            (parsed?.classificacao_tipo === "centro_custo" ? parsed?.classificacao_nome : "") ||
+            ""
+        ).trim();
+        if (
+          ccNome &&
+          !builtInCentros.has(ccNome.toLowerCase()) &&
+          !storeNames.has(ccNome.toLowerCase())
+        ) {
+          centros.add(ccNome);
+        }
+
+        const caNome = String(
+          parsed?.conta_analise ||
+            (parsed?.classificacao_tipo === "conta_analise" ? parsed?.classificacao_nome : "") ||
+            ""
+        ).trim();
+        if (caNome && !contasMap.has(caNome.toLowerCase())) {
+          contasMap.set(caNome.toLowerCase(), caNome);
         }
       } catch {}
     });
 
     return {
       centros: Array.from(centros).sort((a, b) => a.localeCompare(b)),
-      contas: Array.from(contas).sort((a, b) => a.localeCompare(b)),
+      contas: Array.from(contasMap.values()).sort((a, b) => a.localeCompare(b, "pt-PT")),
     };
-  }, [existingFaturas, stores]);
+  }, [existingFaturas, stores, savedContasAnalise]);
 
   const resolveClassificacao = () => {
-    if (useNovaClassificacao) {
-      const clean = classificacaoNova.trim();
-      if (!clean) {
-        throw new Error(
-          classificacaoTipo === "centro_custo"
-            ? "Informe o nome do Centro de Custo"
-            : "Informe o nome da Conta Análise"
-        );
-      }
-      return {
-        classificacao_tipo: classificacaoTipo,
-        classificacao_nome: clean,
-        loja_id: lojaId || null,
-      };
-    }
+    let centroCustoNome = "";
+    let resolvedLojaId: string | null = lojaId || null;
 
-    if (classificacaoTipo === "centro_custo") {
+    if (useNovoCentroCusto) {
+      const cleanCC = centroCustoNovo.trim();
+      if (!cleanCC) {
+        throw new Error("Informe o nome do Centro de Custo");
+      }
+      centroCustoNome = cleanCC;
+    } else {
       if (!centroCustoSelecionado) {
         throw new Error("Selecione um Centro de Custo");
       }
       if (centroCustoSelecionado === "armazem_central") {
-        return {
-          classificacao_tipo: "centro_custo" as const,
-          classificacao_nome: "Armazém Central",
-          loja_id: null,
-        };
-      }
-      if (centroCustoSelecionado === "administracao") {
-        return {
-          classificacao_tipo: "centro_custo" as const,
-          classificacao_nome: "Administração / Sede",
-          loja_id: null,
-        };
-      }
-      if (centroCustoSelecionado === "logistica_frota") {
-        return {
-          classificacao_tipo: "centro_custo" as const,
-          classificacao_nome: "Logística / Frota",
-          loja_id: null,
-        };
-      }
-      if (centroCustoSelecionado.startsWith("loja:")) {
+        centroCustoNome = "DISTRIBUIDORA";
+        resolvedLojaId = null;
+      } else if (centroCustoSelecionado === "administracao") {
+        centroCustoNome = "LOST WIND UNIPESSOAL,LDA";
+        resolvedLojaId = null;
+      } else if (centroCustoSelecionado.startsWith("loja:")) {
         const sId = centroCustoSelecionado.replace("loja:", "");
         const st = stores.find((s) => String(s.id) === String(sId));
-        return {
-          classificacao_tipo: "centro_custo" as const,
-          classificacao_nome: st?.name || "Loja",
-          loja_id: sId,
-        };
+        centroCustoNome = st?.name || "Loja";
+        resolvedLojaId = sId;
+      } else {
+        centroCustoNome = centroCustoSelecionado;
       }
-      return {
-        classificacao_tipo: "centro_custo" as const,
-        classificacao_nome: centroCustoSelecionado,
-        loja_id: lojaId || null,
-      };
+    }
+
+    let contaAnaliseNome = "";
+    if (useNovaContaAnalise) {
+      const cleanCA = contaAnaliseNova.trim();
+      if (!cleanCA) {
+        throw new Error("Informe o nome da Conta de Análise");
+      }
+      contaAnaliseNome = cleanCA;
     } else {
       if (!contaAnaliseSelecionada) {
-        throw new Error("Selecione uma Conta Análise");
+        throw new Error("Selecione o tipo de Conta de Análise");
       }
-      return {
-        classificacao_tipo: "conta_analise" as const,
-        classificacao_nome: contaAnaliseSelecionada,
-        loja_id: lojaId || null,
-      };
+      contaAnaliseNome = contaAnaliseSelecionada;
     }
+
+    return {
+      centro_custo: centroCustoNome,
+      conta_analise: contaAnaliseNome,
+      classificacao_tipo: "centro_custo" as const,
+      classificacao_nome: centroCustoNome,
+      loja_id: resolvedLojaId,
+    };
   };
 
   const handleSave = async () => {
@@ -257,6 +293,8 @@ export default function AdminPurchaseEntries({
             valor_total: parsedTotal.toDecimalPlaces(2).toNumber(),
             observacoes: observacoes.trim() || null,
             loja_id: classif.loja_id,
+            centro_custo: classif.centro_custo,
+            conta_analise: classif.conta_analise,
             classificacao_tipo: classif.classificacao_tipo,
             classificacao_nome: classif.classificacao_nome,
           });
@@ -277,6 +315,8 @@ export default function AdminPurchaseEntries({
           valor_total: parsedTotal.toDecimalPlaces(2).toNumber(),
           observacoes: observacoes.trim() || null,
           loja_id: classif.loja_id,
+          centro_custo: classif.centro_custo,
+          conta_analise: classif.conta_analise,
           classificacao_tipo: classif.classificacao_tipo,
           classificacao_nome: classif.classificacao_nome,
         };
@@ -286,14 +326,14 @@ export default function AdminPurchaseEntries({
 
       Swal.fire({
         icon: "success",
-        title: "Fatura de Compra Registrada",
+        title: "Nova Fatura Registrada",
         text:
           numParcelas > 1
-            ? `A fatura de compra foi lançada em ${numParcelas} parcelas com sucesso.`
+            ? `A fatura foi lançada em ${numParcelas} parcelas com sucesso.`
             : formaPagamento === "pago"
-            ? "A fatura de compra foi lançada já marcada como paga."
-            : "A fatura de compra foi incluída em Faturas a Pagar (Compras) com sucesso.",
-        confirmButtonColor: "#2563eb",
+            ? "A fatura foi lançada já marcada como paga."
+            : "A fatura foi incluída em Faturas a Pagar com sucesso.",
+        confirmButtonColor: "#10b981",
         background: "#18181b",
         color: "#fff",
       });
@@ -303,8 +343,10 @@ export default function AdminPurchaseEntries({
       setValorLiquido("");
       setValorIva("");
       setObservacoes("");
-      setClassificacaoNova("");
-      setUseNovaClassificacao(false);
+      setCentroCustoNovo("");
+      setUseNovoCentroCusto(false);
+      setContaAnaliseNova("");
+      setUseNovaContaAnalise(false);
       setParcelas(1);
       if (onSuccess) onSuccess();
     } catch (error: any) {
@@ -330,121 +372,134 @@ export default function AdminPurchaseEntries({
       >
         <div className={compact ? "p-1 pb-6" : "p-6"}>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            {/* Seleção entre Centro de Custo ou Conta Análise (acima de Entidade / Fornecedor) */}
-            <div className="sm:col-span-2 space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="inline-flex p-1 bg-zinc-950 border border-zinc-800 rounded-xl gap-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setClassificacaoTipo("centro_custo");
-                      setUseNovaClassificacao(false);
-                      setClassificacaoNova("");
-                    }}
-                    className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                      classificacaoTipo === "centro_custo"
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "text-zinc-400 hover:text-zinc-200"
-                    }`}
-                  >
-                    Centro de Custo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setClassificacaoTipo("conta_analise");
-                      setUseNovaClassificacao(false);
-                      setClassificacaoNova("");
-                    }}
-                    className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                      classificacaoTipo === "conta_analise"
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "text-zinc-400 hover:text-zinc-200"
-                    }`}
-                  >
-                    Conta Análise
-                  </button>
+            {/* Bloco unificado: 1. Centro de Custo e 2. Conta de Análise logo abaixo */}
+            <div className="sm:col-span-2 bg-zinc-900/35 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 space-y-4">
+              {/* 1. Centro de Custo */}
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    Centro de Custo *
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={useNovoCentroCusto}
+                      onChange={(e) => {
+                        setUseNovoCentroCusto(e.target.checked);
+                        setCentroCustoNovo("");
+                      }}
+                      className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500/50"
+                    />
+                    <span className="text-xs text-zinc-400 group-hover:text-zinc-300 transition-colors">
+                      Novo Centro de Custo
+                    </span>
+                  </label>
                 </div>
 
-                <label className="flex items-center gap-2 cursor-pointer group">
+                {useNovoCentroCusto ? (
                   <input
-                    type="checkbox"
-                    checked={useNovaClassificacao}
-                    onChange={(e) => {
-                      setUseNovaClassificacao(e.target.checked);
-                      setClassificacaoNova("");
-                    }}
-                    className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500/50"
+                    type="text"
+                    value={centroCustoNovo}
+                    onChange={(e) => setCentroCustoNovo(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
+                    placeholder="Nome do centro de custo (Ex: Cozinha Central, Eventos...)"
                   />
-                  <span className="text-xs text-zinc-400 group-hover:text-zinc-300 transition-colors">
-                    {classificacaoTipo === "centro_custo" ? "Novo Centro de Custo" : "Nova Conta Análise"}
-                  </span>
-                </label>
+                ) : (
+                  <select
+                    value={centroCustoSelecionado}
+                    onChange={(e) => setCentroCustoSelecionado(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
+                  >
+                    <option value="armazem_central">DISTRIBUIDORA</option>
+                    <option value="administracao">LOST WIND UNIPESSOAL,LDA</option>
+                    {stores.length > 0 && (
+                      <optgroup label="Lojas">
+                        {stores.map((s) => (
+                          <option key={s.id} value={`loja:${s.id}`}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {customHistory.centros.length > 0 && (
+                      <optgroup label="Outros Centros de Custo">
+                        {customHistory.centros.map((cc) => (
+                          <option key={cc} value={cc}>
+                            {cc}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                )}
               </div>
 
-              {useNovaClassificacao ? (
-                <input
-                  type="text"
-                  value={classificacaoNova}
-                  onChange={(e) => setClassificacaoNova(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
-                  placeholder={
-                    classificacaoTipo === "centro_custo"
-                      ? "Nome do centro de custo (Ex: Cozinha Central, Eventos...)"
-                      : "Nome ou código da conta análise (Ex: 311 - Mercadorias...)"
-                  }
-                />
-              ) : classificacaoTipo === "centro_custo" ? (
-                <select
-                  value={centroCustoSelecionado}
-                  onChange={(e) => setCentroCustoSelecionado(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
-                >
-                  <option value="armazem_central">Armazém Central</option>
-                  <option value="administracao">Administração / Sede</option>
-                  <option value="logistica_frota">Logística / Frota</option>
-                  {stores.length > 0 && (
-                    <optgroup label="Lojas">
-                      {stores.map((s) => (
-                        <option key={s.id} value={`loja:${s.id}`}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {customHistory.centros.length > 0 && (
-                    <optgroup label="Outros Centros de Custo">
-                      {customHistory.centros.map((cc) => (
-                        <option key={cc} value={cc}>
-                          {cc}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              ) : (
-                <select
-                  value={contaAnaliseSelecionada}
-                  onChange={(e) => setContaAnaliseSelecionada(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
-                >
-                  <option value="">Selecione uma conta análise...</option>
-                  {DEFAULT_CONTAS_ANALISE.map((conta) => (
-                    <option key={conta} value={conta}>
-                      {conta}
+              {/* 2. Conta de Análise (logo abaixo na mesma secção) */}
+              <div className="pt-3 border-t border-zinc-800/70">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    Conta de Análise *
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={useNovaContaAnalise}
+                      onChange={(e) => {
+                        setUseNovaContaAnalise(e.target.checked);
+                        setContaAnaliseNova("");
+                      }}
+                      className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500/50"
+                    />
+                    <span className="text-xs text-zinc-400 group-hover:text-zinc-300 transition-colors">
+                      Nova Conta de Análise
+                    </span>
+                  </label>
+                </div>
+
+                {useNovaContaAnalise ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={contaAnaliseNova}
+                      onChange={(e) => setContaAnaliseNova(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddContaAnalise();
+                        }
+                      }}
+                      className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
+                      placeholder="Digite o nome da conta de análise..."
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddContaAnalise}
+                      disabled={isAddingConta || !contaAnaliseNova.trim()}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shrink-0 cursor-pointer"
+                    >
+                      <Plus size={14} strokeWidth={2.75} />
+                      Incluir
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={contaAnaliseSelecionada}
+                    onChange={(e) => setContaAnaliseSelecionada(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
+                  >
+                    <option value="">
+                      {customHistory.contas.length === 0
+                        ? "Nenhuma conta de análise cadastrada — marque \"Nova Conta de Análise\" para incluir"
+                        : "Selecione o tipo de conta de análise..."}
                     </option>
-                  ))}
-                  {customHistory.contas.length > 0 && (
-                    <optgroup label="Contas Personalizadas">
-                      {customHistory.contas.map((ca) => (
-                        <option key={ca} value={ca}>
-                          {ca}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              )}
+                    {customHistory.contas.map((ca) => (
+                      <option key={ca} value={ca}>
+                        {ca}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
             </div>
 
             <div className="sm:col-span-2">

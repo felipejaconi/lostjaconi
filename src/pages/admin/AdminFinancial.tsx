@@ -3,7 +3,7 @@ import {
   Banknote, TrendingDown, TrendingUp, Search, Plus, Filter, 
   FileText, CheckCircle2, Clock, Calendar, AlertCircle, Building2,
   ChevronRight, CreditCard, ArrowUpRight, ArrowDownRight, Wallet, Receipt, Store, ShoppingCart, LayoutDashboard,
-  Trash2
+  Trash2, RotateCcw, EyeOff
 } from "lucide-react";
 import Swal from "sweetalert2";
 import api from "../../lib/api";
@@ -62,9 +62,61 @@ let financialCache: {
   fornecedores: any[];
   pedidos: any[];
   stores: any[];
+  contasAnalise?: string[];
 } | null = null;
 
 let summaryCache: any = null;
+
+const DEFAULT_FATURAS_FILTER = {
+  texto: "",
+  dataInicio: "",
+  dataFim: "",
+  status: "todos",
+  fornecedor: "todos",
+  centroCusto: "todos",
+  contaAnalise: "todos",
+};
+
+function extractFaturaMeta(f: any, storesList: any[]) {
+  let centroCusto = "";
+  let contaAnalise = "";
+  let lojaId = "";
+  let formaPagamento = "";
+
+  if (f?.descrição && f.descrição !== "null") {
+    try {
+      const desc = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
+      lojaId = desc?.loja_id ? String(desc.loja_id) : "";
+      formaPagamento = desc?.forma_pagamento ? String(desc.forma_pagamento) : "";
+      centroCusto = String(
+        desc?.centro_custo ||
+          (desc?.classificacao_tipo !== "conta_analise" ? desc?.classificacao_nome : "") ||
+          ""
+      ).trim();
+      contaAnalise = String(
+        desc?.conta_analise ||
+          (desc?.classificacao_tipo === "conta_analise" ? desc?.classificacao_nome : "") ||
+          ""
+      ).trim();
+    } catch {}
+  }
+
+  const lowerCC = centroCusto.toLowerCase();
+  if (lowerCC === "armazém central" || lowerCC === "armazem central") {
+    centroCusto = "DISTRIBUIDORA";
+  } else if (
+    lowerCC === "lost wind lda" ||
+    lowerCC === "administração / sede" ||
+    lowerCC === "administracao / sede"
+  ) {
+    centroCusto = "LOST WIND UNIPESSOAL,LDA";
+  } else if (!centroCusto && lojaId) {
+    const st = storesList.find((s: any) => String(s.id) === lojaId);
+    if (st?.name) centroCusto = st.name;
+  }
+
+  return { centroCusto, contaAnalise, lojaId, formaPagamento };
+}
 
 export default function AdminFinancial() {
   const { user } = useAuth();
@@ -72,6 +124,7 @@ export default function AdminFinancial() {
   const isArmazem = user?.role === "armazem";
   const [faturas, setFaturas] = useState<any[]>(() => financialCache?.faturas || []);
   const [fornecedores, setFornecedores] = useState<any[]>(() => financialCache?.fornecedores || []);
+  const [savedContasAnalise, setSavedContasAnalise] = useState<string[]>(() => financialCache?.contasAnalise || []);
   const [summaryData, setSummaryData] = useState<any>(() => summaryCache);
   const [isLoading, setIsLoading] = useState(() => !summaryCache);
   const [isTabLoading, setIsTabLoading] = useState(false);
@@ -99,12 +152,9 @@ export default function AdminFinancial() {
 
   const [payFormData, setPayFormData] = useState({ valor: "", data_pagamento: new Date().toISOString().split("T")[0], metodo: "transferencia" });
 
-  const [filterDataAPagar, setFilterDataAPagar] = useState({
-    periodo: "mes",
-    status: "todos",
-    fornecedor: "todos",
-    loja: "todos"
-  });
+  const [draftFilterAPagar, setDraftFilterAPagar] = useState(DEFAULT_FATURAS_FILTER);
+  const [appliedFilterAPagar, setAppliedFilterAPagar] = useState(DEFAULT_FATURAS_FILTER);
+  const [hasSearchedFaturas, setHasSearchedFaturas] = useState(false);
 
   const [filterDataAReceber, setFilterDataAReceber] = useState({
     periodo: "mes",
@@ -223,25 +273,29 @@ export default function AdminFinancial() {
      try {
         if (tab === "faturas_compras" || tab === "faturas_despesas") {
            if (faturas.length === 0 || forceRefresh) {
-              const [fatRes, fornRes, usersRes] = await Promise.all([
+              const [fatRes, fornRes, usersRes, contasRes] = await Promise.all([
                  api.get("/admin/faturas"),
                  api.get("/admin/fornecedores"),
-                 api.get("/admin/users")
+                 api.get("/admin/users"),
+                 api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] })),
               ]);
               const fatData = fatRes.data || [];
               const fornData = fornRes.data || [];
               const storesData = ((usersRes.data as any[]) || []).filter((u: any) => u.role === 'loja');
+              const contasData = Array.isArray(contasRes.data) ? contasRes.data : [];
               
               setFaturas(fatData);
               setFornecedores(fornData);
               setStores(storesData);
+              setSavedContasAnalise(contasData);
               
               financialCache = {
                  ...financialCache,
                  faturas: fatData,
                  fornecedores: fornData,
                  pedidos: pedidos,
-                 stores: storesData
+                 stores: storesData,
+                 contasAnalise: contasData,
               } as any;
            }
         } else if (tab === "fornecedores") { // Actually "Faturas a Receber"
@@ -723,11 +777,79 @@ export default function AdminFinancial() {
     return true;
   };
 
+  const filterOptionsAPagar = useMemo(() => {
+    const customCentros = new Set<string>();
+    const contasMap = new Map<string, string>();
+    const storeNames = new Set(stores.map((s: any) => (s.name || "").toLowerCase()));
+    const builtInCentros = new Set([
+      "distribuidora",
+      "lost wind lda",
+      "lost wind unipessoal,lda",
+      "lost wind unipessoal, lda",
+      "armazém central",
+      "armazem central",
+      "administração / sede",
+      "administracao / sede",
+      "logística / frota",
+      "logistica / frota",
+      "logistica/frota",
+      "logística/frota",
+      "a",
+    ]);
+
+    savedContasAnalise.forEach((ca) => {
+      const clean = String(ca || "").trim();
+      if (clean && !contasMap.has(clean.toLowerCase())) {
+        contasMap.set(clean.toLowerCase(), clean);
+      }
+    });
+
+    faturas.forEach((f) => {
+      if (f.tipo === "entrada_stock" || f.tipo === "compra" || f.status_pagamento === "em_conferencia") return;
+      const meta = extractFaturaMeta(f, stores);
+      if (
+        meta.centroCusto &&
+        !builtInCentros.has(meta.centroCusto.toLowerCase()) &&
+        !storeNames.has(meta.centroCusto.toLowerCase())
+      ) {
+        customCentros.add(meta.centroCusto);
+      }
+      if (meta.contaAnalise && !contasMap.has(meta.contaAnalise.toLowerCase())) {
+        contasMap.set(meta.contaAnalise.toLowerCase(), meta.contaAnalise);
+      }
+    });
+
+    return {
+      customCentros: Array.from(customCentros).sort((a, b) => a.localeCompare(b, "pt-PT")),
+      contasAnalise: Array.from(contasMap.values()).sort((a, b) => a.localeCompare(b, "pt-PT")),
+    };
+  }, [faturas, stores, savedContasAnalise]);
+
+  const handlePesquisarFaturas = async () => {
+    if (faturas.length === 0) {
+      await lazyLoadTab(activeTab, undefined, true);
+    }
+    setAppliedFilterAPagar({ ...draftFilterAPagar });
+    setDisplayCountFaturas(30);
+    setHasSearchedFaturas(true);
+  };
+
+  const handleLimparFiltrosFaturas = () => {
+    setDraftFilterAPagar(DEFAULT_FATURAS_FILTER);
+    setAppliedFilterAPagar(DEFAULT_FATURAS_FILTER);
+    setHasSearchedFaturas(false);
+    setDisplayCountFaturas(30);
+  };
+
   const filteredFaturas = faturas.filter(f => {
     if (f.tipo === 'entrada_stock' || f.tipo === 'compra' || f.status_pagamento === 'em_conferencia') return false;
-    const textMatch = (f.numero_fatura || "").toLowerCase().includes(search.toLowerCase()) || 
-                      (f.fornecedor?.nome || "").toLowerCase().includes(search.toLowerCase());
-    
+
+    const queryText = appliedFilterAPagar.texto.trim().toLowerCase();
+    const textMatch = !queryText ||
+      (f.numero_fatura || "").toLowerCase().includes(queryText) ||
+      (f.fornecedor?.nome || "").toLowerCase().includes(queryText) ||
+      (f.observacoes || "").toLowerCase().includes(queryText);
+
     let tipoMatch = true;
     if (activeTab === 'faturas_compras') {
        tipoMatch = f.tipo === 'compra_financeiro';
@@ -738,59 +860,88 @@ export default function AdminFinancial() {
        else if (filterTipo === 'despesa') tipoMatch = f.tipo !== 'compra_financeiro';
     }
 
-    const periodMatch = filterByPeriod(f.data_emissao, filterDataAPagar.periodo);
-    
+    const emissaoDateStr = String(f.data_emissao || "").slice(0, 10);
+    let dateMatch = true;
+    if (appliedFilterAPagar.dataInicio) {
+      dateMatch = Boolean(emissaoDateStr) && emissaoDateStr >= appliedFilterAPagar.dataInicio;
+    }
+    if (dateMatch && appliedFilterAPagar.dataFim) {
+      dateMatch = Boolean(emissaoDateStr) && emissaoDateStr <= appliedFilterAPagar.dataFim;
+    }
+
     let statusMatch = true;
-    if (activeTab === 'faturas_compras') {
-       if (f.status_pagamento === 'em_conferencia') return false;
-    }
-    
-    if (filterDataAPagar.status !== "todos") {
-       if (filterDataAPagar.status === "pago") statusMatch = f.status_pagamento === "pago";
-       if (filterDataAPagar.status === "nao_pago") statusMatch = ["pendente", "parcial"].includes(f.status_pagamento || 'pendente');
-    }
-    
-    const fornecedorMatch = filterDataAPagar.fornecedor === "todos" || String(f.fornecedor_id) === filterDataAPagar.fornecedor;
-    
-    let lojaMatch = true;
-    if (filterDataAPagar.loja !== "todos") {
-       if (filterDataAPagar.loja === "armazem") {
-          let isArmazemDespesa = false;
-          if (f.tipo?.startsWith('despesa') || f.tipo !== 'compra_financeiro') {
-             if (!f.descrição || f.descrição === "null") {
-                isArmazemDespesa = true;
-             } else {
-                const descString = (f.descrição || "").toLowerCase();
-                const fornecedorNome = (f.fornecedor?.nome || "").toLowerCase();
-                if (descString.includes("armazem central") || descString.includes("armazém central") || fornecedorNome.includes("armazem central") || fornecedorNome.includes("armazém central")) {
-                   isArmazemDespesa = true;
-                }
-             }
-          }
-          let hasSpecificStore = false;
-          try {
-             if (f.descrição && f.descrição !== "null") {
-                const desc = JSON.parse(f.descrição);
-                if (desc.loja_id) hasSpecificStore = true;
-             }
-          } catch(e) {}
-          lojaMatch = (f.tipo === 'compra_financeiro' && !hasSpecificStore) || isArmazemDespesa;
-       } else {
-          try {
-             if (f.descrição && f.descrição !== "null") {
-                const desc = JSON.parse(f.descrição);
-                lojaMatch = String(desc.loja_id) === filterDataAPagar.loja;
-             } else {
-                lojaMatch = false;
-             }
-          } catch(e) {
-             lojaMatch = false;
-          }
+    if (appliedFilterAPagar.status !== "todos") {
+       if (appliedFilterAPagar.status === "pago") {
+         statusMatch = f.status_pagamento === "pago";
+       } else if (appliedFilterAPagar.status === "nao_pago") {
+         statusMatch = ["pendente", "parcial"].includes(f.status_pagamento || "pendente");
+       } else if (appliedFilterAPagar.status === "vencido") {
+         const pend = Number(f.valor_pendente || 0);
+         const refDateStr = String(f.data_vencimento || f.data_emissao || "").slice(0, 10);
+         const todayStr = new Date().toISOString().slice(0, 10);
+         statusMatch = pend > 0 && Boolean(refDateStr) && refDateStr < todayStr;
        }
     }
-    
-    return textMatch && tipoMatch && periodMatch && statusMatch && fornecedorMatch && lojaMatch;
+
+    const fornecedorMatch =
+      appliedFilterAPagar.fornecedor === "todos" ||
+      String(f.fornecedor_id) === appliedFilterAPagar.fornecedor;
+
+    const meta = extractFaturaMeta(f, stores);
+
+    let centroCustoMatch = true;
+    if (appliedFilterAPagar.centroCusto !== "todos") {
+      const target = appliedFilterAPagar.centroCusto;
+      if (target === "cc:DISTRIBUIDORA") {
+        centroCustoMatch =
+          meta.centroCusto.toUpperCase() === "DISTRIBUIDORA" ||
+          (!meta.centroCusto && !meta.lojaId && f.tipo === "compra_financeiro");
+      } else if (target === "cc:LOST WIND UNIPESSOAL,LDA") {
+        centroCustoMatch = meta.centroCusto.toUpperCase() === "LOST WIND UNIPESSOAL,LDA";
+      } else if (target.startsWith("loja:")) {
+        const sId = target.replace("loja:", "");
+        const st = stores.find((s: any) => String(s.id) === sId);
+        centroCustoMatch =
+          meta.lojaId === sId ||
+          Boolean(st?.name && meta.centroCusto.toLowerCase() === st.name.toLowerCase());
+      } else if (target.startsWith("custom:")) {
+        const customName = target.replace("custom:", "");
+        centroCustoMatch = meta.centroCusto.toLowerCase() === customName.toLowerCase();
+      }
+    }
+
+    let contaAnaliseMatch = true;
+    if (appliedFilterAPagar.contaAnalise !== "todos") {
+      contaAnaliseMatch =
+        meta.contaAnalise.toLowerCase() === appliedFilterAPagar.contaAnalise.toLowerCase();
+    }
+
+    return (
+      textMatch &&
+      tipoMatch &&
+      dateMatch &&
+      statusMatch &&
+      fornecedorMatch &&
+      centroCustoMatch &&
+      contaAnaliseMatch
+    );
   });
+
+  const filteredFaturasTotals = useMemo(() => {
+    let total = new Decimal(0);
+    let iva = new Decimal(0);
+    let pendente = new Decimal(0);
+    filteredFaturas.forEach((f) => {
+      total = total.add(new Decimal(f.valor_total || 0));
+      iva = iva.add(new Decimal(f.valor_iva || 0));
+      pendente = pendente.add(new Decimal(f.valor_pendente || 0));
+    });
+    return {
+      total: total.toNumber(),
+      iva: iva.toNumber(),
+      pendente: pendente.toNumber(),
+    };
+  }, [filteredFaturas]);
 
   const groupedFaturas = useMemo(() => {
     const groups = new Map<string, any>();
@@ -884,64 +1035,94 @@ export default function AdminFinancial() {
     <div className="">
       
       {/* Header */}
-      <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-2 -mt-2 md:-mt-4 mb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
-        <BrandTitle title="Financeiro" titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0" hideUnderline />
-           
-        <div className="flex flex-wrap items-center gap-1.5 mt-2">
-          <button
-            onClick={() => setActiveTab("dashboard")}
-            className={cn(
-              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all whitespace-nowrap shrink-0",
-              activeTab === "dashboard"
-                ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
-                : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
-            )}
-          >
-            DASHBOARD
-          </button>
-          <button
-            onClick={() => setActiveTab("faturas_compras")}
-            className={cn(
-              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all whitespace-nowrap shrink-0",
-              activeTab === "faturas_compras"
-                ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
-                : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
-            )}
-          >
-            FATURAS A PAGAR (compras)
-          </button>
-          <button
-            onClick={() => setActiveTab("faturas_despesas")}
-            className={cn(
-              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all whitespace-nowrap shrink-0",
-              activeTab === "faturas_despesas"
-                ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
-                : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
-            )}
-          >
-            FATURAS A PAGAR (despesas)
-          </button>
-          <button
-            onClick={() => setActiveTab("fornecedores")}
-            className={cn(
-              "px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all whitespace-nowrap shrink-0",
-              activeTab === "fornecedores"
-                ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10"
-                : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
-            )}
-          >
-            FATURAS A RECEBER
-          </button>
+      <div className="sticky top-0 z-40 bg-[#050505] pt-2 md:pt-4 pb-2 -mt-2 md:-mt-4 mb-0 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shrink-0">
+        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 sm:gap-5">
+          <BrandTitle title="Financeiro" titleClassName="max-md:mt-0 md:-mt-4 max-md:pl-0 max-md:pt-0 max-md:ml-0" hideUnderline />
 
           {user?.role === "admin" && (
             <button
               onClick={() => setIsPurchaseModalOpen(true)}
-              className="ml-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 shadow-sm whitespace-nowrap shrink-0 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all shadow-sm shadow-emerald-500/20 border border-emerald-500/40 whitespace-nowrap shrink-0 cursor-pointer"
             >
-              <Receipt size={15} />
-              Registrar Compra
+              <Plus size={12} strokeWidth={2.75} />
+              <span>Nova Fatura</span>
             </button>
           )}
+        </div>
+
+        <div
+          role="tablist"
+          aria-label="Secções do Financeiro"
+          className="inline-flex items-center gap-1 p-1 bg-zinc-950 border border-zinc-800/90 rounded-xl overflow-x-auto no-scrollbar max-w-full self-center lg:self-auto"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "dashboard"}
+            onClick={() => setActiveTab("dashboard")}
+            className={cn(
+              "group inline-flex items-center gap-2 h-9 px-3.5 text-xs font-semibold tracking-wide rounded-lg border transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600",
+              activeTab === "dashboard"
+                ? "bg-zinc-800/95 text-white border-zinc-700/90 shadow-sm"
+                : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/80"
+            )}
+          >
+            <LayoutDashboard
+              className={cn(
+                "w-3.5 h-3.5 shrink-0 transition-colors",
+                activeTab === "dashboard"
+                  ? "text-blue-400"
+                  : "text-zinc-500 group-hover:text-zinc-300"
+              )}
+            />
+            <span>Dashboard</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "faturas_compras" || activeTab === "faturas_despesas"}
+            onClick={() => setActiveTab("faturas_compras")}
+            className={cn(
+              "group inline-flex items-center gap-2 h-9 px-3.5 text-xs font-semibold tracking-wide rounded-lg border transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600",
+              activeTab === "faturas_compras" || activeTab === "faturas_despesas"
+                ? "bg-zinc-800/95 text-white border-zinc-700/90 shadow-sm"
+                : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/80"
+            )}
+          >
+            <Receipt
+              className={cn(
+                "w-3.5 h-3.5 shrink-0 transition-colors",
+                activeTab === "faturas_compras" || activeTab === "faturas_despesas"
+                  ? "text-amber-400"
+                  : "text-zinc-500 group-hover:text-zinc-300"
+              )}
+            />
+            <span>Faturas a Pagar</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "fornecedores"}
+            onClick={() => setActiveTab("fornecedores")}
+            className={cn(
+              "group inline-flex items-center gap-2 h-9 px-3.5 text-xs font-semibold tracking-wide rounded-lg border transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600",
+              activeTab === "fornecedores"
+                ? "bg-zinc-800/95 text-white border-zinc-700/90 shadow-sm"
+                : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/80"
+            )}
+          >
+            <Wallet
+              className={cn(
+                "w-3.5 h-3.5 shrink-0 transition-colors",
+                activeTab === "fornecedores"
+                  ? "text-emerald-400"
+                  : "text-zinc-500 group-hover:text-zinc-300"
+              )}
+            />
+            <span>Faturas a Receber</span>
+          </button>
         </div>
       </div>
 
@@ -1038,15 +1219,7 @@ export default function AdminFinancial() {
                                  </h4>
                               </div>
                               
-                              <div className="relative z-10 grid grid-cols-3 gap-2">
-                                 <button 
-                                    onClick={() => { setSelectedStore(store); setIsStoreModalOpen(true); }}
-                                    className="flex flex-col items-center justify-center gap-1.5 py-2.5 px-1 bg-white/5 hover:bg-amber-500/10 text-zinc-400 hover:text-amber-400 rounded-xl transition-colors border border-white/5 hover:border-amber-500/20 group/btn"
-                                    title="Nova Despesa"
-                                 >
-                                    <Plus size={14} className="group-hover/btn:scale-110 transition-transform" />
-                                    <span className="text-[9px] font-bold uppercase tracking-wider">Nova</span>
-                                 </button>
+                              <div className="relative z-10 grid grid-cols-2 gap-2">
                                  <button 
                                     onClick={() => { 
                                        setActiveTab("fornecedores");
@@ -1060,14 +1233,17 @@ export default function AdminFinancial() {
                                  </button>
                                  <button 
                                     onClick={() => { 
-                                       setActiveTab("faturas_despesas");
-                                       setFilterDataAPagar({...filterDataAPagar, loja: String(store.id)});
+                                       setActiveTab("faturas_compras");
+                                       const nextFilter = { ...DEFAULT_FATURAS_FILTER, centroCusto: `loja:${store.id}` };
+                                       setDraftFilterAPagar(nextFilter);
+                                       setAppliedFilterAPagar(nextFilter);
+                                       setHasSearchedFaturas(true);
                                     }}
                                     className="flex flex-col items-center justify-center gap-1.5 py-2.5 px-1 bg-white/5 hover:bg-rose-500/10 text-zinc-400 hover:text-rose-400 rounded-xl transition-colors border border-white/5 hover:border-rose-500/20 group/btn"
-                                    title="Despesas"
+                                    title="Faturas da Loja"
                                  >
                                     <Receipt size={14} className="group-hover/btn:scale-110 transition-transform" />
-                                    <span className="text-[9px] font-bold uppercase tracking-wider">Despesas</span>
+                                    <span className="text-[9px] font-bold uppercase tracking-wider">Faturas</span>
                                  </button>
                               </div>
                            </div>
@@ -1087,277 +1263,443 @@ export default function AdminFinancial() {
 
          {(activeTab === "faturas_compras" || activeTab === "faturas_despesas") && (() => {
             const isCompras = activeTab === "faturas_compras";
-            return (
-            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-sm flex flex-col h-full min-h-[500px]">
-               <div className="sticky top-[calc(66.63px-1px)] md:top-[calc(66.63px-1px)] z-30 p-2 sm:p-3 border-b border-zinc-800 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-end bg-zinc-950 mt-[67px]">
-                  <div className="relative w-full xl:w-auto flex flex-col gap-2.5">
-                     {/* Indicador / Badge em cima da barra de pesquisa */}
-                     {isCompras ? (
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg shrink-0 w-fit shadow-sm">
-                           <Receipt className="w-3.5 h-3.5 text-blue-400" />
-                           <span className="text-[11px] font-bold text-blue-300 uppercase tracking-wider">COMPRAS (STOCK)</span>
-                           <span className="text-[11px] font-semibold text-zinc-400 ml-1.5">Pendente: <strong className="text-amber-400">€ {stats.totalPendenteCompras.toLocaleString('pt-PT', {minimumFractionDigits:2})}</strong></span>
-                        </div>
-                     ) : (
-                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 border border-rose-500/20 rounded-lg shrink-0 w-fit shadow-sm">
-                           <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
-                           <span className="text-[11px] font-bold text-rose-300 uppercase tracking-wider">DESPESAS</span>
-                           <span className="text-[11px] font-semibold text-zinc-400 ml-1.5">Pendente: <strong className="text-amber-400">€ {stats.totalPendenteDespesas.toLocaleString('pt-PT', {minimumFractionDigits:2})}</strong></span>
-                        </div>
-                     )}
+            const metodoLabels: Record<string, string> = {
+               transferencia: "Transferência",
+               dinheiro: "Dinheiro",
+               debito_direto: "Débito Direto",
+               pago: "Pago"
+            };
 
-                     <div className="flex flex-col sm:flex-row gap-3">
-                        <div className="relative w-full sm:w-64 shrink-0">
-                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                          <input
-                            type="text"
-                            placeholder={isCompras ? "Pesquisar fatura de compra..." : "Pesquisar despesa..."}
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            className="w-full pl-9 pr-4 py-2 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-zinc-600 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors h-[38px]"
-                          />
-                        </div>
-                        <div className="inline-flex bg-black/40 p-1 rounded-lg border border-white/5 shadow-inner w-full sm:w-auto h-[38px]">
-                           <button 
-                              onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'mes'})}
-                              className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
-                                filterDataAPagar.periodo === 'mes' ? (isCompras ? 'bg-blue-600 text-white shadow-md' : 'bg-rose-600 text-white shadow-md') : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
-                              }`}
-                           >
-                              Mensal
-                           </button>
-                           <button 
-                              onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'ano'})}
-                              className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
-                                filterDataAPagar.periodo === 'ano' ? (isCompras ? 'bg-blue-600 text-white shadow-md' : 'bg-rose-600 text-white shadow-md') : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
-                              }`}
-                           >
-                              Anual
-                           </button>
-                           <button 
-                              onClick={() => setFilterDataAPagar({...filterDataAPagar, periodo: 'todos'})}
-                              className={`flex-1 sm:flex-none px-4 text-[10px] flex items-center justify-center font-black uppercase tracking-wider rounded-md transition-all ${
-                                filterDataAPagar.periodo === 'todos' ? (isCompras ? 'bg-blue-600 text-white shadow-md' : 'bg-rose-600 text-white shadow-md') : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
-                              }`}
-                           >
-                              Todas
-                           </button>
+            return (
+            <div className="mt-5 space-y-5">
+               {/* Painel de Filtros */}
+               <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                     {/* 1. Pesquisa por texto */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Nº Fatura / Pesquisa
+                        </label>
+                        <div className="relative">
+                           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none" />
+                           <input
+                              type="text"
+                              placeholder="Nº fatura, fornecedor ou obs..."
+                              value={draftFilterAPagar.texto}
+                              onChange={(e) =>
+                                 setDraftFilterAPagar({ ...draftFilterAPagar, texto: e.target.value })
+                              }
+                              onKeyDown={(e) => {
+                                 if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handlePesquisarFaturas();
+                                 }
+                              }}
+                              className="w-full pl-9 pr-3 h-10 bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors"
+                           />
                         </div>
                      </div>
-                  </div>
-                  <div className="flex flex-nowrap sm:flex-wrap items-center gap-2 w-full xl:w-auto overflow-x-auto no-scrollbar pb-1 sm:pb-0">
-                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0 h-[38px]">
-                        <select value={filterDataAPagar.status} onChange={e => setFilterDataAPagar({...filterDataAPagar, status: e.target.value})} className="bg-transparent text-sm text-zinc-300 outline-none appearance-none">
-                           <option value="todos">Todos os Status</option>
-                           <option value="pago">Pagos</option>
+
+                     {/* 2. Data Inicial */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Data Inicial
+                        </label>
+                        <input
+                           type="date"
+                           value={draftFilterAPagar.dataInicio}
+                           onChange={(e) =>
+                              setDraftFilterAPagar({ ...draftFilterAPagar, dataInicio: e.target.value })
+                           }
+                           className="w-full px-3 h-10 bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm font-mono tabular-nums text-zinc-100 outline-none transition-colors [color-scheme:dark]"
+                        />
+                     </div>
+
+                     {/* 3. Data Final */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Data Final
+                        </label>
+                        <input
+                           type="date"
+                           value={draftFilterAPagar.dataFim}
+                           onChange={(e) =>
+                              setDraftFilterAPagar({ ...draftFilterAPagar, dataFim: e.target.value })
+                           }
+                           className="w-full px-3 h-10 bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm font-mono tabular-nums text-zinc-100 outline-none transition-colors [color-scheme:dark]"
+                        />
+                     </div>
+
+                     {/* 4. Estado */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Estado de Pagamento
+                        </label>
+                        <select
+                           value={draftFilterAPagar.status}
+                           onChange={(e) =>
+                              setDraftFilterAPagar({ ...draftFilterAPagar, status: e.target.value })
+                           }
+                           className="w-full px-3 h-10 bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm text-zinc-200 outline-none transition-colors"
+                        >
+                           <option value="todos">Todos os Estados</option>
                            <option value="nao_pago">Pendentes / Parciais</option>
+                           <option value="pago">Pagos</option>
+                           <option value="vencido">Vencidas</option>
                         </select>
                      </div>
-                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0 h-[38px]">
-                        <select value={filterDataAPagar.fornecedor} onChange={e => setFilterDataAPagar({...filterDataAPagar, fornecedor: e.target.value})} className="bg-transparent text-sm text-zinc-300 outline-none appearance-none max-w-[150px] truncate">
-                           <option value="todos">Fornecedores</option>
-                           {fornecedores.map(f => (
-                              <option key={f.id} value={f.id}>{f.nome}</option>
+
+                     {/* 5. Centro de Custo */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Centro de Custo
+                        </label>
+                        <select
+                           value={draftFilterAPagar.centroCusto}
+                           onChange={(e) =>
+                              setDraftFilterAPagar({ ...draftFilterAPagar, centroCusto: e.target.value })
+                           }
+                           className="w-full px-3 h-10 bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm text-zinc-200 outline-none transition-colors"
+                        >
+                           <option value="todos">Todos os Centros de Custo</option>
+                           <option value="cc:DISTRIBUIDORA">DISTRIBUIDORA</option>
+                           <option value="cc:LOST WIND UNIPESSOAL,LDA">LOST WIND UNIPESSOAL,LDA</option>
+                           {stores.length > 0 && (
+                              <optgroup label="Lojas">
+                                 {stores.map((s: any) => (
+                                    <option key={s.id} value={`loja:${s.id}`}>
+                                       {s.name}
+                                    </option>
+                                 ))}
+                              </optgroup>
+                           )}
+                           {filterOptionsAPagar.customCentros.length > 0 && (
+                              <optgroup label="Outros Centros de Custo">
+                                 {filterOptionsAPagar.customCentros.map((cc) => (
+                                    <option key={cc} value={`custom:${cc}`}>
+                                       {cc}
+                                    </option>
+                                 ))}
+                              </optgroup>
+                           )}
+                        </select>
+                     </div>
+
+                     {/* 6. Conta de Análise */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Conta de Análise
+                        </label>
+                        <select
+                           value={draftFilterAPagar.contaAnalise}
+                           onChange={(e) =>
+                              setDraftFilterAPagar({ ...draftFilterAPagar, contaAnalise: e.target.value })
+                           }
+                           className="w-full px-3 h-10 bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm text-zinc-200 outline-none transition-colors"
+                        >
+                           <option value="todos">Todas as Contas de Análise</option>
+                           {filterOptionsAPagar.contasAnalise.map((ca) => (
+                              <option key={ca} value={ca}>
+                                 {ca}
+                              </option>
                            ))}
                         </select>
                      </div>
-                     <div className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg shrink-0 h-[38px]">
-                        <select value={filterDataAPagar.loja} onChange={e => setFilterDataAPagar({...filterDataAPagar, loja: e.target.value})} className="bg-transparent text-sm text-zinc-300 outline-none appearance-none max-w-[150px] truncate">
-                           <option value="todos">Todas Lojas</option>
-                           <option value="armazem">Armazém Central</option>
-                           {stores.map((s: any) => (
-                              <option key={s.id} value={s.id}>{s.name}</option>
+
+                     {/* 7. Fornecedor */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Fornecedor
+                        </label>
+                        <select
+                           value={draftFilterAPagar.fornecedor}
+                           onChange={(e) =>
+                              setDraftFilterAPagar({ ...draftFilterAPagar, fornecedor: e.target.value })
+                           }
+                           className="w-full px-3 h-10 bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm text-zinc-200 outline-none transition-colors"
+                        >
+                           <option value="todos">Todos os Fornecedores</option>
+                           {fornecedores.map((f) => (
+                              <option key={f.id} value={String(f.id)}>
+                                 {f.nome}
+                              </option>
                            ))}
                         </select>
+                     </div>
+
+                     {/* 8. Botões Limpar + Pesquisar */}
+                     <div className="flex items-end gap-2">
+                        <button
+                           type="button"
+                           onClick={handleLimparFiltrosFaturas}
+                           className="px-4 h-10 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-zinc-100 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                           title="Limpar filtros e ocultar lista"
+                        >
+                           <RotateCcw className="w-3.5 h-3.5" />
+                           Limpar
+                        </button>
+                        <button
+                           type="button"
+                           onClick={handlePesquisarFaturas}
+                           disabled={isTabLoading}
+                           className="flex-1 px-5 h-10 bg-blue-600 hover:bg-blue-500 active:scale-[0.99] disabled:opacity-50 text-white rounded-xl text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
+                        >
+                           <Search className="w-4 h-4" />
+                           {isTabLoading ? "A carregar..." : "Pesquisar"}
+                        </button>
                      </div>
                   </div>
                </div>
-               
-               <div className="flex-1 overflow-x-auto no-scrollbar">
-                  <table className="w-full text-left min-w-[900px]">
-                     <thead>
-                        <tr className="bg-zinc-900/50 border-b border-zinc-800">
-                           <th className="p-4 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Documento</th>
-                           <th className="p-4 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Fornecedor</th>
-                           <th className="p-4 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Datas</th>
-                           <th className="p-4 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-right">Valor Total</th>
-                           <th className="p-4 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center">Estado</th>
-                           <th className="p-4 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-right">Pendente</th>
-                        </tr>
-                     </thead>
-                     <tbody className="divide-y divide-zinc-800/50">
-                        {filteredFaturas.length === 0 ? (
-                           <tr>
-                              <td colSpan={6} className="p-10 text-center">
-                                 <FileText className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
-                                 <p className="text-zinc-400 font-medium text-sm">
-                                    {isCompras ? "Nenhuma fatura de compra encontrada." : "Nenhuma fatura de despesa encontrada."}
-                                 </p>
-                                 {isCompras && user?.role === "admin" && (
-                                    <button
-                                       onClick={() => setIsPurchaseModalOpen(true)}
-                                       className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm cursor-pointer"
-                                    >
-                                       <Receipt size={14} />
-                                       Registrar Compra
-                                    </button>
-                                 )}
-                              </td>
-                           </tr>
-                        ) : (
-                           groupedFaturas.slice(0, displayCountFaturas).map(f => {
-                              const isExpanded = f.isGroup && expandedGroups[f.id];
-                              return (
-                              <React.Fragment key={f.id}>
-                                 <tr className={cn("transition-colors cursor-pointer", isExpanded ? "bg-zinc-800/30 border-l-2 border-l-transparent" : "hover:bg-zinc-800/30 border-l-2 border-l-transparent")} onClick={(e) => {
-                                    if (f.isGroup) toggleGroup(f.id, e as any);
-                                    else { setSelectedFatura(f); setIsDetailsModalOpen(true); }
-                                 }}>
-                                    <td className="p-4">
-                                       <div className="flex items-center gap-2">
-                                          {f.isGroup && (
-                                             <ChevronRight className={cn("w-4 h-4 text-zinc-500 transition-transform", isExpanded && "rotate-90")} />
-                                          )}
-                                          <div>
-                                             <p className="text-sm font-bold text-zinc-100">{f.numero_fatura}</p>
-                                             <p className={cn("text-[10px] font-bold uppercase tracking-wider mt-0.5", f.tipo === 'compra_financeiro' ? "text-blue-500" : "text-rose-500")}>
-                                                {f.tipo === 'compra_financeiro' ? 'Compra' : f.tipo?.replace('despesa_', 'Despesa: ')} {f.isGroup && <span className="text-zinc-500 ml-1">({f.totalInstallments} parcelas)</span>}
-                                             </p>
-                                          </div>
-                                       </div>
-                                    </td>
-                                    <td className="p-4">
-                                       <p className="text-sm font-semibold text-zinc-300">{f.fornecedor?.nome}</p>
-                                       <p className="text-[11px] text-zinc-500 uppercase mt-0.5">NIF: {f.fornecedor?.nif || "-"}</p>
-                                       {(() => {
-                                          const metodoLabels: Record<string, string> = {
-                                             transferencia: "Transferência",
-                                             dinheiro: "Dinheiro",
-                                             debito_direto: "Débito Direto",
-                                             pago: "Pago"
-                                          };
-                                          try {
-                                             if (f.descrição) {
-                                                const desc = JSON.parse(f.descrição);
-                                                if (desc.classificacao_nome || desc.forma_pagamento) {
-                                                   const label = desc.classificacao_tipo === "conta_analise" ? "Conta Análise" : "Centro de Custo";
-                                                   return (
-                                                      <div className="mt-1 space-y-0.5">
-                                                         {desc.classificacao_nome && (
-                                                            <p className="text-[10px] font-bold text-blue-400 uppercase tracking-wider">{label}: {desc.classificacao_nome}</p>
-                                                         )}
-                                                         {desc.forma_pagamento && (
-                                                            <p className="text-[10px] text-zinc-400">Pagamento: {metodoLabels[desc.forma_pagamento] || desc.forma_pagamento}</p>
-                                                         )}
-                                                      </div>
-                                                   );
-                                                }
-                                                if (desc.loja_id) {
-                                                   const s = stores.find((s: any) => String(s.id) === String(desc.loja_id));
-                                                   if (s) {
-                                                      return <p className="text-[10px] font-bold text-amber-500 mt-1 uppercase tracking-wider">{s.name}</p>;
-                                                   }
-                                                }
-                                             }
-                                          } catch(e) {}
-                                          if (f.tipo?.startsWith('despesa')) {
-                                             return <p className="text-[10px] font-bold text-blue-500 mt-1 uppercase tracking-wider">Armazém Central</p>;
-                                          }
-                                          return null;
-                                       })()}
-                                        {f.observacoes && (
-                                           <p className="text-[10px] text-zinc-400 italic mt-1.5 border-l border-amber-500/50 pl-2 line-clamp-1" title={f.observacoes}>
-                                              &quot;{f.observacoes}&quot;
-                                           </p>
-                                        )}
-                                    </td>
-                                    <td className="p-4 space-y-1 text-sm text-zinc-400">
-                                       <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> <span className="text-[11px]">Em: {f.data_emissao}</span></div>
-                                       {f.data_vencimento && (
-                                          <div className="flex items-center gap-1.5 text-amber-500/80 flex-wrap">
-                                             <Clock className="w-3.5 h-3.5" /> <span className="text-[11px]">Venc: {f.data_vencimento}</span>
-                                             {getVencimentoText(f.data_vencimento, f.status_pagamento)}
-                                          </div>
+
+               {/* Área de Resultados (Oculta até clicar em Pesquisar) */}
+               {!hasSearchedFaturas ? (
+                  <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-2xl py-16 px-6 text-center">
+                     <div className="w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto mb-3.5 text-zinc-400">
+                        <Search className="w-5 h-5" />
+                     </div>
+                     <p className="text-sm font-semibold text-zinc-200">
+                        As faturas estão ocultas até realizar a pesquisa
+                     </p>
+                     <p className="text-xs text-zinc-500 mt-1 max-w-md mx-auto">
+                        Escolha o intervalo de datas, centro de custo, conta de análise ou fornecedor acima e clique em Pesquisar.
+                     </p>
+                  </div>
+               ) : (
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden flex flex-col">
+                     {/* Resumo dos Resultados Filtrados */}
+                     <div className="px-5 py-3.5 bg-zinc-900/40 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
+                           <div>
+                              <span className="text-zinc-500">Faturas: </span>
+                              <span className="font-mono tabular-nums font-semibold text-zinc-200">
+                                 {groupedFaturas.length}
+                              </span>
+                           </div>
+                           <span className="text-zinc-800 hidden sm:inline">·</span>
+                           <div>
+                              <span className="text-zinc-500">Total Filtrado: </span>
+                              <span className="font-mono tabular-nums font-semibold text-zinc-100">
+                                 € {filteredFaturasTotals.total.toLocaleString("pt-PT", { minimumFractionDigits: 2 })}
+                              </span>
+                           </div>
+                           <span className="text-zinc-800 hidden sm:inline">·</span>
+                           <div>
+                              <span className="text-zinc-500">IVA: </span>
+                              <span className="font-mono tabular-nums font-semibold text-emerald-400">
+                                 € {filteredFaturasTotals.iva.toLocaleString("pt-PT", { minimumFractionDigits: 2 })}
+                              </span>
+                           </div>
+                           <span className="text-zinc-800 hidden sm:inline">·</span>
+                           <div>
+                              <span className="text-zinc-500">Pendente: </span>
+                              <span className="font-mono tabular-nums font-bold text-amber-400">
+                                 € {filteredFaturasTotals.pendente.toLocaleString("pt-PT", { minimumFractionDigits: 2 })}
+                              </span>
+                           </div>
+                        </div>
+
+                        <button
+                           type="button"
+                           onClick={() => setHasSearchedFaturas(false)}
+                           className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                        >
+                           <EyeOff className="w-3.5 h-3.5" />
+                           Ocultar Lista
+                        </button>
+                     </div>
+
+                     <div className="flex-1 overflow-x-auto no-scrollbar">
+                        <table className="w-full text-left min-w-[960px]">
+                           <thead>
+                              <tr className="bg-zinc-900/50 border-b border-zinc-800">
+                                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 whitespace-nowrap">Documento</th>
+                                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 whitespace-nowrap">Fornecedor</th>
+                                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 whitespace-nowrap">Centro de Custo / Conta</th>
+                                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 whitespace-nowrap">Datas</th>
+                                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 text-right whitespace-nowrap">Valor Total</th>
+                                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 text-center whitespace-nowrap">Estado</th>
+                                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 text-right whitespace-nowrap">Pendente</th>
+                              </tr>
+                           </thead>
+                           <tbody className="divide-y divide-zinc-800/60">
+                              {filteredFaturas.length === 0 ? (
+                                 <tr>
+                                    <td colSpan={7} className="p-12 text-center">
+                                       <FileText className="w-9 h-9 text-zinc-700 mx-auto mb-3" />
+                                       <p className="text-zinc-300 font-medium text-sm">
+                                          {isCompras ? "Nenhuma fatura encontrada para os filtros selecionados." : "Nenhuma fatura encontrada."}
+                                       </p>
+                                       <p className="text-xs text-zinc-500 mt-1">
+                                          Ajuste as datas ou os filtros acima e pesquise novamente.
+                                       </p>
+                                       {isCompras && user?.role === "admin" && (
+                                          <button
+                                             onClick={() => setIsPurchaseModalOpen(true)}
+                                             className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border border-emerald-500/40 cursor-pointer"
+                                          >
+                                             <Plus size={12} strokeWidth={2.75} />
+                                             Nova Fatura
+                                          </button>
                                        )}
-                                    </td>
-                                    <td className="p-4 text-right">
-                                       <span className="text-sm font-bold text-zinc-100">€ {Number(f.valor_total).toLocaleString('pt-PT', {minimumFractionDigits:2})}</span>
-                                    </td>
-                                    <td className="p-4 text-center">
-                                       {f.status_pagamento === 'pago' ? (
-                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider"><CheckCircle2 className="w-3 h-3" /> Pago</span>
-                                       ) : f.status_pagamento === 'parcial' ? (
-                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Parcial</span>
-                                       ) : f.status_pagamento === 'em_conferencia' ? (
-                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Conferencia</span>
-                                       ) : (
-                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Pendente</span>
-                                       )}
-                                    </td>
-                                    <td className="p-4 text-right">
-                                       <span className={cn("text-sm font-bold", Number(f.valor_pendente) > 0 ? "text-amber-500" : "text-zinc-500")}>
-                                          € {Number(f.valor_pendente).toLocaleString('pt-PT', {minimumFractionDigits:2})}
-                                       </span>
                                     </td>
                                  </tr>
-                                 
-                                 {isExpanded && f.installments.map((inst: any) => (
-                                    <tr key={inst.id} className="bg-zinc-900/30 hover:bg-zinc-800/40 transition-colors cursor-pointer border-l-2 border-l-rose-500/50" onClick={() => { setSelectedFatura(inst); setIsDetailsModalOpen(true); }}>
-                                       <td className="p-4 pl-10">
-                                          <p className="text-sm font-bold text-zinc-300">{inst.numero_fatura}</p>
-                                       </td>
-                                       <td className="p-4">
-                                          <p className="text-sm font-semibold text-zinc-300">{inst.fornecedor?.nome}</p>
-                                          <p className="text-[11px] text-zinc-500 uppercase mt-0.5">NIF: {inst.fornecedor?.nif || "-"}</p>
-                                           {inst.observacoes && (
-                                              <p className="text-[10px] text-zinc-500 italic mt-1.5 border-l border-amber-500/30 pl-2 line-clamp-1" title={inst.observacoes}>
-                                                 &quot;{inst.observacoes}&quot;
-                                              </p>
-                                           )}
-                                       </td>
-                                       <td className="p-4 space-y-1 text-sm text-zinc-400">
-                                          {inst.data_vencimento && (
-                                             <div className="flex items-center gap-1.5 text-amber-500/80 flex-wrap">
-                                                <Clock className="w-3.5 h-3.5" /> <span className="text-[11px]">Venc: {inst.data_vencimento}</span>
-                                                {getVencimentoText(inst.data_vencimento, inst.status_pagamento)}
+                              ) : (
+                                 groupedFaturas.slice(0, displayCountFaturas).map(f => {
+                                    const isExpanded = f.isGroup && expandedGroups[f.id];
+                                    const meta = extractFaturaMeta(f, stores);
+                                    return (
+                                    <React.Fragment key={f.id}>
+                                       <tr
+                                          className={cn(
+                                             "transition-colors cursor-pointer",
+                                             isExpanded ? "bg-zinc-900/60" : "hover:bg-zinc-900/40"
+                                          )}
+                                          onClick={(e) => {
+                                             if (f.isGroup) toggleGroup(f.id, e as any);
+                                             else { setSelectedFatura(f); setIsDetailsModalOpen(true); }
+                                          }}
+                                       >
+                                          <td className="px-4 py-3.5">
+                                             <div className="flex items-center gap-2">
+                                                {f.isGroup && (
+                                                   <ChevronRight className={cn("w-4 h-4 text-zinc-500 transition-transform shrink-0", isExpanded && "rotate-90")} />
+                                                )}
+                                                <div>
+                                                   <p className="text-sm font-semibold text-zinc-100">{f.numero_fatura}</p>
+                                                   <div className="flex items-center gap-1.5 text-xs text-zinc-500 mt-0.5">
+                                                      <span>{meta.formaPagamento ? (metodoLabels[meta.formaPagamento] || meta.formaPagamento) : "Compra"}</span>
+                                                      {f.isGroup && (
+                                                         <>
+                                                            <span>·</span>
+                                                            <span>{f.totalInstallments} parcelas</span>
+                                                         </>
+                                                      )}
+                                                   </div>
+                                                </div>
                                              </div>
-                                          )}
-                                       </td>
-                                       <td className="p-4 text-right">
-                                          <span className="text-sm font-medium text-zinc-300">€ {Number(inst.valor_total).toLocaleString('pt-PT', {minimumFractionDigits:2})}</span>
-                                       </td>
-                                       <td className="p-4 text-center">
-                                          {inst.status_pagamento === 'pago' ? (
-                                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider"><CheckCircle2 className="w-3 h-3" /> Pago</span>
-                                          ) : inst.status_pagamento === 'parcial' ? (
-                                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Parcial</span>
-                                          ) : inst.status_pagamento === 'em_conferencia' ? (
-                                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Conferencia</span>
-                                          ) : (
-                                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 text-[10px] font-bold uppercase tracking-wider"><Clock className="w-3 h-3" /> Pendente</span>
-                                          )}
-                                       </td>
-                                       <td className="p-4 text-right">
-                                          <span className={cn("text-sm font-medium", Number(inst.valor_pendente) > 0 ? "text-amber-500" : "text-zinc-500")}>
-                                             € {Number(inst.valor_pendente).toLocaleString('pt-PT', {minimumFractionDigits:2})}
-                                          </span>
-                                       </td>
-                                    </tr>
-                                 ))}
-                              </React.Fragment>
-                              )
-                           })
+                                          </td>
+                                          <td className="px-4 py-3.5">
+                                             <p className="text-sm font-medium text-zinc-200">{f.fornecedor?.nome || "-"}</p>
+                                             <p className="text-xs text-zinc-500 font-mono tabular-nums mt-0.5">NIF: {f.fornecedor?.nif || "-"}</p>
+                                             {f.observacoes && (
+                                                <p className="text-xs text-zinc-500 italic mt-1 line-clamp-1" title={f.observacoes}>
+                                                   &quot;{f.observacoes}&quot;
+                                                </p>
+                                             )}
+                                          </td>
+                                          <td className="px-4 py-3.5">
+                                             {meta.centroCusto || meta.contaAnalise ? (
+                                                <div className="space-y-0.5">
+                                                   {meta.centroCusto && (
+                                                      <p className="text-xs font-semibold text-blue-400">{meta.centroCusto}</p>
+                                                   )}
+                                                   {meta.contaAnalise && (
+                                                      <p className="text-xs text-emerald-400">{meta.contaAnalise}</p>
+                                                   )}
+                                                </div>
+                                             ) : (
+                                                <span className="text-xs text-zinc-600">—</span>
+                                             )}
+                                          </td>
+                                          <td className="px-4 py-3.5 space-y-1 text-xs text-zinc-400 font-mono tabular-nums">
+                                             <div>Emissão: {f.data_emissao || "-"}</div>
+                                             {f.data_vencimento && (
+                                                <div className="flex items-center gap-1.5 text-amber-400/90 flex-wrap font-sans">
+                                                   <span className="font-mono tabular-nums">Venc: {f.data_vencimento}</span>
+                                                   {getVencimentoText(f.data_vencimento, f.status_pagamento)}
+                                                </div>
+                                             )}
+                                          </td>
+                                          <td className="px-4 py-3.5 text-right font-mono tabular-nums">
+                                             <span className="text-sm font-semibold text-zinc-100">
+                                                € {Number(f.valor_total).toLocaleString('pt-PT', {minimumFractionDigits:2})}
+                                             </span>
+                                          </td>
+                                          <td className="px-4 py-3.5 text-center">
+                                             {f.status_pagamento === 'pago' ? (
+                                                <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-400">
+                                                   <CheckCircle2 className="w-3.5 h-3.5" /> Pago
+                                                </span>
+                                             ) : f.status_pagamento === 'parcial' ? (
+                                                <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-400">
+                                                   <Clock className="w-3.5 h-3.5" /> Parcial
+                                                </span>
+                                             ) : (
+                                                <span className="inline-flex items-center gap-1 text-xs font-semibold text-rose-400">
+                                                   <Clock className="w-3.5 h-3.5" /> Pendente
+                                                </span>
+                                             )}
+                                          </td>
+                                          <td className="px-4 py-3.5 text-right font-mono tabular-nums">
+                                             <span className={cn("text-sm font-semibold", Number(f.valor_pendente) > 0 ? "text-amber-400" : "text-zinc-500")}>
+                                                € {Number(f.valor_pendente).toLocaleString('pt-PT', {minimumFractionDigits:2})}
+                                             </span>
+                                          </td>
+                                       </tr>
+                                       
+                                       {isExpanded && f.installments.map((inst: any) => {
+                                          const instMeta = extractFaturaMeta(inst, stores);
+                                          return (
+                                          <tr
+                                             key={inst.id}
+                                             className="bg-zinc-900/25 hover:bg-zinc-900/50 transition-colors cursor-pointer"
+                                             onClick={() => { setSelectedFatura(inst); setIsDetailsModalOpen(true); }}
+                                          >
+                                             <td className="px-4 py-3 pl-10">
+                                                <p className="text-xs font-semibold text-zinc-300">{inst.numero_fatura}</p>
+                                             </td>
+                                             <td className="px-4 py-3">
+                                                <p className="text-xs font-medium text-zinc-400">{inst.fornecedor?.nome || "-"}</p>
+                                             </td>
+                                             <td className="px-4 py-3">
+                                                <span className="text-xs text-zinc-500">{instMeta.centroCusto || "—"}</span>
+                                             </td>
+                                             <td className="px-4 py-3 text-xs text-zinc-400">
+                                                {inst.data_vencimento && (
+                                                   <div className="flex items-center gap-1.5 text-amber-400/90 flex-wrap">
+                                                      <span className="font-mono tabular-nums">Venc: {inst.data_vencimento}</span>
+                                                      {getVencimentoText(inst.data_vencimento, inst.status_pagamento)}
+                                                   </div>
+                                                )}
+                                             </td>
+                                             <td className="px-4 py-3 text-right font-mono tabular-nums">
+                                                <span className="text-xs font-medium text-zinc-300">
+                                                   € {Number(inst.valor_total).toLocaleString('pt-PT', {minimumFractionDigits:2})}
+                                                </span>
+                                             </td>
+                                             <td className="px-4 py-3 text-center">
+                                                {inst.status_pagamento === 'pago' ? (
+                                                   <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400"><CheckCircle2 className="w-3 h-3" /> Pago</span>
+                                                ) : inst.status_pagamento === 'parcial' ? (
+                                                   <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-400"><Clock className="w-3 h-3" /> Parcial</span>
+                                                ) : (
+                                                   <span className="inline-flex items-center gap-1 text-xs font-medium text-rose-400"><Clock className="w-3 h-3" /> Pendente</span>
+                                                )}
+                                             </td>
+                                             <td className="px-4 py-3 text-right font-mono tabular-nums">
+                                                <span className={cn("text-xs font-medium", Number(inst.valor_pendente) > 0 ? "text-amber-400" : "text-zinc-500")}>
+                                                   € {Number(inst.valor_pendente).toLocaleString('pt-PT', {minimumFractionDigits:2})}
+                                                </span>
+                                             </td>
+                                          </tr>
+                                          );
+                                       })}
+                                    </React.Fragment>
+                                    );
+                                 })
+                              )}
+                           </tbody>
+                        </table>
+                        {groupedFaturas.length > displayCountFaturas && (
+                          <div ref={loadMoreFaturasRef} className="w-full flex justify-center py-6">
+                            <span className="px-6 py-3 text-zinc-500 font-medium tracking-tight text-sm">
+                              Carregando mais itens...
+                            </span>
+                          </div>
                         )}
-                     </tbody>
-                  </table>
-                  {groupedFaturas.length > displayCountFaturas && (
-                    <div ref={loadMoreFaturasRef} className="w-full flex justify-center py-6">
-                      <span className="px-6 py-3 text-zinc-500 font-medium tracking-tight text-sm">
-                        Carregando mais itens...
-                      </span>
-                    </div>
-                  )}
-               </div>
+                     </div>
+                  </div>
+               )}
             </div>
             );
          })()}
@@ -1650,12 +1992,16 @@ export default function AdminFinancial() {
                     try {
                        if (selectedFatura.descrição) {
                           const desc = JSON.parse(selectedFatura.descrição);
-                          if (desc.classificacao_nome || desc.forma_pagamento) {
-                             const label = desc.classificacao_tipo === "conta_analise" ? "Conta Análise" : "Centro de Custo";
+                          if (desc.centro_custo || desc.conta_analise || desc.classificacao_nome || desc.forma_pagamento) {
+                             const centroCusto = desc.centro_custo || (desc.classificacao_tipo !== "conta_analise" ? desc.classificacao_nome : "");
+                             const contaAnalise = desc.conta_analise || (desc.classificacao_tipo === "conta_analise" ? desc.classificacao_nome : "");
                              return (
                                 <div className="mt-1 space-y-0.5">
-                                   {desc.classificacao_nome && (
-                                      <p className="text-[11px] font-bold text-blue-400 uppercase tracking-wider">{label}: {desc.classificacao_nome}</p>
+                                   {centroCusto && (
+                                      <p className="text-[11px] font-bold text-blue-400 uppercase tracking-wider">Centro de Custo: {centroCusto}</p>
+                                   )}
+                                   {contaAnalise && (
+                                      <p className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">Conta Análise: {contaAnalise}</p>
                                    )}
                                    {desc.forma_pagamento && (
                                       <p className="text-[11px] text-zinc-400">Forma de Pagamento: {metodoLabels[desc.forma_pagamento] || desc.forma_pagamento}</p>
@@ -1836,27 +2182,27 @@ export default function AdminFinancial() {
       <Modal isOpen={isStoreModalOpen} onClose={() => { setIsStoreModalOpen(false); setSelectedStore(null); }} title={`Nova Despesa: ${selectedStore?.name || ""}`} maxWidth="2xl">
           <div className="pt-2 sm:pt-4">
              {selectedStore && <AdminExpenseEntries compact={true} lojaId={selectedStore.id} onSuccess={() => {
-                 fetchDados("faturas_despesas");
+                 fetchDados("faturas_compras");
                  setIsStoreModalOpen(false);
-                 setActiveTab("faturas_despesas");
-                 setFilterDataAPagar({...filterDataAPagar, loja: String(selectedStore.id)});
+                 setActiveTab("faturas_compras");
+                 const nextFilter = { ...DEFAULT_FATURAS_FILTER, centroCusto: `loja:${selectedStore.id}` };
+                 setDraftFilterAPagar(nextFilter);
+                 setAppliedFilterAPagar(nextFilter);
                  setSelectedStore(null);
              }} />}
           </div>
       </Modal>
 
-      {/* Modal Nova Fatura de Compra */}
-      <Modal isOpen={isPurchaseModalOpen} onClose={() => setIsPurchaseModalOpen(false)} title="Registrar Fatura de Compra" maxWidth="2xl">
-          <div className="pt-2 sm:pt-4">
-             <AdminPurchaseEntries
-                compact={true}
-                onSuccess={() => {
-                   setIsPurchaseModalOpen(false);
-                   setActiveTab("faturas_compras");
-                   fetchDados("faturas_compras");
-                }}
-             />
-          </div>
+      {/* Modal Nova Fatura */}
+      <Modal isOpen={isPurchaseModalOpen} onClose={() => setIsPurchaseModalOpen(false)} title="Nova Fatura" maxWidth="page">
+          <AdminPurchaseEntries
+             compact={true}
+             onSuccess={() => {
+                setIsPurchaseModalOpen(false);
+                setActiveTab("faturas_compras");
+                fetchDados("faturas_compras");
+             }}
+          />
       </Modal>
 
     </div>

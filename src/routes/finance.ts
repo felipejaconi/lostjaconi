@@ -447,6 +447,8 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
 
         const descObj: Record<string, any> = {};
         if (item.loja_id) descObj.loja_id = item.loja_id;
+        if (item.centro_custo) descObj.centro_custo = item.centro_custo;
+        if (item.conta_analise) descObj.conta_analise = item.conta_analise;
         if (item.classificacao_tipo) descObj.classificacao_tipo = item.classificacao_tipo;
         if (item.classificacao_nome) descObj.classificacao_nome = item.classificacao_nome;
         if (item.forma_pagamento) descObj.forma_pagamento = item.forma_pagamento;
@@ -504,6 +506,14 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
               },
             ]);
           } catch {}
+        }
+      }
+
+      // Se alguma conta de análise foi informada, garante que fica salva na lista personalizada
+      for (const item of items) {
+        const ca = String(item?.conta_analise || "").trim();
+        if (ca) {
+          await addContaAnaliseToStorage(ca).catch(() => {});
         }
       }
 
@@ -1041,6 +1051,97 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
 
       clearFinanceCache();
       res.json({ message: "Pagamento registado com sucesso" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  const CONTAS_STORAGE_PATH = "config/contas_analise.json";
+
+  async function readContasAnaliseFromStorage(): Promise<string[]> {
+    const cached = cache.get("admin_contas_analise");
+    if (Array.isArray(cached)) return cached;
+    try {
+      const { data, error } = await supabase.storage.from("uploads").download(CONTAS_STORAGE_PATH);
+      if (error || !data) {
+        cache.set("admin_contas_analise", [], 300);
+        return [];
+      }
+      const text = await data.text();
+      const parsed = JSON.parse(text);
+      const list = Array.isArray(parsed)
+        ? parsed.map((x: any) => String(x || "").trim()).filter(Boolean)
+        : [];
+      cache.set("admin_contas_analise", list, 300);
+      return list;
+    } catch {
+      return [];
+    }
+  }
+
+  async function writeContasAnaliseToStorage(list: string[]): Promise<string[]> {
+    const unique: string[] = [];
+    const seen = new Set<string>();
+    for (const item of list) {
+      const clean = String(item || "").trim();
+      if (!clean) continue;
+      const key = clean.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(clean);
+      }
+    }
+    unique.sort((a, b) => a.localeCompare(b, "pt-PT"));
+    await supabase.storage
+      .from("uploads")
+      .upload(CONTAS_STORAGE_PATH, Buffer.from(JSON.stringify(unique, null, 2), "utf8"), {
+        contentType: "application/json",
+        upsert: true,
+      });
+    cache.set("admin_contas_analise", unique, 300);
+    return unique;
+  }
+
+  async function addContaAnaliseToStorage(nome: string): Promise<string[]> {
+    const clean = String(nome || "").trim();
+    if (!clean) return readContasAnaliseFromStorage();
+    const current = await readContasAnaliseFromStorage();
+    if (current.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+      return current;
+    }
+    return writeContasAnaliseToStorage([...current, clean]);
+  }
+
+  app.get("/api/admin/financeiro/contas-analise", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const list = await readContasAnaliseFromStorage();
+      res.json(list);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/financeiro/contas-analise", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    try {
+      const nome = String(req.body?.nome || "").trim();
+      if (!nome) return res.status(400).json({ error: "Informe o nome da Conta de Análise" });
+      const updated = await addContaAnaliseToStorage(nome);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/admin/financeiro/contas-analise", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    try {
+      const nome = String(req.body?.nome || req.query?.nome || "").trim();
+      const current = await readContasAnaliseFromStorage();
+      const filtered = current.filter((c) => c.toLowerCase() !== nome.toLowerCase());
+      const updated = await writeContasAnaliseToStorage(filtered);
+      res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
