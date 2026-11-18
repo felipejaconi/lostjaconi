@@ -19,11 +19,17 @@ export default function AdminPurchaseEntries({
   const [fornecedores, setFornecedores] = useState<any[]>([]);
   const [stores, setStores] = useState<any[]>([]);
   const [existingFaturas, setExistingFaturas] = useState<any[]>([]);
+  const [savedEmpresas, setSavedEmpresas] = useState<string[]>([]);
+  const [isAddingEmpresa, setIsAddingEmpresa] = useState(false);
   const [savedContasAnalise, setSavedContasAnalise] = useState<string[]>([]);
   const [isAddingConta, setIsAddingConta] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Classificação unificada: 1) Centro de Custo e 2) Conta de Análise na mesma fatura
+  // Classificação unificada: 1) Empresa, 2) Centro de Custo e 3) Conta de Análise na mesma fatura
+  const [useNovaEmpresa, setUseNovaEmpresa] = useState(false);
+  const [empresaSelecionada, setEmpresaSelecionada] = useState<string>("");
+  const [empresaNova, setEmpresaNova] = useState<string>("");
+
   const [useNovoCentroCusto, setUseNovoCentroCusto] = useState(false);
   const [centroCustoSelecionado, setCentroCustoSelecionado] = useState<string>(
     lojaId ? `loja:${lojaId}` : "armazem_central"
@@ -72,11 +78,12 @@ export default function AdminPurchaseEntries({
 
   const fetchData = async () => {
     try {
-      const [resForn, resUsers, resFaturas, resContas] = await Promise.all([
+      const [resForn, resUsers, resFaturas, resContas, resEmpresas] = await Promise.all([
         api.get("/admin/fornecedores").catch(() => ({ data: [] })),
         api.get("/admin/users").catch(() => ({ data: [] })),
         api.get("/admin/faturas").catch(() => ({ data: [] })),
         api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] })),
+        api.get("/admin/financeiro/empresas").catch(() => ({ data: [] })),
       ]);
       setFornecedores(resForn.data || []);
       setStores(
@@ -86,8 +93,38 @@ export default function AdminPurchaseEntries({
       );
       setExistingFaturas(Array.isArray(resFaturas.data) ? resFaturas.data : []);
       setSavedContasAnalise(Array.isArray(resContas.data) ? resContas.data : []);
+      setSavedEmpresas(Array.isArray(resEmpresas.data) ? resEmpresas.data : []);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleAddEmpresa = async () => {
+    const clean = empresaNova.trim();
+    if (!clean) return;
+    try {
+      setIsAddingEmpresa(true);
+      const res = await api.post("/admin/financeiro/empresas", { nome: clean });
+      if (Array.isArray(res.data)) {
+        setSavedEmpresas(res.data);
+      } else {
+        setSavedEmpresas((prev) =>
+          prev.some((e) => e.toLowerCase() === clean.toLowerCase()) ? prev : [...prev, clean]
+        );
+      }
+      setEmpresaSelecionada(clean);
+      setEmpresaNova("");
+      setUseNovaEmpresa(false);
+    } catch (err: any) {
+      Swal.fire({
+        icon: "error",
+        title: "Erro",
+        text: err.response?.data?.error || "Não foi possível incluir a Empresa",
+        background: "#18181b",
+        color: "#fff",
+      });
+    } finally {
+      setIsAddingEmpresa(false);
     }
   };
 
@@ -120,8 +157,9 @@ export default function AdminPurchaseEntries({
     }
   };
 
-  // Extrai Centros de Custo e Contas de Análise personalizados já criados pelo utilizador
+  // Extrai Empresas, Centros de Custo e Contas de Análise personalizados já criados pelo utilizador
   const customHistory = useMemo(() => {
+    const empresasMap = new Map<string, string>();
     const centros = new Set<string>();
     const contasMap = new Map<string, string>();
     const storeNames = new Set(stores.map((s) => (s.name || "").toLowerCase()));
@@ -141,6 +179,13 @@ export default function AdminPurchaseEntries({
       "a",
     ]);
 
+    savedEmpresas.forEach((emp) => {
+      const clean = String(emp || "").trim();
+      if (clean && !empresasMap.has(clean.toLowerCase())) {
+        empresasMap.set(clean.toLowerCase(), clean);
+      }
+    });
+
     savedContasAnalise.forEach((ca) => {
       const clean = String(ca || "").trim();
       if (clean && !contasMap.has(clean.toLowerCase())) {
@@ -152,6 +197,11 @@ export default function AdminPurchaseEntries({
       if (!f?.descrição) return;
       try {
         const parsed = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
+        const empNome = String(parsed?.empresa || "").trim();
+        if (empNome && !empresasMap.has(empNome.toLowerCase())) {
+          empresasMap.set(empNome.toLowerCase(), empNome);
+        }
+
         const ccNome = String(
           parsed?.centro_custo ||
             (parsed?.classificacao_tipo === "centro_custo" ? parsed?.classificacao_nome : "") ||
@@ -177,12 +227,27 @@ export default function AdminPurchaseEntries({
     });
 
     return {
+      empresas: Array.from(empresasMap.values()).sort((a, b) => a.localeCompare(b, "pt-PT")),
       centros: Array.from(centros).sort((a, b) => a.localeCompare(b)),
       contas: Array.from(contasMap.values()).sort((a, b) => a.localeCompare(b, "pt-PT")),
     };
-  }, [existingFaturas, stores, savedContasAnalise]);
+  }, [existingFaturas, stores, savedContasAnalise, savedEmpresas]);
 
   const resolveClassificacao = () => {
+    let empresaNome = "";
+    if (useNovaEmpresa) {
+      const cleanEmp = empresaNova.trim();
+      if (!cleanEmp) {
+        throw new Error("Informe o nome da Empresa");
+      }
+      empresaNome = cleanEmp;
+    } else {
+      if (!empresaSelecionada) {
+        throw new Error("Selecione uma Empresa");
+      }
+      empresaNome = empresaSelecionada;
+    }
+
     let centroCustoNome = "";
     let resolvedLojaId: string | null = lojaId || null;
 
@@ -227,6 +292,7 @@ export default function AdminPurchaseEntries({
     }
 
     return {
+      empresa: empresaNome,
       centro_custo: centroCustoNome,
       conta_analise: contaAnaliseNome,
       classificacao_tipo: "centro_custo" as const,
@@ -292,6 +358,7 @@ export default function AdminPurchaseEntries({
             valor_iva: parsedIva.toDecimalPlaces(2).toNumber(),
             valor_total: parsedTotal.toDecimalPlaces(2).toNumber(),
             observacoes: observacoes.trim() || null,
+            empresa: classif.empresa,
             loja_id: classif.loja_id,
             centro_custo: classif.centro_custo,
             conta_analise: classif.conta_analise,
@@ -314,6 +381,7 @@ export default function AdminPurchaseEntries({
           valor_iva: parsedIva.toDecimalPlaces(2).toNumber(),
           valor_total: parsedTotal.toDecimalPlaces(2).toNumber(),
           observacoes: observacoes.trim() || null,
+          empresa: classif.empresa,
           loja_id: classif.loja_id,
           centro_custo: classif.centro_custo,
           conta_analise: classif.conta_analise,
@@ -343,6 +411,8 @@ export default function AdminPurchaseEntries({
       setValorLiquido("");
       setValorIva("");
       setObservacoes("");
+      setEmpresaNova("");
+      setUseNovaEmpresa(false);
       setCentroCustoNovo("");
       setUseNovoCentroCusto(false);
       setContaAnaliseNova("");
@@ -372,10 +442,77 @@ export default function AdminPurchaseEntries({
       >
         <div className={compact ? "p-1 pb-6" : "p-6"}>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            {/* Bloco unificado: 1. Centro de Custo e 2. Conta de Análise logo abaixo */}
+            {/* Bloco unificado: 1. Empresa, 2. Centro de Custo e 3. Conta de Análise */}
             <div className="sm:col-span-2 bg-zinc-900/35 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 space-y-4">
-              {/* 1. Centro de Custo */}
+              {/* 1. Empresa */}
               <div>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    Empresa *
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={useNovaEmpresa}
+                      onChange={(e) => {
+                        setUseNovaEmpresa(e.target.checked);
+                        setEmpresaNova("");
+                      }}
+                      className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500/50"
+                    />
+                    <span className="text-xs text-zinc-400 group-hover:text-zinc-300 transition-colors">
+                      Nova Empresa
+                    </span>
+                  </label>
+                </div>
+
+                {useNovaEmpresa ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={empresaNova}
+                      onChange={(e) => setEmpresaNova(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddEmpresa();
+                        }
+                      }}
+                      className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
+                      placeholder="Digite o nome da empresa..."
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddEmpresa}
+                      disabled={isAddingEmpresa || !empresaNova.trim()}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shrink-0 cursor-pointer"
+                    >
+                      <Plus size={14} strokeWidth={2.75} />
+                      Incluir
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={empresaSelecionada}
+                    onChange={(e) => setEmpresaSelecionada(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
+                  >
+                    <option value="">
+                      {customHistory.empresas.length === 0
+                        ? "Nenhuma empresa cadastrada — marque \"Nova Empresa\" para incluir"
+                        : "Selecione a empresa..."}
+                    </option>
+                    {customHistory.empresas.map((emp) => (
+                      <option key={emp} value={emp}>
+                        {emp}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* 2. Centro de Custo */}
+              <div className="pt-3 border-t border-zinc-800/70">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                   <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
                     Centro de Custo *

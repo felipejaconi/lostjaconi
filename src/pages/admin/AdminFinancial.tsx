@@ -78,6 +78,7 @@ const DEFAULT_FATURAS_FILTER = {
 };
 
 function extractFaturaMeta(f: any, storesList: any[]) {
+  let empresa = "";
   let centroCusto = "";
   let contaAnalise = "";
   let lojaId = "";
@@ -86,6 +87,7 @@ function extractFaturaMeta(f: any, storesList: any[]) {
   if (f?.descrição && f.descrição !== "null") {
     try {
       const desc = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
+      empresa = desc?.empresa ? String(desc.empresa).trim() : "";
       lojaId = desc?.loja_id ? String(desc.loja_id) : "";
       formaPagamento = desc?.forma_pagamento ? String(desc.forma_pagamento) : "";
       centroCusto = String(
@@ -118,7 +120,7 @@ function extractFaturaMeta(f: any, storesList: any[]) {
     if (st?.name) centroCusto = st.name;
   }
 
-  return { centroCusto, contaAnalise, lojaId, formaPagamento };
+  return { empresa, centroCusto, contaAnalise, lojaId, formaPagamento };
 }
 
 export default function AdminFinancial() {
@@ -1728,8 +1730,11 @@ export default function AdminFinancial() {
                                              )}
                                           </td>
                                           <td className="px-4 py-3.5">
-                                             {meta.centroCusto || meta.contaAnalise ? (
+                                             {meta.empresa || meta.centroCusto || meta.contaAnalise ? (
                                                 <div className="space-y-0.5">
+                                                   {meta.empresa && (
+                                                      <p className="text-[11px] font-bold text-zinc-200">{meta.empresa}</p>
+                                                   )}
                                                    {meta.centroCusto && (
                                                       <p className="text-xs font-semibold text-blue-400">{meta.centroCusto}</p>
                                                    )}
@@ -2132,11 +2137,14 @@ export default function AdminFinancial() {
                     try {
                        if (selectedFatura.descrição) {
                           const desc = JSON.parse(selectedFatura.descrição);
-                          if (desc.centro_custo || desc.conta_analise || desc.classificacao_nome || desc.forma_pagamento) {
+                          if (desc.empresa || desc.centro_custo || desc.conta_analise || desc.classificacao_nome || desc.forma_pagamento) {
                              const centroCusto = desc.centro_custo || (desc.classificacao_tipo !== "conta_analise" ? desc.classificacao_nome : "");
                              const contaAnalise = desc.conta_analise || (desc.classificacao_tipo === "conta_analise" ? desc.classificacao_nome : "");
                              return (
                                 <div className="mt-1 space-y-0.5">
+                                   {desc.empresa && (
+                                      <p className="text-[11px] font-bold text-zinc-200 uppercase tracking-wider">Empresa: {desc.empresa}</p>
+                                   )}
                                    {centroCusto && (
                                       <p className="text-[11px] font-bold text-blue-400 uppercase tracking-wider">Centro de Custo: {centroCusto}</p>
                                    )}
