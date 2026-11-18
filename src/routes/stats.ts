@@ -330,9 +330,8 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
           }
         }
 
-        // IVA calculation for current month
-        const emissaoDate = new Date(f.data_emissao);
-        if (emissaoDate.getMonth() === currentMonth && emissaoDate.getFullYear() === currentYear) {
+        // Crédito IVA (Compras) Recuperável
+        if (f.tipo === "compra_financeiro") {
           totalIvaCredito += Number(f.valor_iva || 0);
         }
       });

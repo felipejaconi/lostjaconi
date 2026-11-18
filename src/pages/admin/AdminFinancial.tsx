@@ -661,11 +661,8 @@ export default function AdminFinancial() {
            fornecedorStats[fornId].total = fornecedorStats[fornId].total.add(val);
         }
 
-        // Calculate IVA (Priorizar coluna de alta precisão valor_iva na própria fatura se existir)
-        const invoiceDate = new Date(f.data_emissao);
-        const isCurrentMonth = invoiceDate.getMonth() === today.getMonth() && invoiceDate.getFullYear() === today.getFullYear();
-        
-        if (isCurrentMonth) {
+        // Crédito IVA (Compras) Recuperável
+        if (isCompra) {
            if (f.valor_iva !== undefined && f.valor_iva !== null) {
                totalIvaCredito = totalIvaCredito.add(new Decimal(f.valor_iva));
            } else if (f.fatura_itens && f.fatura_itens.length > 0) {

@@ -14,7 +14,6 @@ import {
   Wallet,
   Store,
   AlertTriangle,
-  Receipt,
   Users,
   Search,
   RotateCcw,
@@ -39,7 +38,6 @@ type ReportType =
   | "debito_iva"
   | "consumo_lojas"
   | "fornecedores"
-  | "despesas"
   | "fechos"
   | "estoque";
 
@@ -49,8 +47,54 @@ interface AppliedSearchFilters {
   endDate: string;
   status: string;
   entity: string;
+  centroCusto: string;
+  contaAnalise: string;
   stockDate: string;
   stockCategories: string[];
+}
+
+function extractFaturaMeta(f: any, lojasList: any[]) {
+  let centroCusto = "";
+  let contaAnalise = "";
+  let lojaId = "";
+
+  if (f?.descrição && f.descrição !== "null") {
+    try {
+      const desc = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
+      lojaId = desc?.loja_id ? String(desc.loja_id).trim() : "";
+      centroCusto = String(
+        desc?.centro_custo ||
+          (desc?.classificacao_tipo !== "conta_analise" ? desc?.classificacao_nome : "") ||
+          ""
+      ).trim();
+      contaAnalise = String(
+        desc?.conta_analise ||
+          (desc?.classificacao_tipo === "conta_analise" ? desc?.classificacao_nome : "") ||
+          ""
+      ).trim();
+    } catch {}
+  }
+
+  const lowerCC = centroCusto.toLowerCase();
+  if (lowerCC === "armazém central" || lowerCC === "armazem central") {
+    centroCusto = "DISTRIBUIDORA";
+  } else if (
+    lowerCC === "lost wind lda" ||
+    lowerCC === "lost wind unipessoal" ||
+    lowerCC === "lost wind unipessoal,lda" ||
+    lowerCC === "lost wind unipessoal, lda" ||
+    lowerCC === "administração / sede" ||
+    lowerCC === "administracao / sede"
+  ) {
+    centroCusto = "LOST WIND UNIPESSOAL,LDA";
+  } else if (!centroCusto && lojaId) {
+    const st = lojasList.find((l: any) => String(l.id) === lojaId);
+    if (st) centroCusto = st.name || st.nome || "";
+  } else if (!centroCusto && !lojaId && f?.tipo === "compra_financeiro") {
+    centroCusto = "DISTRIBUIDORA";
+  }
+
+  return { centroCusto, contaAnalise, lojaId };
 }
 
 interface QuickSuggestion {
@@ -69,6 +113,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const [endDate, setEndDate] = useState("");
   const [status, setStatus] = useState("todos");
   const [entity, setEntity] = useState("todos");
+  const [centroCusto, setCentroCusto] = useState("todos");
+  const [contaAnalise, setContaAnalise] = useState("todos");
   const [stockDate, setStockDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
   const [selectedStockCategories, setSelectedStockCategories] = useState<string[]>([]);
 
@@ -87,6 +133,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const [fornecedores, setFornecedores] = useState<any[]>([]);
   const [lojas, setLojas] = useState<any[]>([]);
   const [categorias, setCategorias] = useState<any[]>([]);
+  const [savedContasAnalise, setSavedContasAnalise] = useState<string[]>([]);
 
   // Metrics
   const [totalPagarVencido, setTotalPagarVencido] = useState(0);
@@ -98,11 +145,12 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   useEffect(() => {
     const fetchGlobalMetrics = async () => {
       try {
-        const [fornRes, userRes, metricsRes, catRes] = await Promise.all([
+        const [fornRes, userRes, metricsRes, catRes, contasRes] = await Promise.all([
           api.get("/admin/fornecedores").catch(() => ({ data: [] })),
           api.get("/admin/users").catch(() => ({ data: [] })),
           api.get("/admin/reports/summary-metrics").catch(() => ({ data: {} })),
-          api.get("/categorias").catch(() => ({ data: [] }))
+          api.get("/categorias").catch(() => ({ data: [] })),
+          api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] }))
         ]);
 
         if (Array.isArray(fornRes.data)) setFornecedores(fornRes.data);
@@ -111,6 +159,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         }
         if (Array.isArray(catRes.data)) {
           setCategorias(sortCategories(catRes.data));
+        }
+        if (Array.isArray(contasRes.data)) {
+          setSavedContasAnalise(contasRes.data);
         }
 
         const m = (metricsRes.data as any) || {};
@@ -128,6 +179,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   }, []);
 
   const normalizedEntity = !entity || entity === "todos" ? "todos" : entity;
+  const normalizedCentroCusto = !centroCusto || centroCusto === "todos" ? "todos" : centroCusto;
+  const normalizedContaAnalise = !contaAnalise || contaAnalise === "todos" ? "todos" : contaAnalise;
 
   const isDirtySinceLastSearch = useMemo(() => {
     if (!appliedSearch) return false;
@@ -143,9 +196,23 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       appliedSearch.startDate !== startDate ||
       appliedSearch.endDate !== endDate ||
       appliedSearch.status !== status ||
-      appliedSearch.entity !== normalizedEntity
+      appliedSearch.entity !== normalizedEntity ||
+      (["pagar", "faturas_pagas", "iva_credito"].includes(reportType) &&
+        (appliedSearch.centroCusto !== normalizedCentroCusto ||
+          appliedSearch.contaAnalise !== normalizedContaAnalise))
     );
-  }, [appliedSearch, reportType, startDate, endDate, status, normalizedEntity, stockDate, selectedStockCategories]);
+  }, [
+    appliedSearch,
+    reportType,
+    startDate,
+    endDate,
+    status,
+    normalizedEntity,
+    normalizedCentroCusto,
+    normalizedContaAnalise,
+    stockDate,
+    selectedStockCategories
+  ]);
 
   const parseRecordDate = (dateString: string): Date | null => {
     if (!dateString) return null;
@@ -463,7 +530,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     targetStartDate: string,
     targetStockDate = ""
   ) => {
-    const needsFaturas = ["pagar", "faturas_pagas", "iva_credito", "despesas", "consumo_lojas", "fornecedores"].includes(targetType);
+    const needsFaturas = ["pagar", "faturas_pagas", "iva_credito", "consumo_lojas", "fornecedores"].includes(targetType);
     const needsPedidos = ["receber", "debito_iva", "consumo_lojas"].includes(targetType);
     const needsFechos = targetType === "fechos";
     const needsEstoque = targetType === "estoque";
@@ -544,6 +611,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       endDate,
       status,
       entity: normalizedEntity,
+      centroCusto: normalizedCentroCusto,
+      contaAnalise: normalizedContaAnalise,
       stockDate,
       stockCategories: [...selectedStockCategories]
     };
@@ -592,7 +661,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       startDate: sDate,
       endDate: eDate,
       status: stFilter,
-      entity: entFilter
+      entity: entFilter,
+      centroCusto: ccFilter = "todos",
+      contaAnalise: caFilter = "todos"
     } = activeFilters;
 
     let rows: string[][] = [];
@@ -603,94 +674,283 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     let summaryLabel = "Total";
     let numericColumns: number[] = [];
 
-    if (rType === "pagar" || rType === "faturas_pagas") {
+    if (rType === "pagar") {
       const filtered = faturasInput.filter((f) => {
-        if (f.tipo === "entrada_stock" || f.tipo === "compra" || f.status_pagamento === "em_conferencia") return false;
+        if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return false;
         const periodMatch = filterByDateRange(f.data_emissao, sDate, eDate);
-        const statusMatch = rType === "pagar" ? f.status_pagamento !== "pago" : f.status_pagamento === "pago";
 
-        let entityMatch = true;
-        if (entFilter !== "todos") {
-          if (entFilter.startsWith("fornecedor_")) {
-            entityMatch = String(f.fornecedor_id) === entFilter.replace("fornecedor_", "");
-          } else if (entFilter.startsWith("loja_")) {
-            const lojaId = getFaturaLojaId(f);
-            entityMatch = lojaId === entFilter.replace("loja_", "");
-          } else {
-            entityMatch = String(f.fornecedor_id) === entFilter;
+        let statusMatch = true;
+        if (stFilter === "pago") {
+          statusMatch = f.status_pagamento === "pago";
+        } else if (stFilter === "nao_pago") {
+          statusMatch = f.status_pagamento !== "pago";
+        }
+
+        const fornecedorMatch =
+          entFilter === "todos" ||
+          String(f.fornecedor_id) === entFilter.replace("fornecedor_", "");
+
+        const meta = extractFaturaMeta(f, lojas);
+
+        let centroCustoMatch = true;
+        if (ccFilter !== "todos") {
+          if (ccFilter === "cc:DISTRIBUIDORA") {
+            centroCustoMatch =
+              meta.centroCusto.toUpperCase() === "DISTRIBUIDORA" ||
+              (!meta.centroCusto && !meta.lojaId);
+          } else if (ccFilter === "cc:LOST WIND UNIPESSOAL,LDA") {
+            centroCustoMatch = meta.centroCusto.toUpperCase() === "LOST WIND UNIPESSOAL,LDA";
+          } else if (ccFilter.startsWith("loja:")) {
+            const sId = ccFilter.replace("loja:", "");
+            const st = lojas.find((l: any) => String(l.id) === sId);
+            const stName = String(st?.name || st?.nome || "").toLowerCase();
+            centroCustoMatch =
+              meta.lojaId === sId ||
+              Boolean(stName && meta.centroCusto.toLowerCase() === stName);
+          } else if (ccFilter.startsWith("custom:")) {
+            const customName = ccFilter.replace("custom:", "");
+            centroCustoMatch = meta.centroCusto.toLowerCase() === customName.toLowerCase();
           }
         }
-        return periodMatch && statusMatch && entityMatch;
+
+        let contaAnaliseMatch = true;
+        if (caFilter !== "todos") {
+          contaAnaliseMatch = meta.contaAnalise.toLowerCase() === caFilter.toLowerCase();
+        }
+
+        return periodMatch && statusMatch && fornecedorMatch && centroCustoMatch && contaAnaliseMatch;
       });
 
-      headers = ["Data Emissão", "Vencimento", "Fornecedor", "Loja", "Nº Fatura", "Total (€)", "Pendente (€)", "Status"];
-      numericColumns = [5, 6];
-      title = rType === "faturas_pagas" ? "Relatório de Faturas Pagas" : "Relatório de Faturas a Pagar";
+      headers = [
+        "Data Emissão",
+        "Vencimento",
+        "Fornecedor",
+        "Centro de Custo",
+        "Conta de Análise",
+        "Nº Fatura",
+        "Total (€)",
+        "Pendente (€)",
+        "Estado"
+      ];
+      numericColumns = [6, 7];
+      title = "Relatório de Faturas a Pagar";
 
       let totalValor = 0;
       let totalPendente = 0;
       rows = filtered.map((f) => {
         const calcTotal = Number(f.valor_total || 0);
-        const calcPendente = Number(f.valor_pendente || 0);
-
-        let lojaNome = "---";
-        const lId = getFaturaLojaId(f);
-        if (lId) {
-          const st = lojas.find((l: any) => String(l.id) === lId);
-          if (st) lojaNome = st.name || st.nome || st.loja_nome || "Loja";
-        }
-        if (lojaNome === "---" && (f.tipo === "despesa" || f.tipo?.startsWith("despesa") || f.categoria_despesa)) {
-          lojaNome = "Armazém Central";
-        }
+        const calcPendente =
+          f.status_pagamento === "pago"
+            ? 0
+            : Number(f.valor_pendente !== undefined && f.valor_pendente !== null ? f.valor_pendente : calcTotal);
+        const meta = extractFaturaMeta(f, lojas);
 
         totalValor += calcTotal;
         totalPendente += calcPendente;
+
+        const estadoLabel =
+          f.status_pagamento === "pago"
+            ? "PAGO"
+            : f.status_pagamento === "parcial"
+            ? "PARCIAL"
+            : "PENDENTE";
 
         return [
           f.data_emissao ? new Date(f.data_emissao).toLocaleDateString("pt-PT") : "N/A",
           f.data_vencimento ? new Date(f.data_vencimento).toLocaleDateString("pt-PT") : "N/A",
           f.fornecedor?.nome || "N/A",
-          lojaNome,
+          meta.centroCusto || "DISTRIBUIDORA",
+          meta.contaAnalise || "---",
           f.numero_fatura || "N/A",
           calcTotal.toFixed(2),
           calcPendente.toFixed(2),
-          (f.status_pagamento || "pendente").toUpperCase()
+          estadoLabel
         ];
       });
 
-      summaryTotal = rType === "pagar" ? totalPendente : totalValor;
-      summaryLabel = rType === "pagar" ? "Total Pendente" : "Total Pago";
-      totalRow = ["", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""];
-    } else if (rType === "iva_credito") {
+      if (stFilter === "pago") {
+        summaryTotal = totalValor;
+        summaryLabel = "Total Pago";
+      } else if (stFilter === "nao_pago") {
+        summaryTotal = totalPendente;
+        summaryLabel = "Total Pendente";
+      } else {
+        summaryTotal = totalValor;
+        summaryLabel = "Valor Total";
+      }
+      totalRow = ["", "", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""];
+    } else if (rType === "faturas_pagas") {
       const filtered = faturasInput.filter((f) => {
+        if (f.tipo !== "compra_financeiro" || f.status_pagamento !== "pago") return false;
         const periodMatch = filterByDateRange(f.data_emissao, sDate, eDate);
-        const entityMatch = entFilter === "todos" || String(f.fornecedor_id) === entFilter;
-        return periodMatch && entityMatch;
+
+        const fornecedorMatch =
+          entFilter === "todos" ||
+          String(f.fornecedor_id) === entFilter.replace("fornecedor_", "");
+
+        const meta = extractFaturaMeta(f, lojas);
+
+        let centroCustoMatch = true;
+        if (ccFilter !== "todos") {
+          if (ccFilter === "cc:DISTRIBUIDORA") {
+            centroCustoMatch =
+              meta.centroCusto.toUpperCase() === "DISTRIBUIDORA" ||
+              (!meta.centroCusto && !meta.lojaId);
+          } else if (ccFilter === "cc:LOST WIND UNIPESSOAL,LDA") {
+            centroCustoMatch = meta.centroCusto.toUpperCase() === "LOST WIND UNIPESSOAL,LDA";
+          } else if (ccFilter.startsWith("loja:")) {
+            const sId = ccFilter.replace("loja:", "");
+            const st = lojas.find((l: any) => String(l.id) === sId);
+            const stName = String(st?.name || st?.nome || "").toLowerCase();
+            centroCustoMatch =
+              meta.lojaId === sId ||
+              Boolean(stName && meta.centroCusto.toLowerCase() === stName);
+          } else if (ccFilter.startsWith("custom:")) {
+            const customName = ccFilter.replace("custom:", "");
+            centroCustoMatch = meta.centroCusto.toLowerCase() === customName.toLowerCase();
+          }
+        }
+
+        let contaAnaliseMatch = true;
+        if (caFilter !== "todos") {
+          contaAnaliseMatch = meta.contaAnalise.toLowerCase() === caFilter.toLowerCase();
+        }
+
+        return periodMatch && fornecedorMatch && centroCustoMatch && contaAnaliseMatch;
       });
 
-      headers = ["Data Emissão", "Fornecedor", "Nº Fatura", "NIF", "IVA de Crédito (€)", "Tipo Fatura"];
-      numericColumns = [4];
-      title = "Relatório de Crédito de IVA (Fornecedores)";
+      headers = [
+        "Data Emissão",
+        "Vencimento",
+        "Fornecedor",
+        "Centro de Custo",
+        "Conta de Análise",
+        "Nº Fatura",
+        "Total (€)",
+        "Estado"
+      ];
+      numericColumns = [6];
+      title = "Relatório de Faturas Pagas";
 
+      let totalValor = 0;
+      rows = filtered.map((f) => {
+        const calcTotal = Number(f.valor_total || 0);
+        const meta = extractFaturaMeta(f, lojas);
+        totalValor += calcTotal;
+
+        return [
+          f.data_emissao ? new Date(f.data_emissao).toLocaleDateString("pt-PT") : "N/A",
+          f.data_vencimento ? new Date(f.data_vencimento).toLocaleDateString("pt-PT") : "N/A",
+          f.fornecedor?.nome || "N/A",
+          meta.centroCusto || "DISTRIBUIDORA",
+          meta.contaAnalise || "---",
+          f.numero_fatura || "N/A",
+          calcTotal.toFixed(2),
+          "PAGO"
+        ];
+      });
+
+      summaryTotal = totalValor;
+      summaryLabel = "Total Pago";
+      totalRow = ["", "", "", "", "", "TOTAL PAGO", totalValor.toFixed(2), ""];
+    } else if (rType === "iva_credito") {
+      const filtered = faturasInput.filter((f) => {
+        if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return false;
+        const periodMatch = filterByDateRange(f.data_emissao, sDate, eDate);
+        const fornecedorMatch =
+          entFilter === "todos" ||
+          String(f.fornecedor_id) === entFilter.replace("fornecedor_", "");
+
+        const meta = extractFaturaMeta(f, lojas);
+
+        let centroCustoMatch = true;
+        if (ccFilter !== "todos") {
+          if (ccFilter === "cc:DISTRIBUIDORA") {
+            centroCustoMatch =
+              meta.centroCusto.toUpperCase() === "DISTRIBUIDORA" ||
+              (!meta.centroCusto && !meta.lojaId);
+          } else if (ccFilter === "cc:LOST WIND UNIPESSOAL,LDA") {
+            centroCustoMatch = meta.centroCusto.toUpperCase() === "LOST WIND UNIPESSOAL,LDA";
+          } else if (ccFilter.startsWith("loja:")) {
+            const sId = ccFilter.replace("loja:", "");
+            const st = lojas.find((l: any) => String(l.id) === sId);
+            const stName = String(st?.name || st?.nome || "").toLowerCase();
+            centroCustoMatch =
+              meta.lojaId === sId ||
+              Boolean(stName && meta.centroCusto.toLowerCase() === stName);
+          } else if (ccFilter.startsWith("custom:")) {
+            const customName = ccFilter.replace("custom:", "");
+            centroCustoMatch = meta.centroCusto.toLowerCase() === customName.toLowerCase();
+          }
+        }
+
+        let contaAnaliseMatch = true;
+        if (caFilter !== "todos") {
+          contaAnaliseMatch = meta.contaAnalise.toLowerCase() === caFilter.toLowerCase();
+        }
+
+        return periodMatch && fornecedorMatch && centroCustoMatch && contaAnaliseMatch;
+      });
+
+      headers = [
+        "Data Emissão",
+        "Fornecedor",
+        "NIF",
+        "Centro de Custo",
+        "Conta de Análise",
+        "Nº Fatura",
+        "Líquido (€)",
+        "IVA Recuperável (€)",
+        "Total (€)"
+      ];
+      numericColumns = [6, 7, 8];
+      title = "Relatório de Crédito IVA (Compras) — Recuperável";
+
+      let totalLiquido = 0;
       let totalIvaResultante = 0;
+      let totalBruto = 0;
+
       filtered.forEach((f) => {
         const ivaCredito = getFaturaIva(f);
         if (ivaCredito > 0) {
+          const calcTotal = Number(f.valor_total || 0);
+          const calcLiquido =
+            f.valor_liquido !== undefined && f.valor_liquido !== null
+              ? Number(f.valor_liquido)
+              : Math.max(0, calcTotal - ivaCredito);
+          const meta = extractFaturaMeta(f, lojas);
+
+          totalLiquido += calcLiquido;
           totalIvaResultante += ivaCredito;
+          totalBruto += calcTotal;
+
           rows.push([
             f.data_emissao ? new Date(f.data_emissao).toLocaleDateString("pt-PT") : "N/A",
             f.fornecedor?.nome || "N/A",
+            f.fornecedor?.nif || f.fornecedor?.contribuinte || "---",
+            meta.centroCusto || "DISTRIBUIDORA",
+            meta.contaAnalise || "---",
             f.numero_fatura || "N/A",
-            f.fornecedor?.nif || "---",
+            calcLiquido.toFixed(2),
             ivaCredito.toFixed(2),
-            (f.tipo || "compra").toUpperCase()
+            calcTotal.toFixed(2)
           ]);
         }
       });
 
       summaryTotal = totalIvaResultante;
-      summaryLabel = "IVA Recuperável";
-      totalRow = ["", "", "TOTAL IVA CRÉDITO", "", totalIvaResultante.toFixed(2), ""];
+      summaryLabel = "Crédito IVA (Compras) Recuperável";
+      totalRow = [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "TOTAL RECUPERÁVEL",
+        totalLiquido.toFixed(2),
+        totalIvaResultante.toFixed(2),
+        totalBruto.toFixed(2)
+      ];
     } else if (rType === "debito_iva") {
       const filtered = pedidosInput.filter((p) => {
         const isValidState = ["pronto", "entregue", "concluido"].includes(p.status?.toLowerCase());
@@ -762,57 +1022,6 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       summaryTotal = totalValor;
       summaryLabel = "Valor Total";
       totalRow = ["", "", "TOTAL CALCULADO", totalValor.toFixed(2), ""];
-    } else if (rType === "despesas") {
-      const filtered = faturasInput.filter((f) => {
-        const isDespesa = f.tipo && f.tipo.startsWith("despesa");
-        const periodMatch = filterByDateRange(f.data_emissao, sDate, eDate);
-        let statusMatch = true;
-        if (stFilter !== "todos") {
-          if (stFilter === "pago") statusMatch = f.status_pagamento === "pago";
-          if (stFilter === "nao_pago") statusMatch = f.status_pagamento !== "pago";
-        }
-
-        const lojaId = getFaturaLojaId(f) || "armazem";
-        const entityMatch = entFilter === "todos" || lojaId === entFilter;
-        return isDespesa && periodMatch && statusMatch && entityMatch;
-      });
-
-      headers = ["Data Emissão", "Vencimento", "Loja", "Fornecedor", "Categoria", "Valor (€)", "Pendente (€)", "Status"];
-      numericColumns = [5, 6];
-      title = "Relatório de Despesas";
-
-      let totalValor = 0;
-      let totalPendente = 0;
-      rows = filtered.map((f) => {
-        const calcTotal = Number(f.valor_total || 0);
-        let calcPendente = Number(f.valor_pendente !== undefined ? f.valor_pendente : calcTotal);
-        if (f.status_pagamento === "pago") calcPendente = 0;
-
-        totalValor += calcTotal;
-        totalPendente += calcPendente;
-
-        let lojaNome = "Armazém Central";
-        const lId = getFaturaLojaId(f);
-        if (lId) {
-          const l = lojas.find((x) => String(x.id) === lId);
-          if (l) lojaNome = l.name || l.nome;
-        }
-
-        return [
-          f.data_emissao ? new Date(f.data_emissao).toLocaleDateString("pt-PT") : "N/A",
-          f.data_vencimento ? new Date(f.data_vencimento).toLocaleDateString("pt-PT") : "N/A",
-          lojaNome,
-          f.fornecedor?.nome || "---",
-          (f.tipo || "despesa").replace("despesa_", "").toUpperCase(),
-          calcTotal.toFixed(2),
-          calcPendente.toFixed(2),
-          (f.status_pagamento || "pendente").toUpperCase()
-        ];
-      });
-
-      summaryTotal = totalValor;
-      summaryLabel = "Total Despesas";
-      totalRow = ["", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""];
     } else if (rType === "fechos") {
       const filtered = fechosInput
         .filter((f) => {
@@ -880,17 +1089,21 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       ];
     } else if (rType === "consumo_lojas") {
       const pedidos = pedidosInput.filter((p: any) => filterByDateRange(p.created_at, sDate, eDate));
-      const faturas = faturasInput.filter((f: any) => filterByDateRange(f.data_emissao, sDate, eDate));
+      const faturas = faturasInput.filter(
+        (f: any) =>
+          f.tipo === "compra_financeiro" &&
+          f.status_pagamento !== "em_conferencia" &&
+          filterByDateRange(f.data_emissao, sDate, eDate)
+      );
 
-      const lojaStats: Record<string, { id: string; nome: string; consumo: number; compras_diretas: number; despesas: number }> = {};
+      const lojaStats: Record<string, { id: string; nome: string; consumo: number; custos: number }> = {};
 
       lojas.forEach((l) => {
         lojaStats[String(l.id)] = {
           id: String(l.id),
           nome: l.name || l.nome || "Loja " + l.id,
           consumo: 0,
-          compras_diretas: 0,
-          despesas: 0
+          custos: 0
         };
       });
 
@@ -903,10 +1116,17 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       });
 
       faturas.forEach((f) => {
-        const lojaId = getFaturaLojaId(f);
-        if (lojaId && lojaStats[lojaId]) {
-          if (f.tipo === "compra_financeiro") lojaStats[lojaId].compras_diretas += Number(f.valor_total || 0);
-          if (f.tipo === "despesa" || f.tipo?.startsWith("despesa")) lojaStats[lojaId].despesas += Number(f.valor_total || 0);
+        const meta = extractFaturaMeta(f, lojas);
+        let targetLojaId = meta.lojaId && lojaStats[meta.lojaId] ? meta.lojaId : "";
+        if (!targetLojaId && meta.centroCusto) {
+          const ccLower = meta.centroCusto.toLowerCase();
+          const matchedLoja = lojas.find(
+            (l: any) => String(l.name || l.nome || "").trim().toLowerCase() === ccLower
+          );
+          if (matchedLoja) targetLojaId = String(matchedLoja.id);
+        }
+        if (targetLojaId && lojaStats[targetLojaId]) {
+          lojaStats[targetLojaId].custos += Number(f.valor_total || 0);
         }
       });
 
@@ -915,23 +1135,22 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         listStats = listStats.filter((s) => s.id === entFilter);
       }
 
-      headers = ["Loja", "Consumo Armazém (€)", "Compras Diretas (€)", "Despesas (€)", "Total Gastos (€)"];
-      numericColumns = [1, 2, 3, 4];
-      title = "Relatório de Valores Totais Gastos das Lojas";
+      headers = ["Loja", "Consumo Armazém (€)", "Custos (€)", "Total Gastos (€)"];
+      numericColumns = [1, 2, 3];
+      title = "Relatório de Compra + Custo das Lojas";
 
-      let totC = 0, totDir = 0, totDesp = 0, totGen = 0;
+      let totC = 0, totCustos = 0, totGen = 0;
       rows = listStats.map((s) => {
         totC += s.consumo;
-        totDir += s.compras_diretas;
-        totDesp += s.despesas;
-        const tot = s.consumo + s.compras_diretas + s.despesas;
+        totCustos += s.custos;
+        const tot = s.consumo + s.custos;
         totGen += tot;
-        return [s.nome, s.consumo.toFixed(2), s.compras_diretas.toFixed(2), s.despesas.toFixed(2), tot.toFixed(2)];
+        return [s.nome, s.consumo.toFixed(2), s.custos.toFixed(2), tot.toFixed(2)];
       });
 
       summaryTotal = totGen;
-      summaryLabel = "Total Gastos";
-      totalRow = ["TOTAL", totC.toFixed(2), totDir.toFixed(2), totDesp.toFixed(2), totGen.toFixed(2)];
+      summaryLabel = "Total Compra + Custo";
+      totalRow = ["TOTAL", totC.toFixed(2), totCustos.toFixed(2), totGen.toFixed(2)];
     } else if (rType === "fornecedores") {
       const faturasPeriodo = faturasInput.filter((f: any) => filterByDateRange(f.data_emissao, sDate, eDate));
       const statsMap = new Map<string, { count: number; total: number; pendente: number }>();
@@ -1075,12 +1294,15 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         monthCounts.set(key, cur);
       };
 
-      if (["pagar", "faturas_pagas", "iva_credito", "despesas", "fornecedores"].includes(rType)) {
+      if (["pagar", "faturas_pagas", "iva_credito", "fornecedores"].includes(rType)) {
         searchedFaturas.forEach((f) => {
-          if (rType === "pagar" && f.status_pagamento === "pago") return;
-          if (rType === "faturas_pagas" && f.status_pagamento !== "pago") return;
-          if (rType === "despesas" && !f.tipo?.startsWith("despesa")) return;
-          if (rType === "iva_credito" && getFaturaIva(f) <= 0) return;
+          if (rType === "pagar") {
+            if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return;
+            if (stFilter === "pago" && f.status_pagamento !== "pago") return;
+            if (stFilter === "nao_pago" && f.status_pagamento === "pago") return;
+          }
+          if (rType === "faturas_pagas" && (f.tipo !== "compra_financeiro" || f.status_pagamento !== "pago")) return;
+          if (rType === "iva_credito" && (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia" || getFaturaIva(f) <= 0)) return;
           registerDate(f.data_emissao);
         });
       } else if (["receber", "debito_iva", "consumo_lojas"].includes(rType)) {
@@ -1119,17 +1341,21 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         const map = new Map<string, { nome: string; count: number; val: number; entityVal: string }>();
         searchedFaturas.forEach((f) => {
           if (!f.fornecedor_id || !filterByDateRange(f.data_emissao, sDate, eDate)) return;
-          if (rType === "pagar" && f.status_pagamento === "pago") return;
-          if (rType === "faturas_pagas" && f.status_pagamento !== "pago") return;
-          if (rType === "iva_credito" && getFaturaIva(f) <= 0) return;
+          if (rType === "pagar") {
+            if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return;
+            if (stFilter === "pago" && f.status_pagamento !== "pago") return;
+            if (stFilter === "nao_pago" && f.status_pagamento === "pago") return;
+          }
+          if (rType === "faturas_pagas" && (f.tipo !== "compra_financeiro" || f.status_pagamento !== "pago")) return;
+          if (rType === "iva_credito" && (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia" || getFaturaIva(f) <= 0)) return;
 
           const fid = String(f.fornecedor_id);
-          const entityVal = ["pagar", "faturas_pagas"].includes(rType) ? `fornecedor_${fid}` : fid;
+          const entityVal = fid;
           const nome = f.fornecedor?.nome || fornecedores.find((fn) => String(fn.id) === fid)?.nome || `Fornecedor #${fid}`;
           const amount =
             rType === "iva_credito"
               ? getFaturaIva(f)
-              : rType === "pagar"
+              : rType === "pagar" && stFilter === "nao_pago"
               ? Number(f.valor_pendente ?? f.valor_total ?? 0)
               : Number(f.valor_total || 0);
 
@@ -1188,57 +1414,24 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
               }
             });
           });
-      } else if (rType === "despesas") {
-        const map = new Map<string, { nome: string; count: number; val: number }>();
-        searchedFaturas.forEach((f) => {
-          if (!f.tipo?.startsWith("despesa") || !filterByDateRange(f.data_emissao, sDate, eDate)) return;
-          if (stFilter === "pago" && f.status_pagamento !== "pago") return;
-          if (stFilter === "nao_pago" && f.status_pagamento === "pago") return;
-
-          const lid = getFaturaLojaId(f) || "armazem";
-          const nome =
-            lid === "armazem"
-              ? "Armazém Central"
-              : lojas.find((l) => String(l.id) === lid)?.name || `Loja #${lid}`;
-          const prev = map.get(lid) || { nome, count: 0, val: 0 };
-          prev.count += 1;
-          prev.val += Number(f.valor_total || 0);
-          map.set(lid, prev);
-        });
-
-        Array.from(map.entries())
-          .sort((a, b) => b[1].val - a[1].val)
-          .slice(0, 5)
-          .forEach(([lid, info]) => {
-            list.push({
-              id: `sug_desp_${lid}`,
-              label: info.nome,
-              meta: `${info.count} desp. · ${formatCurrency(info.val)}`,
-              apply: () => {
-                setEntity(lid);
-                setAppliedSearch((prev) => (prev ? { ...prev, entity: lid } : null));
-                setVisibleLimit(50);
-              }
-            });
-          });
       }
     }
 
     // 3. Payment status refinements within already-fetched records
-    if (stFilter === "todos" && ["receber", "despesas", "debito_iva"].includes(rType)) {
-      if (rType === "despesas") {
+    if (stFilter === "todos" && ["pagar", "receber", "debito_iva"].includes(rType)) {
+      if (rType === "pagar") {
         const base = searchedFaturas.filter((f) => {
-          if (!f.tipo?.startsWith("despesa") || !filterByDateRange(f.data_emissao, sDate, eDate)) return false;
-          const lid = getFaturaLojaId(f) || "armazem";
-          return entFilter === "todos" || lid === entFilter;
+          if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return false;
+          if (!filterByDateRange(f.data_emissao, sDate, eDate)) return false;
+          return entFilter === "todos" || String(f.fornecedor_id) === entFilter.replace("fornecedor_", "");
         });
         const unpaid = base.filter((f) => f.status_pagamento !== "pago").length;
         const paid = base.filter((f) => f.status_pagamento === "pago").length;
         if (unpaid > 0) {
           list.push({
-            id: "sug_status_pendente",
+            id: "sug_status_pagar_pendente",
             label: "Apenas Pendentes",
-            meta: `${unpaid} reg.`,
+            meta: `${unpaid} fat.`,
             apply: () => {
               setStatus("nao_pago");
               setAppliedSearch((prev) => (prev ? { ...prev, status: "nao_pago" } : null));
@@ -1248,9 +1441,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         }
         if (paid > 0) {
           list.push({
-            id: "sug_status_pago",
+            id: "sug_status_pagar_pago",
             label: "Apenas Pagos",
-            meta: `${paid} reg.`,
+            meta: `${paid} fat.`,
             apply: () => {
               setStatus("pago");
               setAppliedSearch((prev) => (prev ? { ...prev, status: "pago" } : null));
@@ -1305,6 +1498,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         endDate,
         status,
         entity: normalizedEntity,
+        centroCusto: normalizedCentroCusto,
+        contaAnalise: normalizedContaAnalise,
         stockDate,
         stockCategories: [...selectedStockCategories]
       };
@@ -1428,39 +1623,98 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const reportOptions = [
     { id: "pagar", title: "A Pagar", icon: TrendingDown, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500" },
     { id: "faturas_pagas", title: "Faturas Pagas", icon: AlertTriangle, color: "text-red-500", bg: "bg-red-500/10", border: "border-red-500" },
+    { id: "receber", title: "A Receber", icon: TrendingUp, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500" },
     { id: "iva_credito", title: "Crédito IVA", icon: FileSpreadsheet, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500" },
     { id: "debito_iva", title: "Débito IVA", icon: FileSpreadsheet, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500" },
-    { id: "receber", title: "A Receber", icon: TrendingUp, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500" },
-    { id: "despesas", title: "Despesas", icon: Receipt, color: "text-purple-500", bg: "bg-purple-500/10", border: "border-purple-500" },
-    { id: "consumo_lojas", title: "Totais Lojas", icon: Store, color: "text-blue-500", bg: "bg-blue-500/10", border: "border-blue-500" },
     { id: "fechos", title: "Fechos de Caixa", icon: Store, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500" },
+    { id: "consumo_lojas", title: "Compra + Custo", icon: Store, color: "text-blue-500", bg: "bg-blue-500/10", border: "border-blue-500" },
     { id: "fornecedores", title: "Fornecedores", icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10", border: "border-cyan-500" },
     { id: "estoque", title: "Estoque", icon: Package, color: "text-teal-400", bg: "bg-teal-500/10", border: "border-teal-500" }
   ];
 
   const getEntityOptionsForType = (rType: ReportType) => [
-    { id: "todos", nome: "Todos(as)" },
-    ...(["pagar", "faturas_pagas"].includes(rType)
-      ? [
-          ...fornecedores.map((f) => ({ id: `fornecedor_${f.id}`, nome: `${f.nome} (Fornecedor)` })),
-          ...lojas.map((l) => ({ id: `loja_${l.id}`, nome: `${l.name || l.nome} (Loja)` }))
-        ]
-      : []),
-    ...(["iva_credito", "fornecedores"].includes(rType)
+    {
+      id: "todos",
+      nome: ["pagar", "faturas_pagas", "iva_credito", "fornecedores"].includes(rType)
+        ? "Todos os Fornecedores"
+        : "Todos(as)"
+    },
+    ...(["pagar", "faturas_pagas", "iva_credito", "fornecedores"].includes(rType)
       ? fornecedores.map((f) => ({ id: String(f.id), nome: f.nome }))
       : []),
     ...(["receber", "consumo_lojas", "debito_iva", "fechos"].includes(rType)
       ? lojas.map((l) => ({ id: String(l.id), nome: l.name || l.nome }))
-      : []),
-    ...(rType === "despesas"
-      ? [
-          { id: "armazem", nome: "Armazém Central" },
-          ...lojas.map((l) => ({ id: String(l.id), nome: l.name || l.nome }))
-        ]
       : [])
   ];
 
   const entityOptions = useMemo(() => getEntityOptionsForType(reportType), [reportType, fornecedores, lojas]);
+
+  const centroCustoOptions = useMemo(() => {
+    const customCentros = new Set<string>();
+    const storeNames = new Set(lojas.map((l: any) => String(l.name || l.nome || "").toLowerCase()));
+    const builtIn = new Set([
+      "distribuidora",
+      "lost wind lda",
+      "lost wind unipessoal",
+      "lost wind unipessoal,lda",
+      "lost wind unipessoal, lda",
+      "armazém central",
+      "armazem central",
+      "administração / sede",
+      "administracao / sede",
+      "logística / frota",
+      "logistica / frota",
+      "logistica/frota",
+      "logística/frota",
+      "a"
+    ]);
+
+    searchedFaturas.forEach((f) => {
+      if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return;
+      const meta = extractFaturaMeta(f, lojas);
+      if (
+        meta.centroCusto &&
+        !builtIn.has(meta.centroCusto.toLowerCase()) &&
+        !storeNames.has(meta.centroCusto.toLowerCase())
+      ) {
+        customCentros.add(meta.centroCusto);
+      }
+    });
+
+    return [
+      { id: "todos", nome: "Todos os Centros de Custo" },
+      { id: "cc:DISTRIBUIDORA", nome: "DISTRIBUIDORA" },
+      { id: "cc:LOST WIND UNIPESSOAL,LDA", nome: "LOST WIND UNIPESSOAL,LDA" },
+      ...lojas.map((l: any) => ({ id: `loja:${l.id}`, nome: l.name || l.nome })),
+      ...Array.from(customCentros)
+        .sort((a, b) => a.localeCompare(b, "pt-PT"))
+        .map((cc) => ({ id: `custom:${cc}`, nome: cc }))
+    ];
+  }, [lojas, searchedFaturas]);
+
+  const contaAnaliseOptions = useMemo(() => {
+    const contasMap = new Map<string, string>();
+    savedContasAnalise.forEach((ca) => {
+      const clean = String(ca || "").trim();
+      if (clean && !contasMap.has(clean.toLowerCase())) {
+        contasMap.set(clean.toLowerCase(), clean);
+      }
+    });
+    searchedFaturas.forEach((f) => {
+      if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return;
+      const meta = extractFaturaMeta(f, lojas);
+      if (meta.contaAnalise && !contasMap.has(meta.contaAnalise.toLowerCase())) {
+        contasMap.set(meta.contaAnalise.toLowerCase(), meta.contaAnalise);
+      }
+    });
+
+    return [
+      { id: "todos", nome: "Todas as Contas de Análise" },
+      ...Array.from(contasMap.values())
+        .sort((a, b) => a.localeCompare(b, "pt-PT"))
+        .map((ca) => ({ id: ca, nome: ca }))
+    ];
+  }, [savedContasAnalise, searchedFaturas, lojas]);
 
   const appliedPeriodLabel = useMemo(() => {
     if (!appliedSearch) return "Todas as datas";
@@ -1487,11 +1741,30 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         )
         .join(", ");
     }
-    if (appliedSearch.entity === "todos") return "Todos(as)";
+    if (appliedSearch.entity === "todos") {
+      return ["pagar", "faturas_pagas", "iva_credito", "fornecedores"].includes(appliedSearch.reportType)
+        ? "Todos os Fornecedores"
+        : "Todos(as)";
+    }
     const opts = getEntityOptionsForType(appliedSearch.reportType);
     const found = opts.find((o) => String(o.id) === String(appliedSearch.entity));
     return found ? found.nome : appliedSearch.entity;
   }, [appliedSearch, fornecedores, lojas, categorias]);
+
+  const appliedCentroCustoLabel = useMemo(() => {
+    if (!appliedSearch || !appliedSearch.centroCusto || appliedSearch.centroCusto === "todos") {
+      return "Todos";
+    }
+    const found = centroCustoOptions.find((o) => String(o.id) === String(appliedSearch.centroCusto));
+    return found ? found.nome : appliedSearch.centroCusto;
+  }, [appliedSearch, centroCustoOptions]);
+
+  const appliedContaAnaliseLabel = useMemo(() => {
+    if (!appliedSearch || !appliedSearch.contaAnalise || appliedSearch.contaAnalise === "todos") {
+      return "Todas";
+    }
+    return appliedSearch.contaAnalise;
+  }, [appliedSearch]);
 
   const toggleStockCategory = (catId: string) => {
     setSelectedStockCategories((prev) =>
@@ -1504,6 +1777,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     setEndDate("");
     setStatus("todos");
     setEntity("todos");
+    setCentroCusto("todos");
+    setContaAnalise("todos");
     setStockDate(new Date().toISOString().split("T")[0]);
     setSelectedStockCategories([]);
     setQuickSearch("");
@@ -1585,7 +1860,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
               <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
                 <FileText size={14} /> Tipo de Relatório
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {reportOptions.map((opt) => {
                   const Icon = opt.icon;
                   const isSelected = reportType === opt.id;
@@ -1597,6 +1872,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                         setReportType(opt.id as ReportType);
                         setEntity("todos");
                         setStatus("todos");
+                        setCentroCusto("todos");
+                        setContaAnalise("todos");
                       }}
                       className={`flex items-center gap-2 p-2 px-2.5 rounded-lg border transition-all text-left cursor-pointer ${
                         isSelected
@@ -1748,45 +2025,107 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   </div>
                 </div>
 
-                <div>
-                  <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
-                    <Building2 size={14} />{" "}
-                    {["pagar", "faturas_pagas"].includes(reportType)
-                      ? "Filtrar por Loja ou Fornecedor"
-                      : ["iva_credito", "fornecedores"].includes(reportType)
-                      ? "Filtrar por Fornecedor"
-                      : reportType === "despesas"
-                      ? "Filtrar por Loja ou Armazém"
-                      : "Filtrar por Loja"}
-                  </label>
-                  <div className="relative">
-                    <SearchableCombobox
-                      value={entity}
-                      onChange={(val) => setEntity(val || "todos")}
-                      placeholder="Pesquisar..."
-                      options={entityOptions}
-                    />
-                  </div>
-                </div>
+                {["pagar", "faturas_pagas", "iva_credito"].includes(reportType) ? (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-2.5">
+                          <Building2 size={14} /> Centro de Custo
+                        </label>
+                        <SearchableCombobox
+                          value={centroCusto}
+                          onChange={(val) => setCentroCusto(val || "todos")}
+                          placeholder="Pesquisar Centro de Custo..."
+                          options={centroCustoOptions}
+                        />
+                      </div>
 
-                {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar", "fechos"].includes(reportType) && (
-                  <div>
-                    <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
-                      <Filter size={14} /> Status de Pagamento
-                    </label>
-                    <div className="relative">
-                      <select
-                        value={status}
-                        onChange={(e) => setStatus(e.target.value)}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 appearance-none transition-colors"
-                      >
-                        <option value="todos">Todos os Status</option>
-                        <option value="pago">{reportType === "despesas" ? "Pagos" : "Recebidos"}</option>
-                        <option value="nao_pago">{reportType === "despesas" ? "Pendentes" : "A Receber"}</option>
-                      </select>
-                      <ChevronDown size={16} className="absolute right-4 top-3.5 text-zinc-500 pointer-events-none" />
+                      <div>
+                        <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-2.5">
+                          <Layers size={14} /> Conta de Análise
+                        </label>
+                        <SearchableCombobox
+                          value={contaAnalise}
+                          onChange={(val) => setContaAnalise(val || "todos")}
+                          placeholder="Pesquisar Conta de Análise..."
+                          options={contaAnaliseOptions}
+                        />
+                      </div>
                     </div>
-                  </div>
+
+                    <div className={cn("grid grid-cols-1 gap-3", reportType === "pagar" ? "sm:grid-cols-2" : "")}>
+                      <div>
+                        <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-2.5">
+                          <Users size={14} /> Filtrar por Fornecedor
+                        </label>
+                        <SearchableCombobox
+                          value={entity}
+                          onChange={(val) => setEntity(val || "todos")}
+                          placeholder="Pesquisar fornecedor..."
+                          options={entityOptions}
+                        />
+                      </div>
+
+                      {reportType === "pagar" && (
+                        <div>
+                          <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-2.5">
+                            <Filter size={14} /> Estado de Pagamento
+                          </label>
+                          <div className="relative">
+                            <select
+                              value={status}
+                              onChange={(e) => setStatus(e.target.value)}
+                              className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 sm:py-2 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 appearance-none transition-colors"
+                            >
+                              <option value="todos">Todos os Estados</option>
+                              <option value="nao_pago">Pendentes</option>
+                              <option value="pago">Pagos</option>
+                            </select>
+                            <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
+                        <Building2 size={14} />{" "}
+                        {reportType === "fornecedores"
+                          ? "Filtrar por Fornecedor"
+                          : "Filtrar por Loja"}
+                      </label>
+                      <div className="relative">
+                        <SearchableCombobox
+                          value={entity}
+                          onChange={(val) => setEntity(val || "todos")}
+                          placeholder="Pesquisar..."
+                          options={entityOptions}
+                        />
+                      </div>
+                    </div>
+
+                    {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "fechos"].includes(reportType) && (
+                      <div>
+                        <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
+                          <Filter size={14} /> Status de Pagamento
+                        </label>
+                        <div className="relative">
+                          <select
+                            value={status}
+                            onChange={(e) => setStatus(e.target.value)}
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 font-medium outline-none focus:border-blue-500 appearance-none transition-colors"
+                          >
+                            <option value="todos">Todos os Status</option>
+                            <option value="pago">Recebidos</option>
+                            <option value="nao_pago">A Receber</option>
+                          </select>
+                          <ChevronDown size={16} className="absolute right-4 top-3.5 text-zinc-500 pointer-events-none" />
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -1846,18 +2185,30 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   <span>{appliedSearch.reportType === "estoque" ? "Data" : "Período"}: {appliedPeriodLabel}</span>
                   <span aria-hidden="true">·</span>
                   <span className="truncate max-w-[300px]">
-                    {appliedSearch.reportType === "estoque" ? "Categorias" : "Filtro"}: {appliedEntityLabel}
+                    {appliedSearch.reportType === "estoque"
+                      ? `Categorias: ${appliedEntityLabel}`
+                      : ["pagar", "faturas_pagas", "iva_credito"].includes(appliedSearch.reportType)
+                      ? `Fornecedor: ${appliedEntityLabel}`
+                      : `Filtro: ${appliedEntityLabel}`}
                   </span>
-                  {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "pagar", "fechos", "estoque"].includes(appliedSearch.reportType) && appliedSearch.status !== "todos" && (
+                  {["pagar", "faturas_pagas", "iva_credito"].includes(appliedSearch.reportType) && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>Centro de Custo: {appliedCentroCustoLabel}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>Conta Análise: {appliedContaAnaliseLabel}</span>
+                    </>
+                  )}
+                  {!["iva_credito", "consumo_lojas", "fornecedores", "faturas_pagas", "fechos", "estoque"].includes(appliedSearch.reportType) && appliedSearch.status !== "todos" && (
                     <>
                       <span aria-hidden="true">·</span>
                       <span>
                         Estado:{" "}
                         {appliedSearch.status === "pago"
-                          ? appliedSearch.reportType === "despesas"
+                          ? appliedSearch.reportType === "pagar"
                             ? "Pagos"
                             : "Recebidos"
-                          : appliedSearch.reportType === "despesas"
+                          : appliedSearch.reportType === "pagar"
                           ? "Pendentes"
                           : "A Receber"}
                       </span>
