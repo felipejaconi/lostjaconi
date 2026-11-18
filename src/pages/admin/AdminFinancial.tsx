@@ -63,6 +63,7 @@ let financialCache: {
   pedidos: any[];
   stores: any[];
   contasAnalise?: string[];
+  empresas?: string[];
 } | null = null;
 
 let summaryCache: any = null;
@@ -72,6 +73,7 @@ const DEFAULT_FATURAS_FILTER = {
   dataInicio: "",
   dataFim: "",
   status: "todos",
+  empresa: "todos",
   fornecedor: "todos",
   centroCusto: "todos",
   contaAnalise: "todos",
@@ -134,6 +136,7 @@ export default function AdminFinancial() {
   const [faturas, setFaturas] = useState<any[]>(() => financialCache?.faturas || []);
   const [fornecedores, setFornecedores] = useState<any[]>(() => financialCache?.fornecedores || []);
   const [savedContasAnalise, setSavedContasAnalise] = useState<string[]>(() => financialCache?.contasAnalise || []);
+  const [savedEmpresas, setSavedEmpresas] = useState<string[]>(() => financialCache?.empresas || []);
   const [summaryData, setSummaryData] = useState<any>(() => summaryCache);
   const [isLoading, setIsLoading] = useState(() => !summaryCache);
   const [isTabLoading, setIsTabLoading] = useState(false);
@@ -282,21 +285,24 @@ export default function AdminFinancial() {
      try {
         if (tab === "faturas_compras" || tab === "faturas_despesas") {
            if (faturas.length === 0 || forceRefresh) {
-              const [fatRes, fornRes, usersRes, contasRes] = await Promise.all([
+              const [fatRes, fornRes, usersRes, contasRes, empresasRes] = await Promise.all([
                  api.get("/admin/faturas-financeiro"),
                  api.get("/admin/fornecedores"),
                  api.get("/admin/users"),
                  api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] })),
+                 api.get("/admin/financeiro/empresas").catch(() => ({ data: [] })),
               ]);
               const fatData = fatRes.data || [];
               const fornData = fornRes.data || [];
               const storesData = ((usersRes.data as any[]) || []).filter((u: any) => u.role === 'loja');
               const contasData = Array.isArray(contasRes.data) ? contasRes.data : [];
+              const empresasData = Array.isArray(empresasRes.data) ? empresasRes.data : [];
               
               setFaturas(fatData);
               setFornecedores(fornData);
               setStores(storesData);
               setSavedContasAnalise(contasData);
+              setSavedEmpresas(empresasData);
               
               financialCache = {
                  ...financialCache,
@@ -305,6 +311,7 @@ export default function AdminFinancial() {
                  pedidos: pedidos,
                  stores: storesData,
                  contasAnalise: contasData,
+                 empresas: empresasData,
               } as any;
            }
         } else if (tab === "fornecedores") { // Actually "Faturas a Receber"
@@ -841,6 +848,7 @@ export default function AdminFinancial() {
   };
 
   const filterOptionsAPagar = useMemo(() => {
+    const empresasMap = new Map<string, string>();
     const customCentros = new Set<string>();
     const contasMap = new Map<string, string>();
     const storeNames = new Set(stores.map((s: any) => (s.name || "").toLowerCase()));
@@ -860,6 +868,13 @@ export default function AdminFinancial() {
       "a",
     ]);
 
+    savedEmpresas.forEach((emp) => {
+      const clean = String(emp || "").trim();
+      if (clean && !empresasMap.has(clean.toLowerCase())) {
+        empresasMap.set(clean.toLowerCase(), clean);
+      }
+    });
+
     savedContasAnalise.forEach((ca) => {
       const clean = String(ca || "").trim();
       if (clean && !contasMap.has(clean.toLowerCase())) {
@@ -870,6 +885,9 @@ export default function AdminFinancial() {
     faturas.forEach((f) => {
       if (f.tipo === "entrada_stock" || f.tipo === "compra" || f.status_pagamento === "em_conferencia") return;
       const meta = extractFaturaMeta(f, stores);
+      if (meta.empresa && !empresasMap.has(meta.empresa.toLowerCase())) {
+        empresasMap.set(meta.empresa.toLowerCase(), meta.empresa);
+      }
       if (
         meta.centroCusto &&
         !builtInCentros.has(meta.centroCusto.toLowerCase()) &&
@@ -883,10 +901,11 @@ export default function AdminFinancial() {
     });
 
     return {
+      empresas: Array.from(empresasMap.values()).sort((a, b) => a.localeCompare(b, "pt-PT")),
       customCentros: Array.from(customCentros).sort((a, b) => a.localeCompare(b, "pt-PT")),
       contasAnalise: Array.from(contasMap.values()).sort((a, b) => a.localeCompare(b, "pt-PT")),
     };
-  }, [faturas, stores, savedContasAnalise]);
+  }, [faturas, stores, savedContasAnalise, savedEmpresas]);
 
   const handlePesquisarFaturas = async () => {
     if (faturas.length === 0) {
@@ -907,10 +926,13 @@ export default function AdminFinancial() {
   const filteredFaturas = faturas.filter(f => {
     if (f.tipo === 'entrada_stock' || f.tipo === 'compra' || f.status_pagamento === 'em_conferencia') return false;
 
+    const meta = extractFaturaMeta(f, stores);
+
     const queryText = appliedFilterAPagar.texto.trim().toLowerCase();
     const textMatch = !queryText ||
       (f.numero_fatura || "").toLowerCase().includes(queryText) ||
       (f.fornecedor?.nome || "").toLowerCase().includes(queryText) ||
+      meta.empresa.toLowerCase().includes(queryText) ||
       (f.observacoes || "").toLowerCase().includes(queryText);
 
     let tipoMatch = true;
@@ -946,11 +968,14 @@ export default function AdminFinancial() {
        }
     }
 
+    let empresaMatch = true;
+    if (appliedFilterAPagar.empresa && appliedFilterAPagar.empresa !== "todos") {
+      empresaMatch = meta.empresa.toLowerCase() === appliedFilterAPagar.empresa.toLowerCase();
+    }
+
     const fornecedorMatch =
       appliedFilterAPagar.fornecedor === "todos" ||
       String(f.fornecedor_id) === appliedFilterAPagar.fornecedor;
-
-    const meta = extractFaturaMeta(f, stores);
 
     let centroCustoMatch = true;
     if (appliedFilterAPagar.centroCusto !== "todos") {
@@ -984,6 +1009,7 @@ export default function AdminFinancial() {
       tipoMatch &&
       dateMatch &&
       statusMatch &&
+      empresaMatch &&
       fornecedorMatch &&
       centroCustoMatch &&
       contaAnaliseMatch
@@ -1495,7 +1521,28 @@ export default function AdminFinancial() {
                         </select>
                      </div>
 
-                     {/* 5. Centro de Custo */}
+                     {/* 5. Empresa */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Empresa
+                        </label>
+                        <select
+                           value={draftFilterAPagar.empresa}
+                           onChange={(e) =>
+                              setDraftFilterAPagar({ ...draftFilterAPagar, empresa: e.target.value })
+                           }
+                           className="w-full px-3 h-10 bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm text-zinc-200 outline-none transition-colors"
+                        >
+                           <option value="todos">Todas as Empresas</option>
+                           {filterOptionsAPagar.empresas.map((emp) => (
+                              <option key={emp} value={emp}>
+                                 {emp}
+                              </option>
+                           ))}
+                        </select>
+                     </div>
+
+                     {/* 6. Centro de Custo */}
                      <div>
                         <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
                            Centro de Custo
@@ -1531,7 +1578,7 @@ export default function AdminFinancial() {
                         </select>
                      </div>
 
-                     {/* 6. Conta de Análise */}
+                     {/* 7. Conta de Análise */}
                      <div>
                         <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
                            Conta de Análise
@@ -1552,7 +1599,7 @@ export default function AdminFinancial() {
                         </select>
                      </div>
 
-                     {/* 7. Fornecedor */}
+                     {/* 8. Fornecedor */}
                      <div>
                         <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
                            Fornecedor
@@ -1572,28 +1619,28 @@ export default function AdminFinancial() {
                            ))}
                         </select>
                      </div>
+                  </div>
 
-                     {/* 8. Botões Limpar + Pesquisar */}
-                     <div className="flex items-end gap-2">
-                        <button
-                           type="button"
-                           onClick={handleLimparFiltrosFaturas}
-                           className="px-4 h-10 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-zinc-100 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-                           title="Limpar filtros e ocultar lista"
-                        >
-                           <RotateCcw className="w-3.5 h-3.5" />
-                           Limpar
-                        </button>
-                        <button
-                           type="button"
-                           onClick={handlePesquisarFaturas}
-                           disabled={isTabLoading}
-                           className="flex-1 px-5 h-10 bg-blue-600 hover:bg-blue-500 active:scale-[0.99] disabled:opacity-50 text-white rounded-xl text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
-                        >
-                           <Search className="w-4 h-4" />
-                           {isTabLoading ? "A carregar..." : "Pesquisar"}
-                        </button>
-                     </div>
+                  {/* Botões Limpar + Pesquisar */}
+                  <div className="mt-4 pt-3.5 border-t border-zinc-800/70 flex items-center justify-end gap-2.5">
+                     <button
+                        type="button"
+                        onClick={handleLimparFiltrosFaturas}
+                        className="px-4 h-10 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-zinc-100 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                        title="Limpar filtros e ocultar lista"
+                     >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        Limpar
+                     </button>
+                     <button
+                        type="button"
+                        onClick={handlePesquisarFaturas}
+                        disabled={isTabLoading}
+                        className="px-6 h-10 bg-blue-600 hover:bg-blue-500 active:scale-[0.99] disabled:opacity-50 text-white rounded-xl text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
+                     >
+                        <Search className="w-4 h-4" />
+                        {isTabLoading ? "A carregar..." : "Pesquisar"}
+                     </button>
                   </div>
                </div>
 
@@ -1607,7 +1654,7 @@ export default function AdminFinancial() {
                         As faturas estão ocultas até realizar a pesquisa
                      </p>
                      <p className="text-xs text-zinc-500 mt-1 max-w-md mx-auto">
-                        Escolha o intervalo de datas, centro de custo, conta de análise ou fornecedor acima e clique em Pesquisar.
+                        Escolha o intervalo de datas, empresa, centro de custo, conta de análise ou fornecedor acima e clique em Pesquisar.
                      </p>
                   </div>
                ) : (
@@ -1660,7 +1707,7 @@ export default function AdminFinancial() {
                               <tr className="bg-zinc-900/50 border-b border-zinc-800">
                                  <th className="px-4 py-3 text-xs font-semibold text-zinc-400 whitespace-nowrap">Documento</th>
                                  <th className="px-4 py-3 text-xs font-semibold text-zinc-400 whitespace-nowrap">Fornecedor</th>
-                                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 whitespace-nowrap">Centro de Custo / Conta</th>
+                                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 whitespace-nowrap">Empresa / Centro / Conta</th>
                                  <th className="px-4 py-3 text-xs font-semibold text-zinc-400 whitespace-nowrap">Datas</th>
                                  <th className="px-4 py-3 text-xs font-semibold text-zinc-400 text-right whitespace-nowrap">Valor Total</th>
                                  <th className="px-4 py-3 text-xs font-semibold text-zinc-400 text-center whitespace-nowrap">Estado</th>
