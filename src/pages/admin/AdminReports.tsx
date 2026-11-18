@@ -47,6 +47,7 @@ interface AppliedSearchFilters {
   endDate: string;
   status: string;
   entity: string;
+  empresa: string;
   centroCusto: string;
   contaAnalise: string;
   stockDate: string;
@@ -54,24 +55,30 @@ interface AppliedSearchFilters {
 }
 
 function extractFaturaMeta(f: any, lojasList: any[]) {
-  let centroCusto = "";
-  let contaAnalise = "";
-  let lojaId = "";
+  let empresa = f?.empresa ? String(f.empresa).trim() : "";
+  let centroCusto = f?.centro_custo ? String(f.centro_custo).trim() : "";
+  let contaAnalise = f?.conta_analise ? String(f.conta_analise).trim() : "";
+  let lojaId = f?.loja_id ? String(f.loja_id).trim() : "";
 
-  if (f?.descrição && f.descrição !== "null") {
+  if ((!empresa || !centroCusto || !contaAnalise || !lojaId) && f?.descrição && f.descrição !== "null") {
     try {
       const desc = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
-      lojaId = desc?.loja_id ? String(desc.loja_id).trim() : "";
-      centroCusto = String(
-        desc?.centro_custo ||
-          (desc?.classificacao_tipo !== "conta_analise" ? desc?.classificacao_nome : "") ||
-          ""
-      ).trim();
-      contaAnalise = String(
-        desc?.conta_analise ||
-          (desc?.classificacao_tipo === "conta_analise" ? desc?.classificacao_nome : "") ||
-          ""
-      ).trim();
+      if (!empresa && desc?.empresa) empresa = String(desc.empresa).trim();
+      if (!lojaId && desc?.loja_id) lojaId = String(desc.loja_id).trim();
+      if (!centroCusto) {
+        centroCusto = String(
+          desc?.centro_custo ||
+            (desc?.classificacao_tipo !== "conta_analise" ? desc?.classificacao_nome : "") ||
+            ""
+        ).trim();
+      }
+      if (!contaAnalise) {
+        contaAnalise = String(
+          desc?.conta_analise ||
+            (desc?.classificacao_tipo === "conta_analise" ? desc?.classificacao_nome : "") ||
+            ""
+        ).trim();
+      }
     } catch {}
   }
 
@@ -90,11 +97,11 @@ function extractFaturaMeta(f: any, lojasList: any[]) {
   } else if (!centroCusto && lojaId) {
     const st = lojasList.find((l: any) => String(l.id) === lojaId);
     if (st) centroCusto = st.name || st.nome || "";
-  } else if (!centroCusto && !lojaId && f?.tipo === "compra_financeiro") {
+  } else if (!centroCusto && !lojaId) {
     centroCusto = "DISTRIBUIDORA";
   }
 
-  return { centroCusto, contaAnalise, lojaId };
+  return { empresa, centroCusto, contaAnalise, lojaId };
 }
 
 interface QuickSuggestion {
@@ -113,6 +120,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const [endDate, setEndDate] = useState("");
   const [status, setStatus] = useState("todos");
   const [entity, setEntity] = useState("todos");
+  const [empresa, setEmpresa] = useState("todos");
   const [centroCusto, setCentroCusto] = useState("todos");
   const [contaAnalise, setContaAnalise] = useState("todos");
   const [stockDate, setStockDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
@@ -133,6 +141,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const [fornecedores, setFornecedores] = useState<any[]>([]);
   const [lojas, setLojas] = useState<any[]>([]);
   const [categorias, setCategorias] = useState<any[]>([]);
+  const [savedEmpresas, setSavedEmpresas] = useState<string[]>([]);
   const [savedContasAnalise, setSavedContasAnalise] = useState<string[]>([]);
 
   // Metrics
@@ -145,12 +154,13 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   useEffect(() => {
     const fetchGlobalMetrics = async () => {
       try {
-        const [fornRes, userRes, metricsRes, catRes, contasRes] = await Promise.all([
+        const [fornRes, userRes, metricsRes, catRes, contasRes, empresasRes] = await Promise.all([
           api.get("/admin/fornecedores").catch(() => ({ data: [] })),
           api.get("/admin/users").catch(() => ({ data: [] })),
           api.get("/admin/reports/summary-metrics").catch(() => ({ data: {} })),
           api.get("/categorias").catch(() => ({ data: [] })),
-          api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] }))
+          api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] })),
+          api.get("/admin/financeiro/empresas").catch(() => ({ data: [] }))
         ]);
 
         if (Array.isArray(fornRes.data)) setFornecedores(fornRes.data);
@@ -162,6 +172,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         }
         if (Array.isArray(contasRes.data)) {
           setSavedContasAnalise(contasRes.data);
+        }
+        if (Array.isArray(empresasRes.data)) {
+          setSavedEmpresas(empresasRes.data);
         }
 
         const m = (metricsRes.data as any) || {};
@@ -179,6 +192,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   }, []);
 
   const normalizedEntity = !entity || entity === "todos" ? "todos" : entity;
+  const normalizedEmpresa = !empresa || empresa === "todos" ? "todos" : empresa;
   const normalizedCentroCusto = !centroCusto || centroCusto === "todos" ? "todos" : centroCusto;
   const normalizedContaAnalise = !contaAnalise || contaAnalise === "todos" ? "todos" : contaAnalise;
 
@@ -197,6 +211,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       appliedSearch.endDate !== endDate ||
       appliedSearch.status !== status ||
       appliedSearch.entity !== normalizedEntity ||
+      (["pagar", "faturas_pagas"].includes(reportType) &&
+        appliedSearch.empresa !== normalizedEmpresa) ||
       (["pagar", "faturas_pagas", "iva_credito"].includes(reportType) &&
         (appliedSearch.centroCusto !== normalizedCentroCusto ||
           appliedSearch.contaAnalise !== normalizedContaAnalise))
@@ -208,6 +224,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     endDate,
     status,
     normalizedEntity,
+    normalizedEmpresa,
     normalizedCentroCusto,
     normalizedContaAnalise,
     stockDate,
@@ -545,7 +562,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     if (needsFaturas) {
       tasks.push(
         api
-          .get("/admin/faturas")
+          .get("/admin/faturas-financeiro")
           .then((res) => {
             faturasData = Array.isArray(res.data) ? res.data : [];
           })
@@ -611,6 +628,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       endDate,
       status,
       entity: normalizedEntity,
+      empresa: normalizedEmpresa,
       centroCusto: normalizedCentroCusto,
       contaAnalise: normalizedContaAnalise,
       stockDate,
@@ -662,6 +680,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       endDate: eDate,
       status: stFilter,
       entity: entFilter,
+      empresa: empFilter = "todos",
       centroCusto: ccFilter = "todos",
       contaAnalise: caFilter = "todos"
     } = activeFilters;
@@ -692,6 +711,11 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
         const meta = extractFaturaMeta(f, lojas);
 
+        let empresaMatch = true;
+        if (empFilter !== "todos") {
+          empresaMatch = meta.empresa.toLowerCase() === empFilter.toLowerCase();
+        }
+
         let centroCustoMatch = true;
         if (ccFilter !== "todos") {
           if (ccFilter === "cc:DISTRIBUIDORA") {
@@ -718,12 +742,13 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
           contaAnaliseMatch = meta.contaAnalise.toLowerCase() === caFilter.toLowerCase();
         }
 
-        return periodMatch && statusMatch && fornecedorMatch && centroCustoMatch && contaAnaliseMatch;
+        return periodMatch && statusMatch && fornecedorMatch && empresaMatch && centroCustoMatch && contaAnaliseMatch;
       });
 
       headers = [
         "Data Emissão",
         "Vencimento",
+        "Empresa",
         "Fornecedor",
         "Centro de Custo",
         "Conta de Análise",
@@ -732,7 +757,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         "Pendente (€)",
         "Estado"
       ];
-      numericColumns = [6, 7];
+      numericColumns = [7, 8];
       title = "Relatório de Faturas a Pagar";
 
       let totalValor = 0;
@@ -758,6 +783,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         return [
           f.data_emissao ? new Date(f.data_emissao).toLocaleDateString("pt-PT") : "N/A",
           f.data_vencimento ? new Date(f.data_vencimento).toLocaleDateString("pt-PT") : "N/A",
+          meta.empresa || "---",
           f.fornecedor?.nome || "N/A",
           meta.centroCusto || "DISTRIBUIDORA",
           meta.contaAnalise || "---",
@@ -778,7 +804,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         summaryTotal = totalValor;
         summaryLabel = "Valor Total";
       }
-      totalRow = ["", "", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""];
+      totalRow = ["", "", "", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""];
     } else if (rType === "faturas_pagas") {
       const filtered = faturasInput.filter((f) => {
         if (f.tipo !== "compra_financeiro" || f.status_pagamento !== "pago") return false;
@@ -789,6 +815,11 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
           String(f.fornecedor_id) === entFilter.replace("fornecedor_", "");
 
         const meta = extractFaturaMeta(f, lojas);
+
+        let empresaMatch = true;
+        if (empFilter !== "todos") {
+          empresaMatch = meta.empresa.toLowerCase() === empFilter.toLowerCase();
+        }
 
         let centroCustoMatch = true;
         if (ccFilter !== "todos") {
@@ -816,12 +847,13 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
           contaAnaliseMatch = meta.contaAnalise.toLowerCase() === caFilter.toLowerCase();
         }
 
-        return periodMatch && fornecedorMatch && centroCustoMatch && contaAnaliseMatch;
+        return periodMatch && fornecedorMatch && empresaMatch && centroCustoMatch && contaAnaliseMatch;
       });
 
       headers = [
         "Data Emissão",
         "Vencimento",
+        "Empresa",
         "Fornecedor",
         "Centro de Custo",
         "Conta de Análise",
@@ -829,7 +861,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         "Total (€)",
         "Estado"
       ];
-      numericColumns = [6];
+      numericColumns = [7];
       title = "Relatório de Faturas Pagas";
 
       let totalValor = 0;
@@ -841,6 +873,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         return [
           f.data_emissao ? new Date(f.data_emissao).toLocaleDateString("pt-PT") : "N/A",
           f.data_vencimento ? new Date(f.data_vencimento).toLocaleDateString("pt-PT") : "N/A",
+          meta.empresa || "---",
           f.fornecedor?.nome || "N/A",
           meta.centroCusto || "DISTRIBUIDORA",
           meta.contaAnalise || "---",
@@ -852,7 +885,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
       summaryTotal = totalValor;
       summaryLabel = "Total Pago";
-      totalRow = ["", "", "", "", "", "TOTAL PAGO", totalValor.toFixed(2), ""];
+      totalRow = ["", "", "", "", "", "", "TOTAL PAGO", totalValor.toFixed(2), ""];
     } else if (rType === "iva_credito") {
       const filtered = faturasInput.filter((f) => {
         if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return false;
@@ -1498,6 +1531,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         endDate,
         status,
         entity: normalizedEntity,
+        empresa: normalizedEmpresa,
         centroCusto: normalizedCentroCusto,
         contaAnalise: normalizedContaAnalise,
         stockDate,
@@ -1692,6 +1726,30 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     ];
   }, [lojas, searchedFaturas]);
 
+  const empresaOptions = useMemo(() => {
+    const empresasMap = new Map<string, string>();
+    savedEmpresas.forEach((emp) => {
+      const clean = String(emp || "").trim();
+      if (clean && !empresasMap.has(clean.toLowerCase())) {
+        empresasMap.set(clean.toLowerCase(), clean);
+      }
+    });
+    searchedFaturas.forEach((f) => {
+      if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return;
+      const meta = extractFaturaMeta(f, lojas);
+      if (meta.empresa && !empresasMap.has(meta.empresa.toLowerCase())) {
+        empresasMap.set(meta.empresa.toLowerCase(), meta.empresa);
+      }
+    });
+
+    return [
+      { id: "todos", nome: "Todas as Empresas" },
+      ...Array.from(empresasMap.values())
+        .sort((a, b) => a.localeCompare(b, "pt-PT"))
+        .map((emp) => ({ id: emp, nome: emp }))
+    ];
+  }, [savedEmpresas, searchedFaturas, lojas]);
+
   const contaAnaliseOptions = useMemo(() => {
     const contasMap = new Map<string, string>();
     savedContasAnalise.forEach((ca) => {
@@ -1751,6 +1809,13 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     return found ? found.nome : appliedSearch.entity;
   }, [appliedSearch, fornecedores, lojas, categorias]);
 
+  const appliedEmpresaLabel = useMemo(() => {
+    if (!appliedSearch || !appliedSearch.empresa || appliedSearch.empresa === "todos") {
+      return "Todas";
+    }
+    return appliedSearch.empresa;
+  }, [appliedSearch]);
+
   const appliedCentroCustoLabel = useMemo(() => {
     if (!appliedSearch || !appliedSearch.centroCusto || appliedSearch.centroCusto === "todos") {
       return "Todos";
@@ -1777,6 +1842,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     setEndDate("");
     setStatus("todos");
     setEntity("todos");
+    setEmpresa("todos");
     setCentroCusto("todos");
     setContaAnalise("todos");
     setStockDate(new Date().toISOString().split("T")[0]);
@@ -1872,6 +1938,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                         setReportType(opt.id as ReportType);
                         setEntity("todos");
                         setStatus("todos");
+                        setEmpresa("todos");
                         setCentroCusto("todos");
                         setContaAnalise("todos");
                       }}
@@ -2027,6 +2094,20 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
                 {["pagar", "faturas_pagas", "iva_credito"].includes(reportType) ? (
                   <>
+                    {["pagar", "faturas_pagas"].includes(reportType) && (
+                      <div>
+                        <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-2.5">
+                          <Building2 size={14} /> Empresa
+                        </label>
+                        <SearchableCombobox
+                          value={empresa}
+                          onChange={(val) => setEmpresa(val || "todos")}
+                          placeholder="Selecionar ou pesquisar Empresa..."
+                          options={empresaOptions}
+                        />
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-2.5">
@@ -2191,6 +2272,12 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                       ? `Fornecedor: ${appliedEntityLabel}`
                       : `Filtro: ${appliedEntityLabel}`}
                   </span>
+                  {["pagar", "faturas_pagas"].includes(appliedSearch.reportType) && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>Empresa: {appliedEmpresaLabel}</span>
+                    </>
+                  )}
                   {["pagar", "faturas_pagas", "iva_credito"].includes(appliedSearch.reportType) && (
                     <>
                       <span aria-hidden="true">·</span>

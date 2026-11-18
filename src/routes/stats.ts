@@ -1,6 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { fetchFaturasFinanceiro } from '../lib/faturasFinanceiro';
 
 export function setupStatsRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
   // Dashboard Stats (Admin)
@@ -27,7 +28,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         { count: pedidosPendentes },
         { count: totalProdutos },
         { count: totalLojas },
-        { data: faturasC },
+        finFaturasRes,
         { data: prods },
         { data: monthOrders }
       ] = await Promise.all([
@@ -35,22 +36,20 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         supabase.from("pedidos").select("*", { count: "exact", head: true }).in("status", ["pendente", "processando"]),
         supabase.from("produtos").select("*", { count: "exact", head: true }),
         supabase.from("users").select("*", { count: "exact", head: true }).eq("role", "loja"),
-        supabase.from("faturas").select("id, tipo, status_pagamento, valor_total, valor_pendente, valor_iva, data_emissao"),
+        fetchFaturasFinanceiro(supabase, { includeRelations: false }),
         supabase.from("produtos").select("stock_armazem, preco_custo"),
         supabase.from("pedidos").select("id, total, created_at").in("status", ["pronto", "entregue", "concluido"]).gte("created_at", startOfMonthIso)
       ]);
 
       const totalVendas = (vendas || []).reduce((acc, v) => acc + (v.total || 0), 0);
 
-      // ERP STATS
+      // ERP STATS (a partir de faturas_financeiro)
       let comprasMes = 0;
       let despesasMes = 0;
       let dividaFornecedores = 0;
       let ivaCreditoMes = 0;
-      const missingIvaFaturaIds: any[] = [];
-      
-      (faturasC || []).forEach((f: any) => {
-         if (f.tipo === 'entrada_stock' || f.tipo === 'compra' || f.status_pagamento === 'em_conferencia') return;
+
+      (finFaturasRes.rows || []).forEach((f: any) => {
          dividaFornecedores += Number(f.valor_pendente || 0);
          const emissaoDate = f.data_emissao ? new Date(f.data_emissao) : null;
          const isThisMonth =
@@ -58,35 +57,10 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
            emissaoDate.getMonth() === currentMonth &&
            emissaoDate.getFullYear() === currentYear;
          if (isThisMonth) {
-            if (f.tipo === 'compra_financeiro') comprasMes += Number(f.valor_total || 0);
-            if (f.tipo === 'despesa' || f.tipo?.startsWith('despesa')) despesasMes += Number(f.valor_total || 0);
-            if (f.valor_iva !== undefined && f.valor_iva !== null) {
-              ivaCreditoMes += Number(f.valor_iva || 0);
-            } else if (f.id) {
-              missingIvaFaturaIds.push(f.id);
-            }
+            comprasMes += Number(f.valor_total || 0);
+            ivaCreditoMes += Number(f.valor_iva || 0);
          }
       });
-
-      if (missingIvaFaturaIds.length > 0) {
-        const { data: missingFaturaItens } = await supabase
-          .from("fatura_itens")
-          .select("fatura_id, quantidade, preco_custo, preco_unitario, iva, valor_iva, valor_liquido, produto:produtos(iva)")
-          .in("fatura_id", missingIvaFaturaIds);
-
-        (missingFaturaItens || []).forEach((item: any) => {
-          if (item.valor_iva !== undefined && item.valor_iva !== null && item.valor_liquido !== undefined && item.valor_liquido !== null) {
-            ivaCreditoMes += Number(item.valor_iva || 0);
-          } else {
-            const q = Number(item.quantidade || 0);
-            const c = Number(item.preco_custo || item.preco_unitario || 0);
-            const liq = q * c;
-            const prodObj = Array.isArray(item.produto) ? item.produto[0] : item.produto;
-            const ivaP = item.iva !== undefined && item.iva !== null ? Number(item.iva) : Number(prodObj?.iva || 0);
-            ivaCreditoMes += liq * (ivaP / 100);
-          }
-        });
-      }
 
       let capitalStock = 0;
       let totalStockQty = 0;
@@ -173,30 +147,30 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const today = new Date();
       today.setHours(0,0,0,0);
 
-      let faturasQuery = supabase.from("faturas").select("tipo, valor_pendente, valor_total, data_vencimento, data_emissao, status_pagamento").neq("tipo", "entrada_stock").neq("tipo", "compra");
       let pedidosQuery = supabase.from("pedidos").select("total, created_at, status");
 
       if (startDate) {
-        faturasQuery = faturasQuery.gte("data_emissao", startDate);
         pedidosQuery = pedidosQuery.gte("created_at", startDate);
       }
       if (endDate) {
-        faturasQuery = faturasQuery.lte("data_emissao", endDate);
         pedidosQuery = pedidosQuery.lte("created_at", endDate);
       }
 
       const [
-        { data: faturas },
+        finFaturasRes,
         { data: pedidos }
       ] = await Promise.all([
-        faturasQuery,
+        fetchFaturasFinanceiro(supabase, {
+          startDate: typeof startDate === "string" ? startDate : undefined,
+          endDate: typeof endDate === "string" ? endDate : undefined,
+          includeRelations: false,
+        }),
         pedidosQuery
       ]);
 
       let totalPagarGeral = 0;
       let totalPagarVencido = 0;
-      (faturas || []).forEach((f: any) => {
-        if (f.tipo === "entrada_stock" || f.tipo === "compra") return;
+      (finFaturasRes.rows || []).forEach((f: any) => {
         if (["pendente", "parcial"].includes(f.status_pagamento)) {
           const pendente = Number(f.valor_pendente ?? f.valor_total ?? 0);
           totalPagarGeral += pendente;
@@ -246,14 +220,10 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
       
       const [
-        { data: faturas },
+        finFaturasRes,
         { data: pedidos }
       ] = await Promise.all([
-        supabase.from("faturas")
-          .select("tipo, status_pagamento, valor_total, valor_pendente, data_vencimento, data_emissao, valor_iva, descrição, fornecedor:fornecedores(nome)")
-          .neq("status_pagamento", "em_conferencia")
-          .neq("tipo", "entrada_stock")
-          .neq("tipo", "compra"),
+        fetchFaturasFinanceiro(supabase, { includeRelations: false }),
         supabase.from("pedidos")
           .select("total, status, created_at, pedido_itens(quantidade, preco_unitario, iva, produto:produtos(iva))")
           .in("status", ["pronto", "entregue", "concluido"])
@@ -270,24 +240,11 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const currentMonth = today.getMonth();
       const currentYear = today.getFullYear();
 
-      (faturas || []).forEach((f: any) => {
-        if (f.tipo === 'entrada_stock' || f.tipo === 'compra' || f.status_pagamento === 'em_conferencia') return;
-
+      (finFaturasRes.rows || []).forEach((f: any) => {
         const valTotal = Number(f.valor_total || 0);
         if (valTotal > 0) {
-          let lojaId = "";
-          let centroCusto = "";
-          if (f.descrição && f.descrição !== "null") {
-            try {
-              const desc = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
-              lojaId = desc?.loja_id ? String(desc.loja_id).trim() : "";
-              centroCusto = String(
-                desc?.centro_custo ||
-                  (desc?.classificacao_tipo !== "conta_analise" ? desc?.classificacao_nome : "") ||
-                  ""
-              ).trim();
-            } catch {}
-          }
+          const lojaId = f.loja_id ? String(f.loja_id).trim() : "";
+          let centroCusto = f.centro_custo ? String(f.centro_custo).trim() : "";
 
           const lowerCC = centroCusto.toLowerCase();
           if (lowerCC === "armazém central" || lowerCC === "armazem central") {
@@ -301,7 +258,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
             lowerCC === "administracao / sede"
           ) {
             centroCusto = "LOST WIND UNIPESSOAL,LDA";
-          } else if (!centroCusto && !lojaId && f.tipo === "compra_financeiro") {
+          } else if (!centroCusto && !lojaId) {
             centroCusto = "DISTRIBUIDORA";
           }
 
@@ -315,8 +272,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
 
         if (f.status_pagamento !== "pago") {
           const pend = Number(f.valor_pendente ?? f.valor_total ?? 0);
-          if (f.tipo === 'compra_financeiro') totalPendenteCompras += pend;
-          else totalPendenteDespesas += pend;
+          totalPendenteCompras += pend;
 
           const vencDate = f.data_vencimento || f.data_emissao;
           if (vencDate) {
@@ -331,9 +287,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         }
 
         // Crédito IVA (Compras) Recuperável
-        if (f.tipo === "compra_financeiro") {
-          totalIvaCredito += Number(f.valor_iva || 0);
-        }
+        totalIvaCredito += Number(f.valor_iva || 0);
       });
 
       let totalReceber = 0;
@@ -478,17 +432,21 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       const startOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
       const endOfMonth = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59).toISOString();
 
-      const { data: pedidos } = await supabase
-        .from("pedidos")
-        .select("total, created_at, status")
-        .gte("created_at", startOfMonth)
-        .lte("created_at", endOfMonth);
+      const startDateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-01`;
+      const endDateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(new Date(currentYear, currentMonth + 1, 0).getDate()).padStart(2, "0")}`;
 
-      const { data: faturas } = await supabase
-        .from("faturas")
-        .select("tipo, valor_total, data_emissao")
-        .gte("data_emissao", startOfMonth)
-        .lte("data_emissao", endOfMonth);
+      const [{ data: pedidos }, finFaturasRes] = await Promise.all([
+        supabase
+          .from("pedidos")
+          .select("total, created_at, status")
+          .gte("created_at", startOfMonth)
+          .lte("created_at", endOfMonth),
+        fetchFaturasFinanceiro(supabase, {
+          startDate: startDateStr,
+          endDate: endDateStr,
+          includeRelations: false,
+        }),
+      ]);
 
       const chartMap: Record<string, { name: string, vendas: number, despesas: number, compras: number }> = {};
 
@@ -512,18 +470,15 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
         });
       }
 
-      if (faturas) {
-        faturas.forEach((f: any) => {
-          const d = new Date(f.data_emissao);
-          if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
-            const day = d.getDate().toString();
-            if (chartMap[day]) {
-               if (f.tipo === 'despesa' || f.tipo?.startsWith('despesa')) chartMap[day].despesas += (f.valor_total || 0);
-               if (f.tipo === 'compra_financeiro') chartMap[day].compras += (f.valor_total || 0);
-            }
+      (finFaturasRes.rows || []).forEach((f: any) => {
+        const d = new Date(f.data_emissao);
+        if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+          const day = d.getDate().toString();
+          if (chartMap[day]) {
+            chartMap[day].compras += Number(f.valor_total || 0);
           }
-        });
-      }
+        }
+      });
 
       const chartArray = Object.values(chartMap);
       cache.set(cacheKey, chartArray);
@@ -754,14 +709,17 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
       
+      const startMonthDate = startOfMonth.toISOString().split('T')[0];
       const [
         { data: pedidos },
         { data: pedidosProd },
-        { data: faturas }
+        { data: faturasStock },
+        finFaturasRes
       ] = await Promise.all([
         supabase.from('pedidos').select('total, user_id, user:users(name)').gte('created_at', startOfMonth.toISOString()).in('status', ['pronto', 'entregue', 'concluido']),
         supabase.from('pedidos').select('pedido_itens(quantidade, produto:produtos(nome))').gte('created_at', startOfMonth.toISOString()).in('status', ['pronto', 'entregue', 'concluido']),
-        supabase.from('faturas').select('valor_total, fornecedor:fornecedores(nome)').in('tipo', ['compra', 'entrada_stock', 'compra_financeiro']).gte('data_emissao', startOfMonth.toISOString().split('T')[0])
+        supabase.from('faturas').select('valor_total, fornecedor:fornecedores(nome)').in('tipo', ['compra', 'entrada_stock']).gte('data_emissao', startMonthDate),
+        fetchFaturasFinanceiro(supabase, { startDate: startMonthDate, includeRelations: false })
       ]);
         
       const storeTotals: Record<string, {name: string, total: number}> = {};
@@ -794,7 +752,7 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       // 3. Melhores Fornecedores (Current Month)
          
       const supplierTotals: Record<string, {name: string, total: number}> = {};
-      (faturas || []).forEach(f => {
+      [...(faturasStock || []), ...(finFaturasRes.rows || [])].forEach((f: any) => {
          const fname = f.fornecedor?.nome;
          if (fname) {
              if (!supplierTotals[fname]) {

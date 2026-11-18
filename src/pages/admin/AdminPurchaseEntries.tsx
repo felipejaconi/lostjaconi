@@ -81,7 +81,7 @@ export default function AdminPurchaseEntries({
       const [resForn, resUsers, resFaturas, resContas, resEmpresas] = await Promise.all([
         api.get("/admin/fornecedores").catch(() => ({ data: [] })),
         api.get("/admin/users").catch(() => ({ data: [] })),
-        api.get("/admin/faturas").catch(() => ({ data: [] })),
+        api.get("/admin/faturas-financeiro").catch(() => ({ data: [] })),
         api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] })),
         api.get("/admin/financeiro/empresas").catch(() => ({ data: [] })),
       ]);
@@ -194,16 +194,20 @@ export default function AdminPurchaseEntries({
     });
 
     existingFaturas.forEach((f) => {
-      if (!f?.descrição) return;
+      if (!f) return;
       try {
-        const parsed = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
-        const empNome = String(parsed?.empresa || "").trim();
+        let parsed: any = null;
+        if (f.descrição) {
+          parsed = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
+        }
+        const empNome = String(f.empresa || parsed?.empresa || "").trim();
         if (empNome && !empresasMap.has(empNome.toLowerCase())) {
           empresasMap.set(empNome.toLowerCase(), empNome);
         }
 
         const ccNome = String(
-          parsed?.centro_custo ||
+          f.centro_custo ||
+            parsed?.centro_custo ||
             (parsed?.classificacao_tipo === "centro_custo" ? parsed?.classificacao_nome : "") ||
             ""
         ).trim();
@@ -216,7 +220,8 @@ export default function AdminPurchaseEntries({
         }
 
         const caNome = String(
-          parsed?.conta_analise ||
+          f.conta_analise ||
+            parsed?.conta_analise ||
             (parsed?.classificacao_tipo === "conta_analise" ? parsed?.classificacao_nome : "") ||
             ""
         ).trim();
@@ -390,7 +395,7 @@ export default function AdminPurchaseEntries({
         };
       }
 
-      await api.post("/admin/faturas/compras", payloadToSubmit);
+      await api.post("/admin/faturas-financeiro", payloadToSubmit);
 
       Swal.fire({
         icon: "success",

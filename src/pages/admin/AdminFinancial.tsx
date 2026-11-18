@@ -78,28 +78,32 @@ const DEFAULT_FATURAS_FILTER = {
 };
 
 function extractFaturaMeta(f: any, storesList: any[]) {
-  let empresa = "";
-  let centroCusto = "";
-  let contaAnalise = "";
-  let lojaId = "";
-  let formaPagamento = "";
+  let empresa = f?.empresa ? String(f.empresa).trim() : "";
+  let centroCusto = f?.centro_custo ? String(f.centro_custo).trim() : "";
+  let contaAnalise = f?.conta_analise ? String(f.conta_analise).trim() : "";
+  let lojaId = f?.loja_id ? String(f.loja_id).trim() : "";
+  let formaPagamento = f?.forma_pagamento ? String(f.forma_pagamento).trim() : "";
 
-  if (f?.descrição && f.descrição !== "null") {
+  if ((!empresa || !centroCusto || !contaAnalise || !lojaId || !formaPagamento) && f?.descrição && f.descrição !== "null") {
     try {
       const desc = typeof f.descrição === "string" ? JSON.parse(f.descrição) : f.descrição;
-      empresa = desc?.empresa ? String(desc.empresa).trim() : "";
-      lojaId = desc?.loja_id ? String(desc.loja_id) : "";
-      formaPagamento = desc?.forma_pagamento ? String(desc.forma_pagamento) : "";
-      centroCusto = String(
-        desc?.centro_custo ||
-          (desc?.classificacao_tipo !== "conta_analise" ? desc?.classificacao_nome : "") ||
-          ""
-      ).trim();
-      contaAnalise = String(
-        desc?.conta_analise ||
-          (desc?.classificacao_tipo === "conta_analise" ? desc?.classificacao_nome : "") ||
-          ""
-      ).trim();
+      if (!empresa && desc?.empresa) empresa = String(desc.empresa).trim();
+      if (!lojaId && desc?.loja_id) lojaId = String(desc.loja_id).trim();
+      if (!formaPagamento && desc?.forma_pagamento) formaPagamento = String(desc.forma_pagamento).trim();
+      if (!centroCusto) {
+        centroCusto = String(
+          desc?.centro_custo ||
+            (desc?.classificacao_tipo !== "conta_analise" ? desc?.classificacao_nome : "") ||
+            ""
+        ).trim();
+      }
+      if (!contaAnalise) {
+        contaAnalise = String(
+          desc?.conta_analise ||
+            (desc?.classificacao_tipo === "conta_analise" ? desc?.classificacao_nome : "") ||
+            ""
+        ).trim();
+      }
     } catch {}
   }
 
@@ -279,7 +283,7 @@ export default function AdminFinancial() {
         if (tab === "faturas_compras" || tab === "faturas_despesas") {
            if (faturas.length === 0 || forceRefresh) {
               const [fatRes, fornRes, usersRes, contasRes] = await Promise.all([
-                 api.get("/admin/faturas"),
+                 api.get("/admin/faturas-financeiro"),
                  api.get("/admin/fornecedores"),
                  api.get("/admin/users"),
                  api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] })),
@@ -462,7 +466,7 @@ export default function AdminFinancial() {
     if (!isConfirmed) return;
 
     try {
-      await api.delete(`/admin/faturas/${fatura.id}`);
+      await api.delete(`/admin/faturas-financeiro/${fatura.id}`);
       Swal.fire({
         title: "Sucesso!",
         text: `A fatura ${faturaDesc} foi apagada com sucesso.`,
@@ -556,7 +560,7 @@ export default function AdminFinancial() {
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.post(`/admin/faturas/${selectedFatura.id}/pagar`, payFormData);
+      await api.post(`/admin/faturas-financeiro/${selectedFatura.id}/pagar`, payFormData);
       
       const pagoVal = Number(payFormData.valor);
       
@@ -2134,39 +2138,30 @@ export default function AdminFinancial() {
                        debito_direto: "Débito Direto",
                        pago: "Pago"
                     };
-                    try {
-                       if (selectedFatura.descrição) {
-                          const desc = JSON.parse(selectedFatura.descrição);
-                          if (desc.empresa || desc.centro_custo || desc.conta_analise || desc.classificacao_nome || desc.forma_pagamento) {
-                             const centroCusto = desc.centro_custo || (desc.classificacao_tipo !== "conta_analise" ? desc.classificacao_nome : "");
-                             const contaAnalise = desc.conta_analise || (desc.classificacao_tipo === "conta_analise" ? desc.classificacao_nome : "");
-                             return (
-                                <div className="mt-1 space-y-0.5">
-                                   {desc.empresa && (
-                                      <p className="text-[11px] font-bold text-zinc-200 uppercase tracking-wider">Empresa: {desc.empresa}</p>
-                                   )}
-                                   {centroCusto && (
-                                      <p className="text-[11px] font-bold text-blue-400 uppercase tracking-wider">Centro de Custo: {centroCusto}</p>
-                                   )}
-                                   {contaAnalise && (
-                                      <p className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">Conta Análise: {contaAnalise}</p>
-                                   )}
-                                   {desc.forma_pagamento && (
-                                      <p className="text-[11px] text-zinc-400">Forma de Pagamento: {metodoLabels[desc.forma_pagamento] || desc.forma_pagamento}</p>
-                                   )}
-                                </div>
-                             );
-                          }
-                          if (desc.loja_id) {
-                             const s = stores.find((s: any) => String(s.id) === String(desc.loja_id));
-                             if (s) {
-                                return <p className="text-[11px] font-bold text-amber-500 mt-1 uppercase tracking-wider">Destino: {s.name}</p>;
-                             }
-                          }
+                    const meta = extractFaturaMeta(selectedFatura, stores);
+                    if (meta.empresa || meta.centroCusto || meta.contaAnalise || meta.formaPagamento) {
+                       return (
+                          <div className="mt-1 space-y-0.5">
+                             {meta.empresa && (
+                                <p className="text-[11px] font-bold text-zinc-200 uppercase tracking-wider">Empresa: {meta.empresa}</p>
+                             )}
+                             {meta.centroCusto && (
+                                <p className="text-[11px] font-bold text-blue-400 uppercase tracking-wider">Centro de Custo: {meta.centroCusto}</p>
+                             )}
+                             {meta.contaAnalise && (
+                                <p className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">Conta Análise: {meta.contaAnalise}</p>
+                             )}
+                             {meta.formaPagamento && (
+                                <p className="text-[11px] text-zinc-400">Forma de Pagamento: {metodoLabels[meta.formaPagamento] || meta.formaPagamento}</p>
+                             )}
+                          </div>
+                       );
+                    }
+                    if (meta.lojaId) {
+                       const s = stores.find((s: any) => String(s.id) === String(meta.lojaId));
+                       if (s) {
+                          return <p className="text-[11px] font-bold text-amber-500 mt-1 uppercase tracking-wider">Destino: {s.name}</p>;
                        }
-                    } catch(e) {}
-                    if (selectedFatura.tipo?.startsWith('despesa')) {
-                       return <p className="text-[11px] font-bold text-blue-500 mt-1 uppercase tracking-wider">Destino: Armazém Central</p>;
                     }
                     return null;
                  })()}

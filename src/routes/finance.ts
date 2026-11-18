@@ -1,24 +1,22 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import {
+  FATURAS_FINANCEIRO_TABLE,
+  fetchFaturasFinanceiro,
+  normalizeFaturaFinanceiroRow,
+  isMissingFaturasFinanceiroTable,
+  ensureLegacyFinancialRowsMigrated,
+} from '../lib/faturasFinanceiro';
 
 export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
-  // Migração automática e idempotente: move todas as faturas legadas (tipo = 'compra') para a área de Faturas (tipo = 'entrada_stock')
+  // Sincroniza faturas legadas do financeiro para public.faturas_financeiro assim que a tabela existir (mantendo public.faturas intacta)
   (async () => {
     try {
-      const { data, error } = await supabase
-        .from("faturas")
-        .update({ tipo: "entrada_stock" })
-        .eq("tipo", "compra")
-        .select("id");
-      if (!error && data && data.length > 0) {
-        console.log(`[Migration] ${data.length} faturas migradas do Financeiro ('compra') para Faturas ('entrada_stock').`);
-        const fatKeys = cache.keys().filter((k: string) => k.startsWith("admin_faturas"));
-        if (fatKeys.length > 0) cache.del(fatKeys);
-        cache.del("admin_stats");
-      }
+      await ensureLegacyFinancialRowsMigrated(supabase);
     } catch (e) {
-      console.warn("[Migration] Aviso ao migrar faturas:", e);
+      console.warn("[Migration] Aviso ao verificar faturas_financeiro:", e);
     }
   })();
 
@@ -225,9 +223,16 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
 
   const clearFinanceCache = () => {
     const keys = cache.keys();
-    const finPedidosKeys = keys.filter((k: string) => k.startsWith("admin_financial_pedidos") || k.startsWith("admin_faturas"));
+    const finPedidosKeys = keys.filter(
+      (k: string) =>
+        k.startsWith("admin_financial_pedidos") ||
+        k.startsWith("admin_faturas") ||
+        k.startsWith("admin_reports_summary_metrics") ||
+        k.startsWith("admin_chart_data")
+    );
     if (finPedidosKeys.length > 0) cache.del(finPedidosKeys);
     cache.del("admin_stats");
+    cache.del("admin_dashboard_extended");
     cache.del("admin_produtos");
   };
 
@@ -386,10 +391,50 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     }
   });
 
-  app.post("/api/admin/faturas/compras", authenticateToken, async (req: any, res) => {
+  // ============================================================================
+  // ERP Financeiro - Tabela dedicada public.faturas_financeiro
+  // ============================================================================
+  app.get("/api/admin/faturas-financeiro", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const period = typeof req.query.period === "string" ? req.query.period : "todos";
+      const startDateQuery = typeof req.query.startDate === "string" ? req.query.startDate : undefined;
+      const endDateQuery = typeof req.query.endDate === "string" ? req.query.endDate : undefined;
+
+      let startDate = startDateQuery;
+      if (!startDate && period === "mes") {
+        const now = new Date();
+        startDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      } else if (!startDate && period === "ano") {
+        const now = new Date();
+        startDate = `${now.getFullYear()}-01-01`;
+      }
+
+      const cacheKey = `admin_faturas_financeiro_${period}_${startDate || "all"}_${endDateQuery || "all"}`;
+      const cached = cache.get(cacheKey);
+      if (cached) return res.json(cached);
+
+      const { rows, tableReady } = await fetchFaturasFinanceiro(supabase, {
+        startDate,
+        endDate: endDateQuery,
+        includeRelations: true,
+      });
+
+      if (tableReady) {
+        cache.set(cacheKey, rows, 60);
+      }
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  const handleCreateFaturaFinanceiro = async (req: any, res: any) => {
     if (req.user.role !== "admin") return res.sendStatus(403);
 
     try {
+      await ensureLegacyFinancialRowsMigrated(supabase);
+
       const isArray = Array.isArray(req.body);
       const items = isArray ? req.body : [req.body];
 
@@ -397,6 +442,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       let createdFornecedorName: string | null = null;
 
       const dataToInsert: any[] = [];
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
       for (const item of items) {
         let finalFornecedorId = item.fornecedor_id || null;
@@ -444,73 +490,62 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
             : Math.max(0, valorTotal - valorIva);
 
         const isAlreadyPaid = item.forma_pagamento === "pago";
+        const dataEmissao = item.data_fatura || item.data_emissao || new Date().toISOString().split("T")[0];
+        const rawLojaId = item.loja_id ? String(item.loja_id).trim() : "";
+        const validLojaId = uuidRegex.test(rawLojaId) ? rawLojaId : null;
 
-        const descObj: Record<string, any> = {};
-        if (item.empresa) descObj.empresa = String(item.empresa).trim();
-        if (item.loja_id) descObj.loja_id = item.loja_id;
-        if (item.centro_custo) descObj.centro_custo = item.centro_custo;
-        if (item.conta_analise) descObj.conta_analise = item.conta_analise;
-        if (item.classificacao_tipo) descObj.classificacao_tipo = item.classificacao_tipo;
-        if (item.classificacao_nome) descObj.classificacao_nome = item.classificacao_nome;
-        if (item.forma_pagamento) descObj.forma_pagamento = item.forma_pagamento;
-        const descricaoJson = Object.keys(descObj).length > 0 ? JSON.stringify(descObj) : null;
+        const initialPayments =
+          isAlreadyPaid && valorTotal > 0
+            ? [
+                {
+                  id: crypto.randomUUID(),
+                  valor: valorTotal,
+                  data_pagamento: dataEmissao,
+                  metodo: "pago",
+                  created_by: req.user.id,
+                  created_at: new Date().toISOString(),
+                },
+              ]
+            : [];
 
         dataToInsert.push({
+          empresa: item.empresa ? String(item.empresa).trim() : null,
+          centro_custo: item.centro_custo ? String(item.centro_custo).trim() : null,
+          conta_analise: item.conta_analise ? String(item.conta_analise).trim() : null,
+          loja_id: validLojaId,
           fornecedor_id: finalFornecedorId,
-          numero_fatura: item.numero_fatura,
-          data_emissao: item.data_fatura,
+          numero_fatura: String(item.numero_fatura || "").trim(),
+          forma_pagamento: item.forma_pagamento || "transferencia",
+          data_emissao: dataEmissao,
           data_vencimento: item.data_vencimento || null,
           valor_liquido: valorLiquido,
           valor_iva: valorIva,
           valor_total: valorTotal,
           valor_pendente: isAlreadyPaid ? 0 : valorTotal,
           status_pagamento: isAlreadyPaid ? "pago" : "pendente",
-          tipo: "compra_financeiro",
+          data_pagamento: isAlreadyPaid ? dataEmissao : null,
+          pagamentos: initialPayments,
           observacoes: item.observacoes || null,
-          descrição: descricaoJson,
           created_by: req.user.id,
         });
       }
 
-      let insertResult = await supabase.from("faturas").insert(dataToInsert).select();
+      const insertResult = await supabase
+        .from(FATURAS_FINANCEIRO_TABLE)
+        .insert(dataToInsert)
+        .select();
 
       if (insertResult.error) {
-        const fallbackRows = dataToInsert.map((row) => ({
-          fornecedor_id: row.fornecedor_id,
-          numero_fatura: row.numero_fatura,
-          data_emissao: row.data_emissao,
-          data_vencimento: row.data_vencimento,
-          valor_total: row.valor_total,
-          valor_pendente: row.valor_pendente,
-          status_pagamento: row.status_pagamento,
-          tipo: "compra_financeiro",
-          descrição: row.descrição,
-          created_by: row.created_by,
-        }));
-        insertResult = await supabase.from("faturas").insert(fallbackRows).select();
-      }
-
-      if (insertResult.error) throw insertResult.error;
-
-      // Se foi lançada já como "pago", regista também o movimento financeiro correspondente
-      const insertedRows = insertResult.data || [];
-      for (const createdFat of insertedRows) {
-        if (createdFat?.status_pagamento === "pago" && Number(createdFat?.valor_total) > 0) {
-          try {
-            await supabase.from("movimentos_financeiros").insert([
-              {
-                fatura_id: createdFat.id,
-                valor: Number(createdFat.valor_total),
-                data_pagamento: createdFat.data_emissao || new Date().toISOString().split("T")[0],
-                metodo: "pago",
-                created_by: req.user.id,
-              },
-            ]);
-          } catch {}
+        if (isMissingFaturasFinanceiroTable(insertResult.error)) {
+          return res.status(503).json({
+            error:
+              "A tabela 'faturas_financeiro' ainda não foi criada no Supabase. Execute o script supabase/faturas_financeiro.sql no SQL Editor do Supabase.",
+          });
         }
+        throw insertResult.error;
       }
 
-      // Se alguma empresa ou conta de análise foi informada, garante que fica salva na lista personalizada
+      // Garante que empresa e conta de análise ficam guardadas nas listas personalizadas
       for (const item of items) {
         const emp = String(item?.empresa || "").trim();
         if (emp) {
@@ -524,8 +559,102 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
 
       clearFinanceCache();
       cache.del("admin_fornecedores");
-      res.json(isArray ? insertResult.data : insertResult.data?.[0]);
+      const normalized = (insertResult.data || []).map(normalizeFaturaFinanceiroRow);
+      res.json(isArray ? normalized : normalized[0]);
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  };
+
+  app.post("/api/admin/faturas-financeiro", authenticateToken, handleCreateFaturaFinanceiro);
+  app.post("/api/admin/faturas/compras", authenticateToken, handleCreateFaturaFinanceiro);
+
+  app.post("/api/admin/faturas-financeiro/:id/pagar", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    const { valor, data_pagamento, metodo } = req.body;
+    try {
+      await ensureLegacyFinancialRowsMigrated(supabase);
+      const faturaId = req.params.id;
+
+      const { data: fatura, error: fetchErr } = await supabase
+        .from(FATURAS_FINANCEIRO_TABLE)
+        .select("id, valor_pendente, pagamentos")
+        .eq("id", faturaId)
+        .maybeSingle();
+
+      if (fetchErr) {
+        if (isMissingFaturasFinanceiroTable(fetchErr)) {
+          return res.status(503).json({
+            error:
+              "A tabela 'faturas_financeiro' ainda não foi criada no Supabase. Execute o script supabase/faturas_financeiro.sql no SQL Editor do Supabase.",
+          });
+        }
+        throw fetchErr;
+      }
+
+      if (!fatura) {
+        return res.status(404).json({ error: "Fatura financeira não encontrada" });
+      }
+
+      const valorNum = Number(valor) || 0;
+      const newPendente = Math.max(0, Number(fatura.valor_pendente || 0) - valorNum);
+      const status = newPendente <= 0 ? "pago" : "parcial";
+      const existingPagamentos = Array.isArray(fatura.pagamentos) ? fatura.pagamentos : [];
+      const updatedPagamentos = [
+        ...existingPagamentos,
+        {
+          id: crypto.randomUUID(),
+          valor: valorNum,
+          data_pagamento: data_pagamento || new Date().toISOString().split("T")[0],
+          metodo: metodo || "transferencia",
+          created_by: req.user.id,
+          created_at: new Date().toISOString(),
+        },
+      ];
+
+      const { error: updErr } = await supabase
+        .from(FATURAS_FINANCEIRO_TABLE)
+        .update({
+          valor_pendente: newPendente,
+          status_pagamento: status,
+          data_pagamento: data_pagamento || new Date().toISOString().split("T")[0],
+          pagamentos: updatedPagamentos,
+        })
+        .eq("id", faturaId);
+
+      if (updErr) throw updErr;
+
+      clearFinanceCache();
+      res.json({ message: "Pagamento registado com sucesso" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/admin/faturas-financeiro/:id", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    const faturaId = req.params.id;
+    try {
+      await ensureLegacyFinancialRowsMigrated(supabase);
+      const { error } = await supabase
+        .from(FATURAS_FINANCEIRO_TABLE)
+        .delete()
+        .eq("id", faturaId);
+
+      if (error) {
+        if (isMissingFaturasFinanceiroTable(error)) {
+          return res.status(503).json({
+            error:
+              "A tabela 'faturas_financeiro' ainda não foi criada no Supabase. Execute o script supabase/faturas_financeiro.sql no SQL Editor do Supabase.",
+          });
+        }
+        throw error;
+      }
+
+      clearFinanceCache();
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Erro ao apagar fatura financeira:", error);
       res.status(500).json({ error: error.message });
     }
   });
