@@ -47,22 +47,62 @@ async function purgeAllCaches(): Promise<void> {
 }
 
 /**
+ * Revalida o HTML da rota atual ignorando o cache HTTP do navegador/proxy
+ * e recarrega a página de forma limpa sem poluir a URL.
+ */
+async function performCleanReload(): Promise<void> {
+  await purgeAllCaches();
+  try {
+    await fetch(window.location.pathname, {
+      method: 'GET',
+      cache: 'reload',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+      },
+    });
+  } catch {
+    // Segue para o reload mesmo se a revalidação prévia falhar
+  }
+  window.location.reload();
+}
+
+/**
  * Se um Service Worker antigo estiver controlando ativamente a página e
  * interceptando requisições, remove e força um reload para conexão direta.
  */
 function handleActiveServiceWorkerController() {
   if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
     console.warn('[Cache] Service Worker antigo detectado controlando requisições. Removendo...');
-    purgeAllCaches().then(() => {
-      const lastReloadKey = 'sw_controller_unreg_reload';
-      const lastReload = sessionStorage.getItem(lastReloadKey);
-      const now = Date.now();
-      // Limite de segurança de 15 segundos para evitar loop infinito
-      if (!lastReload || now - parseInt(lastReload, 10) > 15000) {
-        sessionStorage.setItem(lastReloadKey, String(now));
-        window.location.reload();
-      }
-    });
+    const lastReloadKey = 'sw_controller_unreg_reload';
+    const lastReload = sessionStorage.getItem(lastReloadKey);
+    const now = Date.now();
+    if (!lastReload || now - parseInt(lastReload, 10) > 15000) {
+      sessionStorage.setItem(lastReloadKey, String(now));
+      performCleanReload();
+    } else {
+      purgeAllCaches();
+    }
+  }
+}
+
+function isDynamicChunkErrorMessage(raw: string): boolean {
+  const msg = (raw || '').toLowerCase();
+  return (
+    msg.includes('failed to fetch dynamically imported module') ||
+    msg.includes('loading chunk') ||
+    msg.includes('chunkloaderror') ||
+    msg.includes('error loading dynamically imported module') ||
+    msg.includes('importing a module script failed')
+  );
+}
+
+function triggerChunkRecoveryReload(storageKey: string) {
+  const lastReload = sessionStorage.getItem(storageKey);
+  const now = Date.now();
+  if (!lastReload || now - parseInt(lastReload, 10) > 15000) {
+    sessionStorage.setItem(storageKey, String(now));
+    performCleanReload();
   }
 }
 
@@ -75,85 +115,111 @@ function setupDynamicImportErrorRecovery() {
   window.addEventListener('vite:preloadError', (event) => {
     console.warn('[Cache] Falha ao carregar chunk dinâmico (vite:preloadError). Atualizando para a versão mais recente...');
     event.preventDefault();
+    triggerChunkRecoveryReload('vite_preload_last_reload');
+  });
 
-    const lastReloadKey = 'vite_preload_last_reload';
-    const lastReload = sessionStorage.getItem(lastReloadKey);
-    const now = Date.now();
-
-    if (!lastReload || now - parseInt(lastReload, 10) > 15000) {
-      sessionStorage.setItem(lastReloadKey, String(now));
-      purgeAllCaches().finally(() => {
-        window.location.reload();
-      });
+  // Erros genéricos de importação dinâmica em navegadores
+  window.addEventListener('error', (event) => {
+    const errorMsg = event?.message || String((event as ErrorEvent)?.error?.message || '');
+    if (isDynamicChunkErrorMessage(errorMsg)) {
+      console.warn('[Cache] Erro de importação dinâmica detectado:', errorMsg);
+      triggerChunkRecoveryReload('dynamic_import_error_reload');
     }
   });
 
-  // Erros genéricos de importação dinâmica em navegadores antigos ou WebKit
-  window.addEventListener('error', (event) => {
-    const errorMsg = (event?.message || '').toLowerCase();
-    if (
-      errorMsg.includes('failed to fetch dynamically imported module') ||
-      errorMsg.includes('loading chunk') ||
-      errorMsg.includes('error loading dynamically imported module')
-    ) {
-      console.warn('[Cache] Erro de importação dinâmica detectado:', event.message);
-      const lastReloadKey = 'dynamic_import_error_reload';
-      const lastReload = sessionStorage.getItem(lastReloadKey);
-      const now = Date.now();
-
-      if (!lastReload || now - parseInt(lastReload, 10) > 15000) {
-        sessionStorage.setItem(lastReloadKey, String(now));
-        purgeAllCaches().finally(() => {
-          window.location.reload();
-        });
-      }
+  // Promessas rejeitadas de import() dinâmico (ex.: rotas lazy em Ubuntu/Nginx)
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event?.reason;
+    const reasonMsg =
+      typeof reason === 'string'
+        ? reason
+        : String(reason?.message || reason?.name || '');
+    if (isDynamicChunkErrorMessage(reasonMsg)) {
+      console.warn('[Cache] Rejeição de importação dinâmica detectada:', reasonMsg);
+      event.preventDefault?.();
+      triggerChunkRecoveryReload('dynamic_import_rejection_reload');
     }
   });
 }
 
 /**
- * Verifica no servidor se existe uma nova versão de index.html com novos bundles.
- * Se houver novos hashes de scripts, limpa os caches e atualiza a aplicação.
+ * Verifica no servidor (primeiro via /api/version, que nunca sofre cache de Nginx/Cloudflare,
+ * e com fallback para /index.html) se existe um novo build publicado.
  */
 let isCheckingUpdate = false;
 async function checkForAppUpdates() {
   if (isCheckingUpdate || import.meta.env.DEV) return;
+
+  // Scripts de produção carregados atualmente no DOM
+  const currentScriptUrls = Array.from(document.querySelectorAll('script[src]'))
+    .map((el) => el.getAttribute('src'))
+    .filter((src): src is string => Boolean(src && src.includes('/assets/')));
+
+  // Se não houver scripts /assets/ no DOM, não estamos num bundle compilado de produção
+  if (currentScriptUrls.length === 0) return;
+
   isCheckingUpdate = true;
 
   try {
-    const response = await fetch(`/index.html?nocache=${Date.now()}`, {
-      method: 'GET',
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0',
-      },
-      cache: 'no-store',
-    });
+    let newScriptUrls: string[] = [];
 
-    if (!response.ok) return;
+    // 1. Tenta via /api/version (passa direto pelo proxy reverso no Ubuntu e na Hostinger)
+    try {
+      const apiRes = await fetch(`/api/version?_t=${Date.now()}`, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+        },
+      });
+      if (apiRes.ok) {
+        const data = await apiRes.json();
+        if (Array.isArray(data?.scripts) && data.scripts.length > 0) {
+          newScriptUrls = data.scripts;
+        }
+      }
+    } catch {
+      // Fallback para /index.html abaixo
+    }
 
-    const htmlText = await response.text();
+    // 2. Fallback: lê /index.html diretamente se /api/version não trouxe scripts
+    if (newScriptUrls.length === 0) {
+      const response = await fetch(`/index.html?nocache=${Date.now()}`, {
+        method: 'GET',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        },
+        cache: 'no-store',
+      });
 
-    // Scripts carregados atualmente na página
-    const currentScriptUrls = Array.from(document.querySelectorAll('script[src]'))
-      .map((el) => el.getAttribute('src'))
-      .filter((src): src is string => Boolean(src && src.includes('/assets/')));
+      if (response.ok) {
+        const htmlText = await response.text();
+        const scriptMatches = htmlText.match(/src="(\/assets\/[^"]+)"/g) || [];
+        newScriptUrls = scriptMatches.map((m) => m.replace(/src="|"/g, ''));
+      }
+    }
 
-    // Extrai os caminhos de assets do HTML recebido
-    const scriptMatches = htmlText.match(/src="(\/assets\/[^"]+)"/g) || [];
-    const newScriptUrls = scriptMatches.map((m) => m.replace(/src="|"/g, ''));
-
-    if (newScriptUrls.length > 0 && currentScriptUrls.length > 0) {
+    if (newScriptUrls.length > 0) {
       const hasNewBundle = newScriptUrls.some((newUrl) => !currentScriptUrls.includes(newUrl));
       if (hasNewBundle) {
-        console.log('[Cache] Nova versão detectada no servidor! Atualizando aplicação...');
-        await purgeAllCaches();
-        window.location.reload();
+        const targetSignature = newScriptUrls.slice().sort().join('|');
+        const lastTarget = sessionStorage.getItem('app_update_target_sig');
+        const lastAttempt = parseInt(sessionStorage.getItem('app_update_last_reload') || '0', 10);
+        const now = Date.now();
+
+        // Proteção anti-loop caso um CDN externo demore alguns segundos a propagar o HTML
+        if (lastTarget !== targetSignature || now - lastAttempt > 45000) {
+          console.log('[Cache] Nova versão detectada no servidor! Atualizando aplicação...');
+          sessionStorage.setItem('app_update_target_sig', targetSignature);
+          sessionStorage.setItem('app_update_last_reload', String(now));
+          await performCleanReload();
+        }
       }
     }
   } catch (err) {
-    // Falha silenciosa de verificação de versão (ex: sem conexão de rede momentânea)
     console.debug('[Cache] Verificação de versão secundária:', err);
   } finally {
     isCheckingUpdate = false;
@@ -165,7 +231,7 @@ purgeAllCaches();
 handleActiveServiceWorkerController();
 setupDynamicImportErrorRecovery();
 
-// Verifica novas versões quando o usuário retorna à aba ou periodicamente
+// Verifica novas versões quando o usuário retorna à aba, reconecta ou periodicamente
 if (typeof window !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -175,18 +241,20 @@ if (typeof window !== 'undefined') {
   window.addEventListener('focus', () => {
     checkForAppUpdates();
   });
+  window.addEventListener('online', () => {
+    checkForAppUpdates();
+  });
 
-  // Verificação periódica a cada 5 minutos
-  setInterval(checkForAppUpdates, 5 * 60 * 1000);
+  // Verificação periódica a cada 2 minutos
+  setInterval(checkForAppUpdates, 2 * 60 * 1000);
 
-  // Verificação inicial após 4 segundos
-  setTimeout(checkForAppUpdates, 4000);
+  // Verificação inicial após 3 segundos
+  setTimeout(checkForAppUpdates, 3000);
 
   // Utilitário global para suporte/depuração se necessário
   (window as unknown as { __clearAppCacheAndReload?: () => Promise<void> }).__clearAppCacheAndReload = async () => {
     console.log('[Cache] Forçando limpeza total de cache e reload...');
-    await purgeAllCaches();
-    window.location.href = window.location.pathname + '?nocache=' + Date.now();
+    await performCleanReload();
   };
 }
 

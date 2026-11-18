@@ -7,61 +7,88 @@ interface Props {
 interface State {
   hasError: boolean;
   errorType: "chunk_error" | "general_error" | null;
+  reloadBlockedByCooldown?: boolean;
 }
 
 export class ErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
     errorType: null,
+    reloadBlockedByCooldown: false,
   };
 
   public static getDerivedStateFromError(error: Error): State {
+    const msg = (error?.message || "").toLowerCase();
     const isChunkError =
-      error.name === "ChunkLoadError" ||
-      error.message.includes("dynamically imported module") ||
-      error.message.includes("Failed to fetch dynamically imported module");
-      
-    return { hasError: true, errorType: isChunkError ? "chunk_error" : "general_error" };
+      error?.name === "ChunkLoadError" ||
+      msg.includes("dynamically imported module") ||
+      msg.includes("loading chunk") ||
+      msg.includes("importing a module script failed");
+
+    return {
+      hasError: true,
+      errorType: isChunkError ? "chunk_error" : "general_error",
+      reloadBlockedByCooldown: false,
+    };
   }
+
+  private forceFreshReload = async () => {
+    const helper = (window as unknown as { __clearAppCacheAndReload?: () => Promise<void> })
+      .__clearAppCacheAndReload;
+    if (helper) {
+      await helper();
+    } else {
+      window.location.reload();
+    }
+  };
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("Uncaught error:", error, errorInfo);
-    
-    /*
-    // Auto-reload on ChunkLoadError, but limit to once every 10 seconds to prevent infinite loops
+
     if (this.state.errorType === "chunk_error") {
-      const lastReload = localStorage.getItem("last_chunk_reload");
+      const lastReload = sessionStorage.getItem("last_chunk_boundary_reload");
       const now = Date.now();
-      
-      if (!lastReload || now - parseInt(lastReload) > 10000) {
-        localStorage.setItem("last_chunk_reload", now.toString());
-        window.location.reload();
+
+      if (!lastReload || now - parseInt(lastReload, 10) > 15000) {
+        sessionStorage.setItem("last_chunk_boundary_reload", now.toString());
+        this.forceFreshReload();
+      } else {
+        (this as any).setState({ reloadBlockedByCooldown: true });
       }
     }
-    */
   }
 
   public render() {
     if (this.state.hasError) {
-      if (this.state.errorType === "chunk_error") {
-         return (
-           <div className="h-screen w-full bg-[#050505] flex items-center justify-center">
-              <img src={`${import.meta.env.VITE_SUPABASE_URL || "https://ybaoaskddcmwoincsnwm.supabase.co"}/storage/v1/object/public/uploads/icon.png`} alt="Carregando..." className="w-12 h-12 animate-spin opacity-80" />
-           </div>
-         );
+      if (this.state.errorType === "chunk_error" && !this.state.reloadBlockedByCooldown) {
+        return (
+          <div className="h-screen w-full bg-[#050505] flex items-center justify-center">
+            <img
+              src="/pwa-192x192.png"
+              alt="Atualizando..."
+              className="w-12 h-12 animate-spin opacity-80"
+            />
+          </div>
+        );
       }
 
       return (
         <div className="h-screen w-full flex flex-col items-center justify-center bg-[#050505] text-white p-6 text-center">
-          <h1 className="text-2xl font-bold mb-4">Aconteceu um erro inesperado</h1>
+          <h1 className="text-2xl font-bold mb-4">
+            {this.state.errorType === "chunk_error"
+              ? "Nova versão disponível"
+              : "Aconteceu um erro inesperado"}
+          </h1>
           <p className="text-slate-400 mb-6 max-w-md mx-auto">
-             A aplicação encontrou um problema ao tentar carregar esta página.
+            {this.state.errorType === "chunk_error"
+              ? "O sistema foi atualizado no servidor. Clique abaixo para abrir a versão mais recente."
+              : "A aplicação encontrou um problema ao tentar carregar esta página."}
           </p>
-          <button 
-             onClick={() => window.location.reload()} 
-             className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]"
+          <button
+            onClick={() => this.forceFreshReload()}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] cursor-pointer"
           >
-             Recarregar Página
+            Recarregar Página
           </button>
         </div>
       );

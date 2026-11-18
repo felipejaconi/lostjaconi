@@ -12,6 +12,10 @@ import "dotenv/config";
 import NodeCache from "node-cache";
 import compression from "compression";
 
+if (process.env.IS_BUNDLED_SERVER === "true" && !process.env.NODE_ENV) {
+  process.env.NODE_ENV = "production";
+}
+
 const cache = new NodeCache({ stdTTL: 60 }); // 60 seconds default cache
 
 // Ensure uploads directory exists
@@ -44,7 +48,56 @@ app.use(compression() as any);
 
 app.use(cors());
 app.use(express.json());
-app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
+let cachedBuildVersion: {
+  mtimeMs: number;
+  scripts: string[];
+  styles: string[];
+  buildHash: string;
+} | null = null;
+
+app.get("/api/version", (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+  res.setHeader("CDN-Cache-Control", "no-store");
+
+  try {
+    const indexHtmlPath = path.join(process.cwd(), "dist", "index.html");
+    if (!fs.existsSync(indexHtmlPath)) {
+      return res.json({ mode: "development", scripts: [], styles: [], buildHash: "dev" });
+    }
+
+    const stat = fs.statSync(indexHtmlPath);
+    if (!cachedBuildVersion || cachedBuildVersion.mtimeMs !== stat.mtimeMs) {
+      const htmlText = fs.readFileSync(indexHtmlPath, "utf8");
+      const scriptMatches = htmlText.match(/src="(\/assets\/[^"]+)"/g) || [];
+      const styleMatches = htmlText.match(/href="(\/assets\/[^"]+\.css)"/g) || [];
+      const scripts = scriptMatches.map((m) => m.replace(/src="|"/g, ""));
+      const styles = styleMatches.map((m) => m.replace(/href="|"/g, ""));
+      cachedBuildVersion = {
+        mtimeMs: stat.mtimeMs,
+        scripts,
+        styles,
+        buildHash: [...scripts, ...styles].join("|") || String(stat.mtimeMs),
+      };
+    }
+
+    return res.json({
+      mode: "production",
+      scripts: cachedBuildVersion.scripts,
+      styles: cachedBuildVersion.styles,
+      buildHash: cachedBuildVersion.buildHash,
+      mtimeMs: cachedBuildVersion.mtimeMs,
+    });
+  } catch (err) {
+    return res.json({ mode: "unknown", scripts: [], styles: [], buildHash: "" });
+  }
+});
   // Cache uploads forever since they have unique names usually
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads"), { maxAge: "1d" }));
 
@@ -230,7 +283,16 @@ app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
   // --- VITE / STATIC MIDDLEWARE & SERVER STARTUP ---
 export async function startServer() {
   const distPath = path.join(process.cwd(), "dist");
-  const isProd = process.env.NODE_ENV === "production";
+  const isProd =
+    process.env.NODE_ENV === "production" || process.env.IS_BUNDLED_SERVER === "true";
+
+  const setNoCacheHtmlHeaders = (res: express.Response) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+    res.setHeader("CDN-Cache-Control", "no-store");
+  };
 
   let activeFrontendHandler: express.RequestHandler | null = null;
 
@@ -249,9 +311,25 @@ export async function startServer() {
         } catch (e) {
           console.warn("Vite not found, falling back to static dist...");
           const fallbackRouter = express.Router();
-          fallbackRouter.use(express.static(distPath));
+          fallbackRouter.use(
+            express.static(distPath, {
+              etag: false,
+              lastModified: false,
+              setHeaders: (res, filePath) => {
+                if (filePath.includes(`${path.sep}assets${path.sep}`) || filePath.includes("/assets/")) {
+                  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+                } else {
+                  setNoCacheHtmlHeaders(res);
+                }
+              },
+            }),
+          );
           fallbackRouter.get("*", (_req, res) => {
-            res.sendFile(path.join(distPath, "index.html"));
+            setNoCacheHtmlHeaders(res);
+            res.sendFile(path.join(distPath, "index.html"), {
+              etag: false,
+              lastModified: false,
+            });
           });
           activeFrontendHandler = fallbackRouter;
         }
@@ -280,25 +358,26 @@ export async function startServer() {
   } else {
     console.log("[Production] Configurando express.static para servir a pasta dist com compressão...");
 
-    app.use(express.static(distPath, {
-      etag: false,
-      lastModified: false,
-      setHeaders: (res, filePath) => {
-        if (filePath.includes('/assets/')) {
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        } else {
-          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-          res.setHeader('Pragma', 'no-cache');
-          res.setHeader('Expires', '0');
-        }
-      }
-    }));
+    app.use(
+      express.static(distPath, {
+        etag: false,
+        lastModified: false,
+        setHeaders: (res, filePath) => {
+          if (filePath.includes(`${path.sep}assets${path.sep}`) || filePath.includes("/assets/")) {
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          } else {
+            setNoCacheHtmlHeaders(res);
+          }
+        },
+      }),
+    );
 
     app.get("*", (_req, res) => {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      res.sendFile(path.join(distPath, "index.html"));
+      setNoCacheHtmlHeaders(res);
+      res.sendFile(path.join(distPath, "index.html"), {
+        etag: false,
+        lastModified: false,
+      });
     });
   }
 
