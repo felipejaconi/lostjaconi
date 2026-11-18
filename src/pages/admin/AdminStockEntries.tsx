@@ -1060,12 +1060,6 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                   <FileText className="w-5 h-5 text-zinc-400" />
                   Produtos da Fatura
                 </h2>
-                <button 
-                  onClick={addItem} 
-                  className="text-sm font-medium text-zinc-900 bg-zinc-100 hover:bg-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
-                >
-                  <Plus className="w-4 h-4" /> Adicionar
-                </button>
              </div>
 
              <div className="space-y-4">
@@ -1217,6 +1211,16 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                     </div>
                   )
                 })}
+             </div>
+
+             <div className="mt-4 flex justify-start">
+               <button
+                 type="button"
+                 onClick={addItem}
+                 className="w-full sm:w-auto text-sm font-semibold text-zinc-900 bg-zinc-100 hover:bg-white px-4 py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+               >
+                 <Plus className="w-4 h-4" /> Adicionar
+               </button>
              </div>
 
              <div className="mt-8 pt-6 border-t border-zinc-800/70 flex justify-end">
