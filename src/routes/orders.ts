@@ -879,8 +879,13 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
   app.get("/api/admin/giro", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin") return res.sendStatus(403);
     try {
-      // Pega pedidos entregues (ou últimos pedidos normais)
-      const { data: pedidos, error } = await supabase
+      const lojaIdFilter =
+        req.query?.loja_id && req.query.loja_id !== "all"
+          ? String(req.query.loja_id)
+          : null;
+
+      // Pega pedidos entregues (ou últimos pedidos normais) sob demanda conforme filtro
+      let query = supabase
         .from("pedidos")
         .select(`
           id, user_id, 
@@ -892,6 +897,12 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
         .in("status", ["pendente", "processando", "entregue_parcial", "entregue", "cancelado", "concluido"])
         .order("created_at", { ascending: false })
         .limit(2000);
+
+      if (lojaIdFilter) {
+        query = query.eq("user_id", lojaIdFilter);
+      }
+
+      const { data: pedidos, error } = await query;
 
       if (error) throw error;
 
