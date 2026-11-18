@@ -1,24 +1,37 @@
 {
+  "id": "/",
   "name": "LOST WIND LDA",
   "short_name": "Lost Wind",
   "description": "App para gestão da loja e pedidos.",
   "start_url": "/",
-  "display": "fullscreen",
-  "display_override": ["window-controls-overlay", "minimal-ui"],
-  "id": "/",
+  "scope": "/",
+  "display": "standalone",
   "background_color": "#050505",
   "theme_color": "#050505",
   "icons": [
     {
-      "src": "/app-icon.png",
+      "src": "/pwa-192x192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "/app-icon.png",
+      "src": "/pwa-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

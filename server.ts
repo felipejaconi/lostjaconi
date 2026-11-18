@@ -48,13 +48,6 @@ app.get("/api/health", (req, res) => { res.json({ status: "ok" }); });
   // Cache uploads forever since they have unique names usually
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads"), { maxAge: "1d" }));
 
-  // Dynamic icon route
-  app.get("/app-icon.png", (req, res) => {
-    const sUrl = process.env.VITE_SUPABASE_URL || "https://placeholder.supabase.co";
-    // Redirect to the centralized icon inside Supabase
-    res.redirect(`${sUrl}/storage/v1/object/public/uploads/icon.png`);
-  });
-
   // Multer for image uploads (Memory Storage for Supabase)
   const storage = multer.memoryStorage();
   const upload = multer({ storage });
