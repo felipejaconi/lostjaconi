@@ -1,6 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { canAccessProducaoArmazem, isProducaoArmazemCategory } from '../lib/categoryUtils';
 
 export function setupProductsRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, deleteFromSupabase, JWT_SECRET, cache }: any) {
   // Products CRUD
@@ -28,10 +29,9 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
         cache.set("admin_produtos", products);
       }
 
-      if (req.user.role !== "admin" && req.user.role !== "armazem") {
+      if (!canAccessProducaoArmazem(req.user)) {
         products = products.filter((p: any) => {
-          const catName = (p.categoria_nome || "").toLowerCase();
-          return !catName.includes("produção armaz") && !catName.includes("producao armaz");
+          return !isProducaoArmazemCategory(p.categoria_nome || p.categorias?.nome);
         });
       }
 
@@ -386,14 +386,31 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
         }
         
         rows = data || [];
+
+        // Garantir que a categoria "PRODUÇÃO ARMAZEM" existe na base de dados
+        const hasProducaoArmazem = (rows as any[]).some((cat) =>
+          isProducaoArmazemCategory(cat?.nome),
+        );
+        if (!hasProducaoArmazem && process.env.SUPABASE_URL) {
+          try {
+            const { data: createdCat, error: createErr } = await supabase
+              .from("categorias")
+              .insert([{ nome: "PRODUÇÃO ARMAZEM" }])
+              .select("*")
+              .single();
+            if (!createErr && createdCat) {
+              rows = [...rows, createdCat];
+            }
+          } catch (ensureErr) {
+            console.warn("Aviso ao garantir categoria PRODUÇÃO ARMAZEM:", ensureErr);
+          }
+        }
+
         cache.set("admin_categorias", rows);
       }
       
-      if (req.user.role !== "admin" && req.user.role !== "armazem") {
-        rows = (rows as any[]).filter(cat => {
-          const name = (cat.nome || "").toLowerCase();
-          return !name.includes("produção armaz") && !name.includes("producao armaz");
-        });
+      if (!canAccessProducaoArmazem(req.user)) {
+        rows = (rows as any[]).filter((cat) => !isProducaoArmazemCategory(cat?.nome));
       }
 
       const CATEGORY_MATCHERS: { index: number; matches: string[] }[] = [

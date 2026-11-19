@@ -28,7 +28,13 @@ import { useAuth } from "../../context/AuthContext";
 import api from "../../lib/api";
 import { supabase } from "../../lib/supabase";
 import Swal from "sweetalert2";
-import { sortGroupedCategories, sortCategories } from "../../lib/categoryUtils";
+import {
+  sortGroupedCategories,
+  sortCategories,
+  canAccessProducaoArmazem,
+  isProducaoArmazemCategory,
+  isProducaoArmazemStore,
+} from "../../lib/categoryUtils";
 import { OptimizedImage } from "../../components/OptimizedImage";
 
 import { clsx, type ClassValue } from "clsx";
@@ -177,14 +183,43 @@ export default function StoreOrder({ cart, setCart }: { cart: any[]; setCart: an
     }
   }, [activeCategory]);
 
-  const fetchProductsData = async () => {
+  const canSeeProducaoArmazem = canAccessProducaoArmazem(user);
+  const isProducaoStore = isProducaoArmazemStore(user);
+
+  const applyStoreCategoryOrder = React.useCallback(
+    (cats: any[]) => {
+      const visible = canSeeProducaoArmazem
+        ? cats
+        : cats.filter((c) => !isProducaoArmazemCategory(c?.nome));
+      const sorted = sortCategories(visible);
+      if (!isProducaoStore) return sorted;
+      const prodCats = sorted.filter((c) => isProducaoArmazemCategory(c?.nome));
+      const otherCats = sorted.filter((c) => !isProducaoArmazemCategory(c?.nome));
+      return [...prodCats, ...otherCats];
+    },
+    [canSeeProducaoArmazem, isProducaoStore],
+  );
+
+  const applyStoreProductFilter = React.useCallback(
+    (prods: any[]) => {
+      const visible = canSeeProducaoArmazem
+        ? prods
+        : prods.filter(
+            (p) => !isProducaoArmazemCategory(p?.categoria_nome || p?.categorias?.nome),
+          );
+      return visible.sort((a: any, b: any) => (a.nome || "").localeCompare(b.nome || ""));
+    },
+    [canSeeProducaoArmazem],
+  );
+
+  const fetchProductsData = React.useCallback(async () => {
     try {
       api.get("/produtos").then(res => {
-        setProducts((res.data as any[]).sort((a: any, b: any) => a.nome.localeCompare(b.nome)));
+        setProducts(applyStoreProductFilter((res.data as any[]) || []));
       }).catch(console.error);
 
       api.get("/categorias").then(res => {
-        setCategories(sortCategories((res.data as any[]) || []));
+        setCategories(applyStoreCategoryOrder((res.data as any[]) || []));
       }).catch(console.error);
 
       api.get("/pedidos?limit=500").then(res => {
@@ -201,13 +236,13 @@ export default function StoreOrder({ cart, setCart }: { cart: any[]; setCart: an
     } catch(e) {
       console.error(e);
     }
-  };
+  }, [applyStoreCategoryOrder, applyStoreProductFilter]);
 
-  const fetchLiveStockOnly = () => {
+  const fetchLiveStockOnly = React.useCallback(() => {
     api.get("/produtos").then((res) => {
-      setProducts((res.data as any[]).sort((a: any, b: any) => a.nome.localeCompare(b.nome)));
+      setProducts(applyStoreProductFilter((res.data as any[]) || []));
     }).catch(console.error);
-  };
+  }, [applyStoreProductFilter]);
 
   useEffect(() => {
     fetchProductsData();
@@ -226,7 +261,7 @@ export default function StoreOrder({ cart, setCart }: { cart: any[]; setCart: an
       supabase.removeChannel(channel);
       if (fetchTimeoutRef.current) clearTimeout(fetchTimeoutRef.current);
     };
-  }, []);
+  }, [fetchProductsData, fetchLiveStockOnly]);
 
   const cartRef = React.useRef(cart);
   React.useEffect(() => { cartRef.current = cart; }, [cart]);

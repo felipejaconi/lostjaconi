@@ -12,6 +12,43 @@ export const CATEGORY_ORDER: string[] = [
   "PRODUÇÃO ARMAZEM"
 ];
 
+export const PRODUCAO_ARMAZEM_EMAIL = "producao@lostwind.com";
+
+export function normalizeCategoryText(value?: string | null): string {
+  return (value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function isProducaoArmazemCategory(catName?: string | null): boolean {
+  const norm = normalizeCategoryText(catName);
+  return norm.includes("producao armaz");
+}
+
+export function isProducaoArmazemStore(user?: {
+  role?: string | null;
+  email?: string | null;
+  name?: string | null;
+} | null): boolean {
+  if (!user) return false;
+  const email = (user.email || "").trim().toLowerCase();
+  const normName = normalizeCategoryText(user.name);
+  return email === PRODUCAO_ARMAZEM_EMAIL || normName === "producao armazem";
+}
+
+export function canAccessProducaoArmazem(user?: {
+  role?: string | null;
+  email?: string | null;
+  name?: string | null;
+} | null): boolean {
+  if (!user) return false;
+  if (user.role === "admin" || user.role === "armazem") return true;
+  return isProducaoArmazemStore(user);
+}
+
 // Priority matchers to map category names (including plurals and variations) to the new order
 const CATEGORY_MATCHERS: { index: number; matches: string[] }[] = [
   { index: 0, matches: ["carne", "carnes", "acougue", "açougue"] },

@@ -6,6 +6,10 @@ const api = axios.create({
 
 const requestCache = new Map();
 
+export function clearApiCache() {
+  requestCache.clear();
+}
+
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("token");
   if (token) {
@@ -21,6 +25,7 @@ api.interceptors.response.use(
       error.response &&
       (error.response.status === 401 || error.response.status === 403)
     ) {
+      requestCache.clear();
       localStorage.removeItem("token");
       localStorage.removeItem("user");
       window.location.href = "/";
@@ -31,7 +36,8 @@ api.interceptors.response.use(
 
 const originalGet = api.get;
 api.get = async function (url: string, config?: any) {
-  const key = url + (config?.params ? JSON.stringify(config.params) : '');
+  const token = localStorage.getItem("token") || "anon";
+  const key = `${token}:${url}${config?.params ? JSON.stringify(config.params) : ''}`;
   
   if (requestCache.has(key)) {
     const cached = requestCache.get(key);

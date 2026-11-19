@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { clearApiCache } from "../lib/api";
 
 interface User {
   id: number;
@@ -36,12 +37,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const login = (token: string, user: User) => {
+    clearApiCache();
     localStorage.setItem("token", token);
     localStorage.setItem("user", JSON.stringify(user));
     setUser(user);
   };
 
   const logout = () => {
+    clearApiCache();
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     setUser(null);

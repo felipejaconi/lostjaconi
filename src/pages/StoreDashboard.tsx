@@ -35,6 +35,7 @@ import api from "../lib/api";
 import { supabase } from "../lib/supabase";
 import Swal from "sweetalert2";
 import { OptimizedImage } from "../components/OptimizedImage";
+import { canAccessProducaoArmazem, isProducaoArmazemCategory } from "../lib/categoryUtils";
 
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -53,20 +54,34 @@ export default function StoreDashboard() {
   const [cartLoaded, setCartLoaded] = useState(false);
   useEffect(() => {
     if (user?.id) {
+      setCartLoaded(false);
       const saved = localStorage.getItem(`store_cart_${user.id}`);
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed)) {
-            setCart(parsed);
+            const allowProdArmazem = canAccessProducaoArmazem(user);
+            setCart(
+              allowProdArmazem
+                ? parsed
+                : parsed.filter(
+                    (item: any) =>
+                      !isProducaoArmazemCategory(item?.categoria_nome || item?.categorias?.nome),
+                  ),
+            );
+          } else {
+            setCart([]);
           }
         } catch (e) {
           console.error("Failed to parse saved cart", e);
+          setCart([]);
         }
+      } else {
+        setCart([]);
       }
       setCartLoaded(true);
     }
-  }, [user?.id]);
+  }, [user?.id, user?.email, user?.name, user?.role]);
 
   useEffect(() => {
     if (user?.id && cartLoaded) {
@@ -129,13 +144,19 @@ export default function StoreDashboard() {
           ]);
           
           const q = searchQuery.toLowerCase();
+          const allowProdArmazem = canAccessProducaoArmazem(user);
           
           setSearchResults({
-            produtos: (pRes.data as any[]).filter((p: any) => 
-              p.nome.toLowerCase().includes(q) || 
-              (p.barcode_ean && p.barcode_ean.includes(q)) ||
-              (String(p.id).includes(q))
-            ).slice(0, 5),
+            produtos: (pRes.data as any[]).filter((p: any) => {
+              if (!allowProdArmazem && isProducaoArmazemCategory(p?.categoria_nome || p?.categorias?.nome)) {
+                return false;
+              }
+              return (
+                p.nome.toLowerCase().includes(q) || 
+                (p.barcode_ean && p.barcode_ean.includes(q)) ||
+                (String(p.id).includes(q))
+              );
+            }).slice(0, 5),
             pedidos: (peRes.data as any[]).filter((pe: any) => String(pe.id).includes(q) && pe.user_id === user?.id).slice(0, 5),
           });
           setIsSearchOpen(true);
@@ -149,7 +170,7 @@ export default function StoreDashboard() {
       setIsSearchOpen(false);
       setSearchResults({ produtos: [], pedidos: [] });
     }
-  }, [searchQuery, user?.id]);
+  }, [searchQuery, user]);
 
   const fetchUnreadCount = async () => {
     try {

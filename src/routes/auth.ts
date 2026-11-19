@@ -50,6 +50,7 @@ export function setupAuthRoutes({ app, supabase, authenticateToken, upload, uplo
           id: user.id,
           role: user.role,
           name: user.name,
+          email: user.email,
           avatar_url: user.avatar_url,
         },
         JWT_SECRET,

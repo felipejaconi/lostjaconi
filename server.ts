@@ -173,37 +173,48 @@ app.get("/api/version", (_req, res) => {
         return res.status(401).json({ error: "Sessão expirada ou inválida." });
       }
 
-      // Validação de segurança: barrar operadores demitidos/inativos
-      const cacheKey = `user_valid_${user.id}`;
-      let isValid = cache.get(cacheKey);
+      // Validação de segurança + hidratação de email/name/role (suporta tokens antigos de 30 dias sem email)
+      const cacheKey = `user_auth_v2_${user.id}`;
+      let authInfo: { valid: boolean; email?: string; name?: string; role?: string } | undefined =
+        cache.get(cacheKey);
 
-      if (isValid === undefined) {
+      if (authInfo === undefined) {
         try {
           const { data, error } = await supabase
             .from("users")
-            .select("id")
+            .select("id, email, name, role")
             .eq("id", user.id)
             .single();
 
           if (error || !data) {
-            isValid = false;
+            authInfo = { valid: false };
           } else {
-            isValid = true;
+            authInfo = {
+              valid: true,
+              email: data.email,
+              name: data.name,
+              role: data.role,
+            };
           }
           // Usando NodeCache para não sobrecarregar as DB calls (60 segundos por default)
-          cache.set(cacheKey, isValid, 60);
+          cache.set(cacheKey, authInfo, 60);
         } catch (dbErr) {
           console.error("Erro na checagem de status de utilizador:", dbErr);
           // Fallback para true caso o BD apresente instabilidade rápida, para não derrubar ativos
-          isValid = true; 
+          authInfo = { valid: true };
         }
       }
 
-      if (!isValid) {
+      if (!authInfo.valid) {
         return res.status(401).json({ error: "Acesso negado. Utilizador inativo ou removido pelo sistema." });
       }
 
-      req.user = user;
+      req.user = {
+        ...user,
+        email: authInfo.email ?? user.email,
+        name: authInfo.name ?? user.name,
+        role: authInfo.role ?? user.role,
+      };
       next();
     });
   };
