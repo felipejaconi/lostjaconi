@@ -223,53 +223,59 @@ app.get("/api/version", (_req, res) => {
 
   const routesRouter = express.Router();
 
-  const routesReadyPromise = (async () => {
-    const [
-      { setupAuthRoutes },
-      { setupStatsRoutes },
-      { setupUsersRoutes },
-      { setupStockRoutes },
-      { setupFinanceRoutes },
-      { setupProductsRoutes },
-      { setupOrdersRoutes },
-      { setupWmsRoutes },
-      { setupConfigRoutes },
-      { setupFleetRoutes },
-    ] = await Promise.all([
-      import("./src/routes/auth"),
-      import("./src/routes/stats"),
-      import("./src/routes/users"),
-      import("./src/routes/stock"),
-      import("./src/routes/finance"),
-      import("./src/routes/products"),
-      import("./src/routes/orders"),
-      import("./src/routes/wms"),
-      import("./src/routes/config"),
-      import("./src/routes/fleet"),
-    ]);
+  let routesReadyPromise: Promise<void> | null = null;
+  const ensureRoutesReady = () => {
+    if (!routesReadyPromise) {
+      routesReadyPromise = (async () => {
+        const [
+          { setupAuthRoutes },
+          { setupStatsRoutes },
+          { setupUsersRoutes },
+          { setupStockRoutes },
+          { setupFinanceRoutes },
+          { setupProductsRoutes },
+          { setupOrdersRoutes },
+          { setupWmsRoutes },
+          { setupConfigRoutes },
+          { setupFleetRoutes },
+        ] = await Promise.all([
+          import("./src/routes/auth"),
+          import("./src/routes/stats"),
+          import("./src/routes/users"),
+          import("./src/routes/stock"),
+          import("./src/routes/finance"),
+          import("./src/routes/products"),
+          import("./src/routes/orders"),
+          import("./src/routes/wms"),
+          import("./src/routes/config"),
+          import("./src/routes/fleet"),
+        ]);
 
-    const routeDependencies = {
-      app: routesRouter,
-      supabase,
-      authenticateToken,
-      upload,
-      uploadToSupabase,
-      deleteFromSupabase,
-      JWT_SECRET,
-      cache,
-    };
+        const routeDependencies = {
+          app: routesRouter,
+          supabase,
+          authenticateToken,
+          upload,
+          uploadToSupabase,
+          deleteFromSupabase,
+          JWT_SECRET,
+          cache,
+        };
 
-    setupAuthRoutes(routeDependencies);
-    setupStatsRoutes(routeDependencies);
-    setupUsersRoutes(routeDependencies);
-    setupStockRoutes(routeDependencies);
-    setupFinanceRoutes(routeDependencies);
-    setupProductsRoutes(routeDependencies);
-    setupOrdersRoutes(routeDependencies);
-    setupWmsRoutes(routeDependencies);
-    setupConfigRoutes(routeDependencies);
-    setupFleetRoutes(routeDependencies);
-  })();
+        setupAuthRoutes(routeDependencies);
+        setupStatsRoutes(routeDependencies);
+        setupUsersRoutes(routeDependencies);
+        setupStockRoutes(routeDependencies);
+        setupFinanceRoutes(routeDependencies);
+        setupProductsRoutes(routeDependencies);
+        setupOrdersRoutes(routeDependencies);
+        setupWmsRoutes(routeDependencies);
+        setupConfigRoutes(routeDependencies);
+        setupFleetRoutes(routeDependencies);
+      })();
+    }
+    return routesReadyPromise;
+  };
 
   // Invalidate cache on mutations, prevent browser API caching, and ensure routes are mounted
   app.use('/api', async (req: any, res: any, next: any) => {
@@ -282,7 +288,7 @@ app.get("/api/version", (_req, res) => {
     }
 
     try {
-      await routesReadyPromise;
+      await ensureRoutesReady();
       next();
     } catch (err) {
       next(err);
@@ -306,9 +312,12 @@ export async function startServer() {
   };
 
   let activeFrontendHandler: express.RequestHandler | null = null;
+  let initVitePromise: Promise<void> | null = null;
 
-  const initVitePromise: Promise<void> | null = !isProd
-    ? (async () => {
+  const ensureViteReady = () => {
+    if (isProd) return Promise.resolve();
+    if (!initVitePromise) {
+      initVitePromise = (async () => {
         try {
           const { createServer: createViteServer } = await import("vite");
           const vite = await createViteServer({
@@ -344,27 +353,25 @@ export async function startServer() {
           });
           activeFrontendHandler = fallbackRouter;
         }
-      })()
-    : null;
+      })();
+    }
+    return initVitePromise;
+  };
 
   if (!isProd) {
     app.use((req, res, next) => {
       if (activeFrontendHandler) {
         return activeFrontendHandler(req, res, next);
       }
-      if (initVitePromise) {
-        initVitePromise
-          .then(() => {
-            if (activeFrontendHandler) {
-              activeFrontendHandler(req, res, next);
-            } else {
-              next();
-            }
-          })
-          .catch(next);
-      } else {
-        next();
-      }
+      ensureViteReady()
+        .then(() => {
+          if (activeFrontendHandler) {
+            activeFrontendHandler(req, res, next);
+          } else {
+            next();
+          }
+        })
+        .catch(next);
     });
   } else {
     console.log("[Production] Configurando express.static para servir a pasta dist com compressão...");
@@ -392,15 +399,20 @@ export async function startServer() {
     });
   }
 
+  const onListening = () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
+    setImmediate(() => {
+      ensureRoutesReady().catch((err) => console.error("Erro ao carregar rotas:", err));
+      if (!isProd) {
+        ensureViteReady().catch((err) => console.error("Erro ao iniciar Vite:", err));
+      }
+    });
+  };
+
   const server = typeof PORT === "number"
-    ? app.listen(PORT, "0.0.0.0", () => {
-        console.log(`Server running on http://0.0.0.0:${PORT}`);
-        console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
-      })
-    : app.listen(PORT, () => {
-        console.log(`Server running on socket ${PORT}`);
-        console.log(`📦 Ambiente: ${process.env.NODE_ENV || 'development'}`);
-      });
+    ? app.listen(PORT, "0.0.0.0", onListening)
+    : app.listen(PORT, onListening);
 
   return server;
 }

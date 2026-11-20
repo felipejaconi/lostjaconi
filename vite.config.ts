@@ -20,6 +20,9 @@ export default defineConfig(({ mode }) => {
         // use default chunking
       },
     },
+    optimizeDeps: {
+      entries: ["index.html"],
+    },
     server: {
       hmr: false,
     },

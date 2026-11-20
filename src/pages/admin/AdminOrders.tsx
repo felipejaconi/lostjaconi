@@ -41,7 +41,21 @@ export default function AdminOrders() {
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
 
   const [activePreparationId, setActivePreparationId] = useState<number | null>(null);
-  const [conferidos, setConferidos] = useState<Record<string, { quantidade: string | number, mode: string, unidade_saida: string, fator_conversao?: number, taraPeso?: number }>>({});
+  const [conferidos, setConferidos] = useState<
+    Record<
+      string,
+      {
+        quantidade: string | number;
+        mode: string;
+        unidade_saida: string;
+        fator_conversao?: number;
+        taraId?: string | null;
+        taraNome?: string | null;
+        taraPeso?: number;
+        pesoBruto?: number | null;
+      }
+    >
+  >({});
   const [loadingExit, setLoadingExit] = useState(false);
   const [newItemProductId, setNewItemProductId] = useState<string>("");
   const [newItemQuantity, setNewItemQuantity] = useState<number>(1);
@@ -56,6 +70,51 @@ export default function AdminOrders() {
   const [isSavingOrderEdit, setIsSavingOrderEdit] = useState(false);
   const addingItemRef = useRef(false);
   const savingOrderEditRef = useRef(false);
+  const realtimeChannelRef = useRef<any>(null);
+  const activePrepIdRef = useRef<number | null>(null);
+  const productsRef = useRef<any[]>([]);
+
+  useEffect(() => {
+    activePrepIdRef.current = activePreparationId;
+  }, [activePreparationId]);
+
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
+
+  const buildConferidosFromItems = React.useCallback((items: any[], prodList: any[]) => {
+    const initialConf: Record<string, any> = {};
+    (items || []).forEach((i: any) => {
+      const prod = prodList.find((p: any) => p.id === i.produto_id) || i.produto;
+      const isScale = prod?.is_peso_variavel || prod?.unidade_venda === "kg" || prod?.unidade_base === "kg";
+      const matchedTare = i.tara_id
+        ? TARE_OPTIONS.find((t) => t.id === i.tara_id)
+        : i.tara_peso
+          ? TARE_OPTIONS.find((t) => Number(t.weight) === Number(i.tara_peso))
+          : undefined;
+      const taraPeso = Number(i.tara_peso || matchedTare?.weight || 0);
+      const hasQty = i.display_qty !== null && i.display_qty !== undefined && i.display_qty !== "";
+      const netQty = hasQty ? Number(i.display_qty) : null;
+      const pesoBruto =
+        i.peso_bruto !== null && i.peso_bruto !== undefined
+          ? Number(i.peso_bruto)
+          : netQty !== null && taraPeso > 0
+            ? Number((netQty + taraPeso).toFixed(3))
+            : null;
+
+      initialConf[i.produto_id] = {
+        quantidade: hasQty ? i.display_qty : "",
+        mode: isScale ? "balanca" : "unidade",
+        unidade_saida: prod?.unidade_base || "un",
+        fator_conversao: 1,
+        taraId: taraPeso > 0 ? matchedTare?.id || i.tara_id || null : null,
+        taraNome: taraPeso > 0 ? i.tara_nome || matchedTare?.name || null : null,
+        taraPeso: taraPeso > 0 ? taraPeso : 0,
+        pesoBruto,
+      };
+    });
+    return initialConf;
+  }, []);
 
   // When expanding an order that is in "processando", initialize conferidos
   const handleExpandOrder = (orderId: number, status: string, items: any[]) => {
@@ -68,26 +127,16 @@ export default function AdminOrders() {
     
     if (status === 'processando') {
       setActivePreparationId(orderId);
-      const initialConf: Record<string, any> = {};
-      items.forEach((i: any) => {
-        const prod = products.find((p:any) => p.id === i.produto_id);
-        const isScale = (prod?.is_peso_variavel || prod?.unidade_venda === 'kg');
-        initialConf[i.produto_id] = {
-           quantidade: i.display_qty != null ? i.display_qty : "",
-           mode: isScale ? 'balanca' : 'unidade',
-           unidade_saida: prod?.unidade_base || "un",
-           fator_conversao: 1
-        };
-      });
-      setConferidos(initialConf);
+      setConferidos(buildConferidosFromItems(items, products));
     } else {
       setActivePreparationId(null);
     }
   };
 
-  const updateConferido = (produto_id: string, field: string, value: any) => {
+  const updateConferido = (produto_id: string, field: string, value: any, explicitGross?: number | null) => {
     setConferidos(prev => {
-        const newItem = { ...prev[produto_id], [field]: value };
+        const current = prev[produto_id] || { quantidade: "", mode: "unidade", unidade_saida: "un" };
+        const newItem = { ...current, [field]: value };
         if (field === 'unidade_saida') {
            const prod = products.find(p => p.id === produto_id);
            if (prod) {
@@ -96,34 +145,54 @@ export default function AdminOrders() {
         }
         
         if (field === 'quantidade') {
-           // allow negative stock
-           const val = Number(value);
+           const tara = Number(newItem.taraPeso || 0);
+           if (explicitGross !== undefined) {
+             newItem.pesoBruto = explicitGross;
+           } else if (value === "" || value === null || value === undefined) {
+             newItem.pesoBruto = null;
+           } else if (tara > 0) {
+             const parsed = Number(value);
+             if (!isNaN(parsed)) {
+               newItem.pesoBruto = Number((parsed + tara).toFixed(3));
+             }
+           }
         }
         return { ...prev, [produto_id]: newItem };
     });
   };
 
-  const handleTareChange = (produto_id: string, newTare: number) => {
+  const handleTareChange = (
+    produto_id: string,
+    tareOption: { id: string; name: string; weight: number } | null,
+  ) => {
     setConferidos(prev => {
        const conf = prev[produto_id];
        if (!conf) return prev;
        
-       const oldTare = conf.taraPeso || 0;
+       const newTare = tareOption ? Number(tareOption.weight) : 0;
+       const oldTare = Number(conf.taraPeso || 0);
        let newQtyStr = conf.quantidade;
+       let computedGross: number | null = conf.pesoBruto ?? null;
        
        if (conf.quantidade !== "" && conf.quantidade !== undefined && conf.quantidade !== null) {
           const qty = Number(conf.quantidade);
-          const grossWeight = qty + oldTare;
+          const grossWeight = Number((qty + oldTare).toFixed(3));
+          computedGross = newTare > 0 ? grossWeight : null;
           let newQty = grossWeight - newTare;
           if (newQty < 0) newQty = 0;
           newQtyStr = newQty.toFixed(3);
+       } else if (newTare === 0) {
+          computedGross = null;
        }
        
        return {
           ...prev,
           [produto_id]: {
              ...conf,
+             taraId: tareOption ? tareOption.id : null,
+             taraNome: tareOption ? tareOption.name : null,
              taraPeso: newTare,
+             pesoBruto: computedGross,
              quantidade: newQtyStr
           }
        };
@@ -142,7 +211,12 @@ export default function AdminOrders() {
       const rawWeight = Number(await readWeightFromScale());
       let finalWeight = rawWeight - taraWeight;
       if (finalWeight < 0) finalWeight = 0;
-      updateConferido(produto_id, 'quantidade', finalWeight.toFixed(3));
+      updateConferido(
+        produto_id,
+        'quantidade',
+        finalWeight.toFixed(3),
+        taraWeight > 0 ? Number(rawWeight.toFixed(3)) : null,
+      );
       
       let message = `Peso lido: ${rawWeight} kg`;
       if (taraWeight > 0) message += `\n<br>Tara: -${taraWeight} kg<br><b>Líquido: ${finalWeight.toFixed(3)} kg</b>`;
@@ -157,16 +231,30 @@ export default function AdminOrders() {
     const itensToSubmit = order.pedido_itens
       .map((item: any) => {
         const conf = conferidos[item.produto_id];
+        const taraPeso = Number(conf?.taraPeso || 0);
         return {
            produto_id: item.produto_id,
-           quantidade: conf && conf.quantidade !== "" ? Number(conf.quantidade) : null
+           quantidade: conf && conf.quantidade !== "" ? Number(conf.quantidade) : null,
+           tara_id: taraPeso > 0 ? conf?.taraId || "" : "",
+           tara_nome: taraPeso > 0 ? conf?.taraNome || "" : "",
+           tara_peso: taraPeso > 0 ? taraPeso : 0,
+           peso_bruto: taraPeso > 0 && conf?.pesoBruto != null ? Number(conf.pesoBruto) : null,
         };
       });
       
     try {
        await api.post(`/wms/pedidos/${order.id}/rascunho`, { itens_conferidos: itensToSubmit });
-       Swal.fire({ title: "Sucesso", text: "Progresso guardado.", icon: "success", timer: 1500, showConfirmButton: false });
-       await fetchOrders();
+       if (realtimeChannelRef.current) {
+         realtimeChannelRef.current
+           .send({
+             type: "broadcast",
+             event: "wms_draft_saved",
+             payload: { orderId: order.id },
+           })
+           .catch(() => {});
+       }
+       Swal.fire({ title: "Sucesso", text: "Progresso e taras guardados.", icon: "success", timer: 1500, showConfirmButton: false });
+       await fetchOrders(true);
     } catch (err: any) {
        Swal.fire("Erro", "Falha ao gravar progresso", "error");
     }
@@ -434,11 +522,19 @@ export default function AdminOrders() {
     fetchOrders();
   }, [viewMode, statusFilter]);
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (syncActiveConferidos = false) => {
     try {
       const isAll = viewModeRef.current === 'todos';
-      const res = await api.get(`/pedidos?viewMode=${viewModeRef.current}&status=${statusFilterRef.current}${isAll ? '&all=true' : ''}`);
-      setOrders(Array.isArray(res.data) ? res.data : []);
+      const bustParam = syncActiveConferidos ? `&_t=${Date.now()}` : '';
+      const res = await api.get(`/pedidos?viewMode=${viewModeRef.current}&status=${statusFilterRef.current}${isAll ? '&all=true' : ''}${bustParam}`);
+      const list = Array.isArray(res.data) ? res.data : [];
+      setOrders(list);
+      if (syncActiveConferidos && activePrepIdRef.current) {
+        const activeOrder = list.find((o: any) => String(o.id) === String(activePrepIdRef.current));
+        if (activeOrder && activeOrder.status === 'processando') {
+          setConferidos(buildConferidosFromItems(activeOrder.pedido_itens || [], productsRef.current));
+        }
+      }
     } catch (error) {
       console.error("Erro ao buscar pedidos:", error);
     }
@@ -489,7 +585,7 @@ export default function AdminOrders() {
     fetchStores(); fetchProducts(); // fetchOrders is called by the viewMode effect
 
     const handleFocus = () => {
-      fetchOrders(); fetchProducts();
+      fetchOrders(true); fetchProducts();
     };
     window.addEventListener('focus', handleFocus);
 
@@ -499,13 +595,17 @@ export default function AdminOrders() {
     };
 
     const channel = supabase.channel("admin-orders-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "pedidos" }, () => debouncedFetch([fetchOrders]))
+      .on("postgres_changes", { event: "*", schema: "public", table: "pedidos" }, () => debouncedFetch([() => fetchOrders(false)]))
+      .on("postgres_changes", { event: "*", schema: "public", table: "pedido_itens" }, () => debouncedFetch([() => fetchOrders(true)]))
       .on("postgres_changes", { event: "*", schema: "public", table: "users" }, () => debouncedFetch([fetchStores]))
       .on("postgres_changes", { event: "*", schema: "public", table: "produtos" }, () => debouncedFetch([fetchProducts]))
+      .on("broadcast", { event: "wms_draft_saved" }, () => debouncedFetch([() => fetchOrders(true)]))
       .subscribe();
+    realtimeChannelRef.current = channel;
 
     return () => { 
         window.removeEventListener('focus', handleFocus); 
+        realtimeChannelRef.current = null;
         supabase.removeChannel(channel); 
         if (fetchTimeoutRef.current) clearTimeout(fetchTimeoutRef.current); 
         unsubscribeScale();
@@ -534,18 +634,7 @@ export default function AdminOrders() {
        setActivePreparationId(id);
        const targetOrder = orders.find(o => o.id === id);
        if (targetOrder) {
-          const initialConf: Record<string, any> = {};
-          (targetOrder.pedido_itens || []).forEach((i: any) => {
-             const prod = products.find((p:any) => p.id === i.produto_id);
-             const isScale = (prod?.is_peso_variavel || prod?.unidade_venda === 'kg');
-             initialConf[i.produto_id] = {
-                quantidade: i.display_qty != null ? i.display_qty : "",
-                mode: isScale ? 'balanca' : 'unidade',
-                unidade_saida: prod?.unidade_base || "un",
-                fator_conversao: 1
-             };
-          });
-          setConferidos(initialConf);
+          setConferidos(buildConferidosFromItems(targetOrder.pedido_itens || [], products));
        }
     } else {
        if (expandedOrderId === id && status === 'pendente') {
@@ -1256,7 +1345,7 @@ export default function AdminOrders() {
   <tbody className="divide-y divide-zinc-800/50">
       {sortItemsByCategoryName(order.pedido_itens || [], (item: any) => item.produto?.categoria?.nome || item.produto?.categoria_nome || "").map((item: any) => {
          const conf = conferidos[item.produto_id] || { quantidade: '', mode: 'unidade', unidade_saida: item.unidade };
-         const objProd = products.find(p => p.id === item.produto_id);
+         const objProd = products.find(p => p.id === item.produto_id) || item.produto;
          const maxStock = objProd ? Number(objProd.stock_armazem) || 0 : 0;
          const maxFill = Number(item.quantidade);
          const isZeroPrice = Number(item.preco_unitario || 0) <= 0;
@@ -1279,52 +1368,88 @@ export default function AdminOrders() {
                     {item.produto?.is_peso_variavel && (
                        <span className="text-[9px] font-bold uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 px-1.5 py-0.5 rounded shadow-sm">Balança</span>
                     )}
+                    {Number(conf.taraPeso) > 0 && (() => {
+                       const selectedTareObj = conf.taraId
+                         ? TARE_OPTIONS.find(t => t.id === conf.taraId)
+                         : TARE_OPTIONS.find(t => Number(t.weight) === Number(conf.taraPeso));
+                       const dotColor = selectedTareObj?.color || 'bg-indigo-400';
+                       const tareLabel = conf.taraNome || selectedTareObj?.name || 'Aplicada';
+                       return (
+                         <span className="inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded shadow-sm">
+                           <span className={`w-2 h-2 rounded-full border border-white/30 ${dotColor}`} />
+                           Tara {tareLabel}: -{conf.taraPeso}kg
+                           {conf.pesoBruto != null && Number(conf.pesoBruto) > 0
+                             ? ` (Bruto: ${Number(conf.pesoBruto).toFixed(3)}kg)`
+                             : ""}
+                         </span>
+                       );
+                    })()}
                     {isZeroPrice && (
                        <span className="text-[9px] font-bold uppercase tracking-wider bg-rose-500/15 text-rose-400 border border-rose-500/30 px-1.5 py-0.5 rounded shadow-sm">Valor Unit. € 0,00</span>
                     )}
                  </div>
               </td>
               <td className="px-3 py-3 text-center border-l border-zinc-800/50 bg-zinc-900/25">
-                 <div className="flex items-center justify-center gap-2 max-w-[200px] mx-auto">
-                    {objProd?.unidade_base === 'kg' && (
-                       <div className="relative isolate flex gap-2">
-                           <button 
-                             onClick={() => setActiveTareDropdown(activeTareDropdown === item.produto_id ? null : item.produto_id)}
-                             className={`h-9 items-center justify-center gap-1 px-2 border rounded-xl flex transition-all shadow-inner shrink-0 group ${conf.taraPeso ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 font-bold' : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700'}`}
-                             title="Selecionar Tara"
-                           >
-                             <PackageMinus className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                             {conf.taraPeso ? <span className="text-[10px] tabular-nums">{conf.taraPeso}kg</span> : null}
-                           </button>
+                 <div className="flex items-center justify-center gap-2 max-w-[235px] mx-auto">
+                    {objProd?.unidade_base === 'kg' && (() => {
+                       const selectedTareObj = conf.taraId
+                         ? TARE_OPTIONS.find(t => t.id === conf.taraId)
+                         : conf.taraPeso
+                           ? TARE_OPTIONS.find(t => Number(t.weight) === Number(conf.taraPeso))
+                           : undefined;
+                       return (
+                         <div className="relative isolate flex gap-2">
+                             <button 
+                               onClick={() => setActiveTareDropdown(activeTareDropdown === item.produto_id ? null : item.produto_id)}
+                               className={`h-9 items-center justify-center gap-1.5 px-2 border rounded-xl flex transition-all shadow-inner shrink-0 group ${conf.taraPeso ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 font-bold' : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700'}`}
+                               title={conf.taraPeso ? `Tara ${conf.taraNome || selectedTareObj?.name || ''}: -${conf.taraPeso}kg` : "Selecionar Tara"}
+                             >
+                               {conf.taraPeso && selectedTareObj ? (
+                                 <span className={`w-2.5 h-2.5 rounded-full border border-white/30 shrink-0 ${selectedTareObj.color}`} />
+                               ) : (
+                                 <PackageMinus className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                               )}
+                               {conf.taraPeso ? <span className="text-[10px] tabular-nums">-{conf.taraPeso}kg</span> : null}
+                             </button>
 
-                           {activeTareDropdown === item.produto_id && (
-                             <div className="absolute z-50 top-0 right-full mr-4 w-max bg-zinc-950 border border-zinc-800 rounded-lg shadow-xl overflow-hidden flex flex-col">
-                               <button 
-                                 onClick={() => handleTareChange(item.produto_id, 0)}
-                                 className="px-4 py-2 hover:bg-zinc-800 text-left text-xs font-semibold text-zinc-400 transition-colors border-b border-zinc-800/50"
-                               >
-                                 Nenhuma
-                               </button>
-                               {TARE_OPTIONS.map(tara => (
+                             {activeTareDropdown === item.produto_id && (
+                               <div className="absolute z-50 top-0 right-full mr-4 w-max min-w-[175px] bg-zinc-950 border border-zinc-800 rounded-lg shadow-xl overflow-hidden flex flex-col">
                                  <button 
-                                   key={tara.id}
-                                   onClick={() => handleTareChange(item.produto_id, tara.weight)}
-                                   className="flex items-center justify-between gap-4 px-4 py-2 hover:bg-zinc-800 text-left text-xs font-semibold text-zinc-200 transition-colors border-b last:border-b-0 border-zinc-800/50"
+                                   onClick={() => handleTareChange(item.produto_id, null)}
+                                   className={`flex items-center justify-between gap-3 px-4 py-2 hover:bg-zinc-800 text-left text-xs font-semibold transition-colors border-b border-zinc-800/50 ${!conf.taraPeso ? 'text-emerald-400 bg-emerald-500/10' : 'text-zinc-400'}`}
                                  >
-                                   <div className="flex items-center gap-2">
-                                     <div className={`w-2.5 h-2.5 rounded-full ${tara.color}`}></div>
-                                     <span>{tara.name}</span>
-                                   </div>
-                                   <span className="font-mono text-zinc-500 tabular-nums">{tara.weight}kg</span>
+                                   <span>Nenhuma</span>
+                                   {!conf.taraPeso && <Check className="w-3.5 h-3.5 text-emerald-400" />}
                                  </button>
-                               ))}
-                             </div>
-                           )}
-                           <button onClick={() => getWeightFromScale(item.produto_id, Number(item.quantidade), conf.taraPeso || 0)} className="h-9 w-9 bg-amber-500/10 text-amber-500 border border-amber-500/20 rounded-xl flex items-center justify-center hover:bg-amber-500/20 transition-all shadow-inner shrink-0 group" title="Ler da Balança">
-                              <Scale className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                           </button>
-                       </div>
-                    )}
+                                 {TARE_OPTIONS.map(tara => {
+                                   const isSelected = conf.taraId
+                                     ? conf.taraId === tara.id
+                                     : Number(conf.taraPeso) === Number(tara.weight) && conf.taraNome === tara.name;
+                                   return (
+                                     <button 
+                                       key={tara.id}
+                                       onClick={() => handleTareChange(item.produto_id, tara)}
+                                       className={`flex items-center justify-between gap-4 px-4 py-2 hover:bg-zinc-800 text-left text-xs font-semibold transition-colors border-b last:border-b-0 border-zinc-800/50 ${isSelected ? 'bg-indigo-500/20 text-indigo-300' : 'text-zinc-200'}`}
+                                     >
+                                       <div className="flex items-center gap-2">
+                                         <div className={`w-2.5 h-2.5 rounded-full border border-white/20 ${tara.color}`}></div>
+                                         <span>{tara.name}</span>
+                                       </div>
+                                       <div className="flex items-center gap-1.5">
+                                         <span className="font-mono text-zinc-400 tabular-nums">{tara.weight}kg</span>
+                                         {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                                       </div>
+                                     </button>
+                                   );
+                                 })}
+                               </div>
+                             )}
+                             <button onClick={() => getWeightFromScale(item.produto_id, Number(item.quantidade), conf.taraPeso || 0)} className="h-9 w-9 bg-amber-500/10 text-amber-500 border border-amber-500/20 rounded-xl flex items-center justify-center hover:bg-amber-500/20 transition-all shadow-inner shrink-0 group" title="Ler da Balança">
+                                <Scale className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                             </button>
+                         </div>
+                       );
+                    })()}
                     <div className="relative flex-1">
                        <input 
                           type="number" min="0" step="0.001"

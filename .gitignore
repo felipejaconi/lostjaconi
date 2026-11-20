@@ -39,6 +39,7 @@ test-*.js
 *.cjs
 *.sh
 armazem_config.json
+wms_tara_rascunhos.json
 openapi.json
 # Lock files
 # bun.lock

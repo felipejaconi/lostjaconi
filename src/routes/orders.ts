@@ -1,6 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { enrichOrdersWithTare, removeOrderTareDraft } from '../lib/wmsTareStore';
 
 export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
   // Orders
@@ -114,10 +115,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
       if (error) throw error;
       
       const mapped = (data || []).map((d: any) => ({...d, loja_nome: d.user?.name}));
+      const enriched = await enrichOrdersWithTare(mapped, supabase, cache);
       
       // Cache results for 30 seconds
-      cache.set(cacheKey, mapped, 30);
-      res.json(mapped);
+      cache.set(cacheKey, enriched, 30);
+      res.json(enriched);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -131,7 +133,12 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
         .eq("id", req.params.id)
         .single();
       if (error) throw error;
-      res.json({...data, loja_nome: data.user?.name});
+      const [enrichedSingle] = await enrichOrdersWithTare(
+        [{ ...data, loja_nome: data.user?.name }],
+        supabase,
+        cache,
+      );
+      res.json(enrichedSingle);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -349,6 +356,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
 
       const { error } = await supabase.from("pedidos").delete().eq("id", pedidoId);
       if (error) throw error;
+      await removeOrderTareDraft(pedidoId, supabase, cache);
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

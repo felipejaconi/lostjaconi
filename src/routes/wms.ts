@@ -1,6 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { saveOrderTareDraft } from '../lib/wmsTareStore';
 
 export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
   // --- WMS ENDPOINTS ---
@@ -318,6 +319,13 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
 
       if (updatePromises.length > 0) {
         await Promise.all(updatePromises);
+      }
+
+      await saveOrderTareDraft(id, itens_conferidos, supabase, cache);
+
+      if (cache) {
+        const orderKeys = cache.keys().filter((k: string) => k.startsWith("pedidos_"));
+        if (orderKeys.length > 0) cache.del(orderKeys);
       }
 
       res.json({ message: "Rascunho salvo" });
