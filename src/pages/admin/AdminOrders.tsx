@@ -1368,22 +1368,6 @@ export default function AdminOrders() {
                     {item.produto?.is_peso_variavel && (
                        <span className="text-[9px] font-bold uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 px-1.5 py-0.5 rounded shadow-sm">Balança</span>
                     )}
-                    {Number(conf.taraPeso) > 0 && (() => {
-                       const selectedTareObj = conf.taraId
-                         ? TARE_OPTIONS.find(t => t.id === conf.taraId)
-                         : TARE_OPTIONS.find(t => Number(t.weight) === Number(conf.taraPeso));
-                       const dotColor = selectedTareObj?.color || 'bg-indigo-400';
-                       const tareLabel = conf.taraNome || selectedTareObj?.name || 'Aplicada';
-                       return (
-                         <span className="inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded shadow-sm">
-                           <span className={`w-2 h-2 rounded-full border border-white/30 ${dotColor}`} />
-                           Tara {tareLabel}: -{conf.taraPeso}kg
-                           {conf.pesoBruto != null && Number(conf.pesoBruto) > 0
-                             ? ` (Bruto: ${Number(conf.pesoBruto).toFixed(3)}kg)`
-                             : ""}
-                         </span>
-                       );
-                    })()}
                     {isZeroPrice && (
                        <span className="text-[9px] font-bold uppercase tracking-wider bg-rose-500/15 text-rose-400 border border-rose-500/30 px-1.5 py-0.5 rounded shadow-sm">Valor Unit. € 0,00</span>
                     )}
