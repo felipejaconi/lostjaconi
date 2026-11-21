@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Save, Plus } from "lucide-react";
+import { Save, Plus, X, Check } from "lucide-react";
 import Swal from "sweetalert2";
 import api from "../../lib/api";
 import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
@@ -9,10 +9,16 @@ Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
 export default function AdminPurchaseEntries({
   onSuccess,
+  onCatalogChange,
   lojaId,
   compact = false,
 }: {
   onSuccess?: () => void;
+  onCatalogChange?: (payload: {
+    empresas?: string[];
+    contasAnalise?: string[];
+    centrosCusto?: string[];
+  }) => void;
   lojaId?: string;
   compact?: boolean;
 }) {
@@ -21,6 +27,8 @@ export default function AdminPurchaseEntries({
   const [existingFaturas, setExistingFaturas] = useState<any[]>([]);
   const [savedEmpresas, setSavedEmpresas] = useState<string[]>([]);
   const [isAddingEmpresa, setIsAddingEmpresa] = useState(false);
+  const [savedCentrosCusto, setSavedCentrosCusto] = useState<string[]>([]);
+  const [isAddingCentro, setIsAddingCentro] = useState(false);
   const [savedContasAnalise, setSavedContasAnalise] = useState<string[]>([]);
   const [isAddingConta, setIsAddingConta] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -78,12 +86,13 @@ export default function AdminPurchaseEntries({
 
   const fetchData = async () => {
     try {
-      const [resForn, resUsers, resFaturas, resContas, resEmpresas] = await Promise.all([
+      const [resForn, resUsers, resFaturas, resContas, resEmpresas, resCentros] = await Promise.all([
         api.get("/admin/fornecedores").catch(() => ({ data: [] })),
         api.get("/admin/users").catch(() => ({ data: [] })),
         api.get("/admin/faturas-financeiro").catch(() => ({ data: [] })),
         api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] })),
         api.get("/admin/financeiro/empresas").catch(() => ({ data: [] })),
+        api.get("/admin/financeiro/centros-custo").catch(() => ({ data: [] })),
       ]);
       setFornecedores(resForn.data || []);
       setStores(
@@ -94,9 +103,23 @@ export default function AdminPurchaseEntries({
       setExistingFaturas(Array.isArray(resFaturas.data) ? resFaturas.data : []);
       setSavedContasAnalise(Array.isArray(resContas.data) ? resContas.data : []);
       setSavedEmpresas(Array.isArray(resEmpresas.data) ? resEmpresas.data : []);
+      setSavedCentrosCusto(Array.isArray(resCentros.data) ? resCentros.data : []);
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const showSavedToast = (title: string) => {
+    Swal.fire({
+      toast: true,
+      position: "top-end",
+      icon: "success",
+      title,
+      showConfirmButton: false,
+      timer: 1800,
+      background: "#18181b",
+      color: "#fff",
+    });
   };
 
   const handleAddEmpresa = async () => {
@@ -105,16 +128,16 @@ export default function AdminPurchaseEntries({
     try {
       setIsAddingEmpresa(true);
       const res = await api.post("/admin/financeiro/empresas", { nome: clean });
-      if (Array.isArray(res.data)) {
-        setSavedEmpresas(res.data);
-      } else {
-        setSavedEmpresas((prev) =>
-          prev.some((e) => e.toLowerCase() === clean.toLowerCase()) ? prev : [...prev, clean]
-        );
-      }
+      const updated = Array.isArray(res.data)
+        ? res.data
+        : savedEmpresas.some((e) => e.toLowerCase() === clean.toLowerCase())
+          ? savedEmpresas
+          : [...savedEmpresas, clean];
+      setSavedEmpresas(updated);
+      onCatalogChange?.({ empresas: updated });
       setEmpresaSelecionada(clean);
       setEmpresaNova("");
-      setUseNovaEmpresa(false);
+      showSavedToast(`Empresa "${clean}" salva!`);
     } catch (err: any) {
       Swal.fire({
         icon: "error",
@@ -128,22 +151,95 @@ export default function AdminPurchaseEntries({
     }
   };
 
+  const handleDeleteEmpresa = async (nome: string) => {
+    try {
+      const res = await api.delete("/admin/financeiro/empresas", { params: { nome } });
+      const updated = Array.isArray(res.data)
+        ? res.data
+        : savedEmpresas.filter((e) => e.toLowerCase() !== nome.toLowerCase());
+      setSavedEmpresas(updated);
+      onCatalogChange?.({ empresas: updated });
+      if (empresaSelecionada.toLowerCase() === nome.toLowerCase()) {
+        setEmpresaSelecionada("");
+      }
+    } catch (err: any) {
+      Swal.fire({
+        icon: "error",
+        title: "Erro",
+        text: err.response?.data?.error || "Não foi possível remover a Empresa",
+        background: "#18181b",
+        color: "#fff",
+      });
+    }
+  };
+
+  const handleAddCentroCusto = async () => {
+    const clean = centroCustoNovo.trim();
+    if (!clean) return;
+    try {
+      setIsAddingCentro(true);
+      const res = await api.post("/admin/financeiro/centros-custo", { nome: clean });
+      const updated = Array.isArray(res.data)
+        ? res.data
+        : savedCentrosCusto.some((c) => c.toLowerCase() === clean.toLowerCase())
+          ? savedCentrosCusto
+          : [...savedCentrosCusto, clean];
+      setSavedCentrosCusto(updated);
+      onCatalogChange?.({ centrosCusto: updated });
+      setCentroCustoSelecionado(clean);
+      setCentroCustoNovo("");
+      showSavedToast(`Centro de Custo "${clean}" salvo!`);
+    } catch (err: any) {
+      Swal.fire({
+        icon: "error",
+        title: "Erro",
+        text: err.response?.data?.error || "Não foi possível incluir o Centro de Custo",
+        background: "#18181b",
+        color: "#fff",
+      });
+    } finally {
+      setIsAddingCentro(false);
+    }
+  };
+
+  const handleDeleteCentroCusto = async (nome: string) => {
+    try {
+      const res = await api.delete("/admin/financeiro/centros-custo", { params: { nome } });
+      const updated = Array.isArray(res.data)
+        ? res.data
+        : savedCentrosCusto.filter((c) => c.toLowerCase() !== nome.toLowerCase());
+      setSavedCentrosCusto(updated);
+      onCatalogChange?.({ centrosCusto: updated });
+      if (centroCustoSelecionado.toLowerCase() === nome.toLowerCase()) {
+        setCentroCustoSelecionado(lojaId ? `loja:${lojaId}` : "armazem_central");
+      }
+    } catch (err: any) {
+      Swal.fire({
+        icon: "error",
+        title: "Erro",
+        text: err.response?.data?.error || "Não foi possível remover o Centro de Custo",
+        background: "#18181b",
+        color: "#fff",
+      });
+    }
+  };
+
   const handleAddContaAnalise = async () => {
     const clean = contaAnaliseNova.trim();
     if (!clean) return;
     try {
       setIsAddingConta(true);
       const res = await api.post("/admin/financeiro/contas-analise", { nome: clean });
-      if (Array.isArray(res.data)) {
-        setSavedContasAnalise(res.data);
-      } else {
-        setSavedContasAnalise((prev) =>
-          prev.some((c) => c.toLowerCase() === clean.toLowerCase()) ? prev : [...prev, clean]
-        );
-      }
+      const updated = Array.isArray(res.data)
+        ? res.data
+        : savedContasAnalise.some((c) => c.toLowerCase() === clean.toLowerCase())
+          ? savedContasAnalise
+          : [...savedContasAnalise, clean];
+      setSavedContasAnalise(updated);
+      onCatalogChange?.({ contasAnalise: updated });
       setContaAnaliseSelecionada(clean);
       setContaAnaliseNova("");
-      setUseNovaContaAnalise(false);
+      showSavedToast(`Conta "${clean}" salva!`);
     } catch (err: any) {
       Swal.fire({
         icon: "error",
@@ -154,6 +250,28 @@ export default function AdminPurchaseEntries({
       });
     } finally {
       setIsAddingConta(false);
+    }
+  };
+
+  const handleDeleteContaAnalise = async (nome: string) => {
+    try {
+      const res = await api.delete("/admin/financeiro/contas-analise", { params: { nome } });
+      const updated = Array.isArray(res.data)
+        ? res.data
+        : savedContasAnalise.filter((c) => c.toLowerCase() !== nome.toLowerCase());
+      setSavedContasAnalise(updated);
+      onCatalogChange?.({ contasAnalise: updated });
+      if (contaAnaliseSelecionada.toLowerCase() === nome.toLowerCase()) {
+        setContaAnaliseSelecionada("");
+      }
+    } catch (err: any) {
+      Swal.fire({
+        icon: "error",
+        title: "Erro",
+        text: err.response?.data?.error || "Não foi possível remover a Conta de Análise",
+        background: "#18181b",
+        color: "#fff",
+      });
     }
   };
 
@@ -183,6 +301,17 @@ export default function AdminPurchaseEntries({
       const clean = String(emp || "").trim();
       if (clean && !empresasMap.has(clean.toLowerCase())) {
         empresasMap.set(clean.toLowerCase(), clean);
+      }
+    });
+
+    savedCentrosCusto.forEach((cc) => {
+      const clean = String(cc || "").trim();
+      if (
+        clean &&
+        !builtInCentros.has(clean.toLowerCase()) &&
+        !storeNames.has(clean.toLowerCase())
+      ) {
+        centros.add(clean);
       }
     });
 
@@ -233,17 +362,17 @@ export default function AdminPurchaseEntries({
 
     return {
       empresas: Array.from(empresasMap.values()).sort((a, b) => a.localeCompare(b, "pt-PT")),
-      centros: Array.from(centros).sort((a, b) => a.localeCompare(b)),
+      centros: Array.from(centros).sort((a, b) => a.localeCompare(b, "pt-PT")),
       contas: Array.from(contasMap.values()).sort((a, b) => a.localeCompare(b, "pt-PT")),
     };
-  }, [existingFaturas, stores, savedContasAnalise, savedEmpresas]);
+  }, [existingFaturas, stores, savedContasAnalise, savedEmpresas, savedCentrosCusto]);
 
   const resolveClassificacao = () => {
     let empresaNome = "";
     if (useNovaEmpresa) {
-      const cleanEmp = empresaNova.trim();
+      const cleanEmp = empresaNova.trim() || empresaSelecionada.trim();
       if (!cleanEmp) {
-        throw new Error("Informe o nome da Empresa");
+        throw new Error("Informe ou selecione o nome da Empresa");
       }
       empresaNome = cleanEmp;
     } else {
@@ -256,13 +385,12 @@ export default function AdminPurchaseEntries({
     let centroCustoNome = "";
     let resolvedLojaId: string | null = lojaId || null;
 
-    if (useNovoCentroCusto) {
-      const cleanCC = centroCustoNovo.trim();
-      if (!cleanCC) {
+    if (useNovoCentroCusto && centroCustoNovo.trim()) {
+      centroCustoNome = centroCustoNovo.trim();
+    } else {
+      if (useNovoCentroCusto && !centroCustoSelecionado) {
         throw new Error("Informe o nome do Centro de Custo");
       }
-      centroCustoNome = cleanCC;
-    } else {
       if (!centroCustoSelecionado) {
         throw new Error("Selecione um Centro de Custo");
       }
@@ -284,9 +412,9 @@ export default function AdminPurchaseEntries({
 
     let contaAnaliseNome = "";
     if (useNovaContaAnalise) {
-      const cleanCA = contaAnaliseNova.trim();
+      const cleanCA = contaAnaliseNova.trim() || contaAnaliseSelecionada.trim();
       if (!cleanCA) {
-        throw new Error("Informe o nome da Conta de Análise");
+        throw new Error("Informe ou selecione a Conta de Análise");
       }
       contaAnaliseNome = cleanCA;
     } else {
@@ -472,29 +600,66 @@ export default function AdminPurchaseEntries({
                 </div>
 
                 {useNovaEmpresa ? (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={empresaNova}
-                      onChange={(e) => setEmpresaNova(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          handleAddEmpresa();
-                        }
-                      }}
-                      className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
-                      placeholder="Digite o nome da empresa..."
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddEmpresa}
-                      disabled={isAddingEmpresa || !empresaNova.trim()}
-                      className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shrink-0 cursor-pointer"
-                    >
-                      <Plus size={14} strokeWidth={2.75} />
-                      Incluir
-                    </button>
+                  <div className="space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={empresaNova}
+                        onChange={(e) => setEmpresaNova(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleAddEmpresa();
+                          }
+                        }}
+                        className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
+                        placeholder="Digite o nome da empresa e clique em Incluir..."
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddEmpresa}
+                        disabled={isAddingEmpresa || !empresaNova.trim()}
+                        className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shrink-0 cursor-pointer"
+                      >
+                        <Plus size={14} strokeWidth={2.75} />
+                        {isAddingEmpresa ? "A salvar..." : "Incluir"}
+                      </button>
+                    </div>
+                    {savedEmpresas.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        {savedEmpresas.map((emp) => {
+                          const isSelected = empresaSelecionada.toLowerCase() === emp.toLowerCase();
+                          return (
+                            <span
+                              key={emp}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                                isSelected
+                                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-semibold"
+                                  : "bg-zinc-900 border-zinc-800 text-zinc-300"
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => setEmpresaSelecionada(emp)}
+                                className="inline-flex items-center gap-1 hover:text-white cursor-pointer"
+                                title="Selecionar esta empresa"
+                              >
+                                {isSelected && <Check size={12} className="text-emerald-400" />}
+                                {emp}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteEmpresa(emp)}
+                                className="text-zinc-500 hover:text-rose-400 transition-colors cursor-pointer"
+                                title="Remover do cadastro"
+                              >
+                                <X size={12} />
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <select
@@ -539,13 +704,66 @@ export default function AdminPurchaseEntries({
                 </div>
 
                 {useNovoCentroCusto ? (
-                  <input
-                    type="text"
-                    value={centroCustoNovo}
-                    onChange={(e) => setCentroCustoNovo(e.target.value)}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
-                    placeholder="Nome do centro de custo (Ex: Cozinha Central, Eventos...)"
-                  />
+                  <div className="space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={centroCustoNovo}
+                        onChange={(e) => setCentroCustoNovo(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleAddCentroCusto();
+                          }
+                        }}
+                        className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
+                        placeholder="Nome do centro de custo e clique em Incluir..."
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddCentroCusto}
+                        disabled={isAddingCentro || !centroCustoNovo.trim()}
+                        className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shrink-0 cursor-pointer"
+                      >
+                        <Plus size={14} strokeWidth={2.75} />
+                        {isAddingCentro ? "A salvar..." : "Incluir"}
+                      </button>
+                    </div>
+                    {savedCentrosCusto.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        {savedCentrosCusto.map((cc) => {
+                          const isSelected = centroCustoSelecionado.toLowerCase() === cc.toLowerCase();
+                          return (
+                            <span
+                              key={cc}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                                isSelected
+                                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-semibold"
+                                  : "bg-zinc-900 border-zinc-800 text-zinc-300"
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => setCentroCustoSelecionado(cc)}
+                                className="inline-flex items-center gap-1 hover:text-white cursor-pointer"
+                              >
+                                {isSelected && <Check size={12} className="text-emerald-400" />}
+                                {cc}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCentroCusto(cc)}
+                                className="text-zinc-500 hover:text-rose-400 transition-colors cursor-pointer"
+                                title="Remover do cadastro"
+                              >
+                                <X size={12} />
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <select
                     value={centroCustoSelecionado}
@@ -576,7 +794,7 @@ export default function AdminPurchaseEntries({
                 )}
               </div>
 
-              {/* 2. Conta de Análise (logo abaixo na mesma secção) */}
+              {/* 3. Conta de Análise */}
               <div className="pt-3 border-t border-zinc-800/70">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                   <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
@@ -599,29 +817,66 @@ export default function AdminPurchaseEntries({
                 </div>
 
                 {useNovaContaAnalise ? (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={contaAnaliseNova}
-                      onChange={(e) => setContaAnaliseNova(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          handleAddContaAnalise();
-                        }
-                      }}
-                      className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
-                      placeholder="Digite o nome da conta de análise..."
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddContaAnalise}
-                      disabled={isAddingConta || !contaAnaliseNova.trim()}
-                      className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shrink-0 cursor-pointer"
-                    >
-                      <Plus size={14} strokeWidth={2.75} />
-                      Incluir
-                    </button>
+                  <div className="space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={contaAnaliseNova}
+                        onChange={(e) => setContaAnaliseNova(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleAddContaAnalise();
+                          }
+                        }}
+                        className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
+                        placeholder="Digite a conta de análise e clique em Incluir..."
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddContaAnalise}
+                        disabled={isAddingConta || !contaAnaliseNova.trim()}
+                        className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shrink-0 cursor-pointer"
+                      >
+                        <Plus size={14} strokeWidth={2.75} />
+                        {isAddingConta ? "A salvar..." : "Incluir"}
+                      </button>
+                    </div>
+                    {savedContasAnalise.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        {savedContasAnalise.map((ca) => {
+                          const isSelected = contaAnaliseSelecionada.toLowerCase() === ca.toLowerCase();
+                          return (
+                            <span
+                              key={ca}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                                isSelected
+                                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-semibold"
+                                  : "bg-zinc-900 border-zinc-800 text-zinc-300"
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => setContaAnaliseSelecionada(ca)}
+                                className="inline-flex items-center gap-1 hover:text-white cursor-pointer"
+                                title="Selecionar esta conta de análise"
+                              >
+                                {isSelected && <Check size={12} className="text-emerald-400" />}
+                                {ca}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteContaAnalise(ca)}
+                                className="text-zinc-500 hover:text-rose-400 transition-colors cursor-pointer"
+                                title="Remover do cadastro"
+                              >
+                                <X size={12} />
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <select

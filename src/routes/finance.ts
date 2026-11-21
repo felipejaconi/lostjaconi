@@ -549,11 +549,23 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       for (const item of items) {
         const emp = String(item?.empresa || "").trim();
         if (emp) {
-          await addEmpresaToStorage(emp).catch(() => {});
+          await addFinanceiroCadastro("empresa", emp).catch(() => {});
         }
         const ca = String(item?.conta_analise || "").trim();
         if (ca) {
-          await addContaAnaliseToStorage(ca).catch(() => {});
+          await addFinanceiroCadastro("conta_analise", ca).catch(() => {});
+        }
+        const cc = String(item?.centro_custo || "").trim();
+        const lowerCc = cc.toLowerCase();
+        if (
+          cc &&
+          lowerCc !== "distribuidora" &&
+          lowerCc !== "lost wind unipessoal,lda" &&
+          lowerCc !== "lost wind unipessoal, lda" &&
+          lowerCc !== "armazém central" &&
+          lowerCc !== "armazem central"
+        ) {
+          await addFinanceiroCadastro("centro_custo", cc).catch(() => {});
         }
       }
 
@@ -1190,34 +1202,45 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     }
   });
 
-  const CONTAS_STORAGE_PATH = "config/contas_analise.json";
+  const FINANCEIRO_CADASTROS_TABLE = "financeiro_cadastros";
+  type FinanceiroCadastroTipo = "empresa" | "conta_analise" | "centro_custo";
 
-  async function readContasAnaliseFromStorage(): Promise<string[]> {
-    const cached = cache.get("admin_contas_analise");
-    if (Array.isArray(cached)) return cached;
-    try {
-      const { data, error } = await supabase.storage.from("uploads").download(CONTAS_STORAGE_PATH);
-      if (error || !data) {
-        cache.set("admin_contas_analise", [], 300);
-        return [];
-      }
-      const text = await data.text();
-      const parsed = JSON.parse(text);
-      const list = Array.isArray(parsed)
-        ? parsed.map((x: any) => String(x || "").trim()).filter(Boolean)
-        : [];
-      cache.set("admin_contas_analise", list, 300);
-      return list;
-    } catch {
-      return [];
-    }
+  function isMissingFinanceiroCadastrosTable(error: any): boolean {
+    if (!error) return false;
+    const code = String(error.code || "");
+    const msg = String(error.message || "").toLowerCase();
+    const details = String(error.details || "").toLowerCase();
+    if (code === "42P01" || code === "PGRST205") return true;
+    return (
+      (msg.includes("financeiro_cadastros") || details.includes("financeiro_cadastros")) &&
+      (msg.includes("does not exist") ||
+        msg.includes("schema cache") ||
+        msg.includes("could not find"))
+    );
   }
 
-  async function writeContasAnaliseToStorage(list: string[]): Promise<string[]> {
-    const unique: string[] = [];
+  async function readFinanceiroCadastros(tipo: FinanceiroCadastroTipo): Promise<string[]> {
+    const cacheKey = `admin_fin_cadastro_${tipo}`;
+    const cached = cache.get(cacheKey);
+    if (Array.isArray(cached)) return cached;
+
+    const { data, error } = await supabase
+      .from(FINANCEIRO_CADASTROS_TABLE)
+      .select("id, nome")
+      .eq("tipo", tipo)
+      .order("nome", { ascending: true });
+
+    if (error) {
+      if (isMissingFinanceiroCadastrosTable(error)) {
+        return [];
+      }
+      throw error;
+    }
+
     const seen = new Set<string>();
-    for (const item of list) {
-      const clean = String(item || "").trim();
+    const unique: string[] = [];
+    for (const row of data || []) {
+      const clean = String((row as any).nome || "").trim();
       if (!clean) continue;
       const key = clean.toLowerCase();
       if (!seen.has(key)) {
@@ -1226,45 +1249,117 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       }
     }
     unique.sort((a, b) => a.localeCompare(b, "pt-PT"));
-    await supabase.storage
-      .from("uploads")
-      .upload(CONTAS_STORAGE_PATH, Buffer.from(JSON.stringify(unique, null, 2), "utf8"), {
-        contentType: "application/json",
-        upsert: true,
-      });
-    cache.set("admin_contas_analise", unique, 300);
+    cache.set(cacheKey, unique, 300);
     return unique;
   }
 
-  async function addContaAnaliseToStorage(nome: string): Promise<string[]> {
-    const clean = String(nome || "").trim();
-    if (!clean) return readContasAnaliseFromStorage();
-    const current = await readContasAnaliseFromStorage();
-    if (current.some((c) => c.toLowerCase() === clean.toLowerCase())) {
-      return current;
+  async function addFinanceiroCadastro(
+    tipo: FinanceiroCadastroTipo,
+    rawNome: string
+  ): Promise<string[]> {
+    const clean = String(rawNome || "").trim();
+    if (!clean) return readFinanceiroCadastros(tipo);
+
+    const { data: existingRows, error: fetchErr } = await supabase
+      .from(FINANCEIRO_CADASTROS_TABLE)
+      .select("id, nome")
+      .eq("tipo", tipo);
+
+    if (fetchErr) {
+      if (isMissingFinanceiroCadastrosTable(fetchErr)) {
+        const missingErr: any = new Error(
+          "A tabela 'financeiro_cadastros' ainda não foi criada no Supabase. Cole e execute o comando SQL no SQL Editor do Supabase."
+        );
+        missingErr.status = 503;
+        throw missingErr;
+      }
+      throw fetchErr;
     }
-    return writeContasAnaliseToStorage([...current, clean]);
+
+    const alreadyExists = (existingRows || []).some(
+      (r: any) => String(r.nome || "").trim().toLowerCase() === clean.toLowerCase()
+    );
+
+    if (!alreadyExists) {
+      const { error: insErr } = await supabase
+        .from(FINANCEIRO_CADASTROS_TABLE)
+        .insert([{ tipo, nome: clean }]);
+
+      if (insErr && String(insErr.code || "") !== "23505") {
+        if (isMissingFinanceiroCadastrosTable(insErr)) {
+          const missingErr: any = new Error(
+            "A tabela 'financeiro_cadastros' ainda não foi criada no Supabase. Cole e execute o comando SQL no SQL Editor do Supabase."
+          );
+          missingErr.status = 503;
+          throw missingErr;
+        }
+        throw insErr;
+      }
+    }
+
+    cache.del(`admin_fin_cadastro_${tipo}`);
+    return readFinanceiroCadastros(tipo);
   }
 
+  async function deleteFinanceiroCadastro(
+    tipo: FinanceiroCadastroTipo,
+    rawNome: string
+  ): Promise<string[]> {
+    const clean = String(rawNome || "").trim();
+    if (!clean) return readFinanceiroCadastros(tipo);
+
+    const { data: existingRows, error: fetchErr } = await supabase
+      .from(FINANCEIRO_CADASTROS_TABLE)
+      .select("id, nome")
+      .eq("tipo", tipo);
+
+    if (fetchErr) {
+      if (isMissingFinanceiroCadastrosTable(fetchErr)) {
+        const missingErr: any = new Error(
+          "A tabela 'financeiro_cadastros' ainda não foi criada no Supabase. Cole e execute o comando SQL no SQL Editor do Supabase."
+        );
+        missingErr.status = 503;
+        throw missingErr;
+      }
+      throw fetchErr;
+    }
+
+    const idsToDelete = (existingRows || [])
+      .filter((r: any) => String(r.nome || "").trim().toLowerCase() === clean.toLowerCase())
+      .map((r: any) => r.id);
+
+    if (idsToDelete.length > 0) {
+      const { error: delErr } = await supabase
+        .from(FINANCEIRO_CADASTROS_TABLE)
+        .delete()
+        .in("id", idsToDelete);
+      if (delErr) throw delErr;
+    }
+
+    cache.del(`admin_fin_cadastro_${tipo}`);
+    return readFinanceiroCadastros(tipo);
+  }
+
+  // Contas de Análise (public.financeiro_cadastros)
   app.get("/api/admin/financeiro/contas-analise", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     try {
-      const list = await readContasAnaliseFromStorage();
+      const list = await readFinanceiroCadastros("conta_analise");
       res.json(list);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(error.status || 500).json({ error: error.message });
     }
   });
 
   app.post("/api/admin/financeiro/contas-analise", authenticateToken, async (req: any, res) => {
-    if (req.user.role !== "admin") return res.sendStatus(403);
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     try {
       const nome = String(req.body?.nome || "").trim();
       if (!nome) return res.status(400).json({ error: "Informe o nome da Conta de Análise" });
-      const updated = await addContaAnaliseToStorage(nome);
+      const updated = await addFinanceiroCadastro("conta_analise", nome);
       res.json(updated);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(error.status || 500).json({ error: error.message });
     }
   });
 
@@ -1272,90 +1367,33 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     if (req.user.role !== "admin") return res.sendStatus(403);
     try {
       const nome = String(req.body?.nome || req.query?.nome || "").trim();
-      const current = await readContasAnaliseFromStorage();
-      const filtered = current.filter((c) => c.toLowerCase() !== nome.toLowerCase());
-      const updated = await writeContasAnaliseToStorage(filtered);
+      const updated = await deleteFinanceiroCadastro("conta_analise", nome);
       res.json(updated);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(error.status || 500).json({ error: error.message });
     }
   });
 
-  const EMPRESAS_STORAGE_PATH = "config/empresas_financeiro.json";
-
-  async function readEmpresasFromStorage(): Promise<string[]> {
-    const cached = cache.get("admin_empresas_financeiro");
-    if (Array.isArray(cached)) return cached;
-    try {
-      const { data, error } = await supabase.storage.from("uploads").download(EMPRESAS_STORAGE_PATH);
-      if (error || !data) {
-        cache.set("admin_empresas_financeiro", [], 300);
-        return [];
-      }
-      const text = await data.text();
-      const parsed = JSON.parse(text);
-      const list = Array.isArray(parsed)
-        ? parsed.map((x: any) => String(x || "").trim()).filter(Boolean)
-        : [];
-      cache.set("admin_empresas_financeiro", list, 300);
-      return list;
-    } catch {
-      return [];
-    }
-  }
-
-  async function writeEmpresasToStorage(list: string[]): Promise<string[]> {
-    const unique: string[] = [];
-    const seen = new Set<string>();
-    for (const item of list) {
-      const clean = String(item || "").trim();
-      if (!clean) continue;
-      const key = clean.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        unique.push(clean);
-      }
-    }
-    unique.sort((a, b) => a.localeCompare(b, "pt-PT"));
-    await supabase.storage
-      .from("uploads")
-      .upload(EMPRESAS_STORAGE_PATH, Buffer.from(JSON.stringify(unique, null, 2), "utf8"), {
-        contentType: "application/json",
-        upsert: true,
-      });
-    cache.set("admin_empresas_financeiro", unique, 300);
-    return unique;
-  }
-
-  async function addEmpresaToStorage(nome: string): Promise<string[]> {
-    const clean = String(nome || "").trim();
-    if (!clean) return readEmpresasFromStorage();
-    const current = await readEmpresasFromStorage();
-    if (current.some((c) => c.toLowerCase() === clean.toLowerCase())) {
-      return current;
-    }
-    return writeEmpresasToStorage([...current, clean]);
-  }
-
+  // Empresas (public.financeiro_cadastros)
   app.get("/api/admin/financeiro/empresas", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     try {
-      const list = await readEmpresasFromStorage();
+      const list = await readFinanceiroCadastros("empresa");
       res.json(list);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(error.status || 500).json({ error: error.message });
     }
   });
 
   app.post("/api/admin/financeiro/empresas", authenticateToken, async (req: any, res) => {
-    if (req.user.role !== "admin") return res.sendStatus(403);
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     try {
       const nome = String(req.body?.nome || "").trim();
       if (!nome) return res.status(400).json({ error: "Informe o nome da Empresa" });
-      const updated = await addEmpresaToStorage(nome);
+      const updated = await addFinanceiroCadastro("empresa", nome);
       res.json(updated);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(error.status || 500).json({ error: error.message });
     }
   });
 
@@ -1363,12 +1401,44 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     if (req.user.role !== "admin") return res.sendStatus(403);
     try {
       const nome = String(req.body?.nome || req.query?.nome || "").trim();
-      const current = await readEmpresasFromStorage();
-      const filtered = current.filter((c) => c.toLowerCase() !== nome.toLowerCase());
-      const updated = await writeEmpresasToStorage(filtered);
+      const updated = await deleteFinanceiroCadastro("empresa", nome);
       res.json(updated);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
+  // Centros de Custo personalizados (public.financeiro_cadastros)
+  app.get("/api/admin/financeiro/centros-custo", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const list = await readFinanceiroCadastros("centro_custo");
+      res.json(list);
+    } catch (error: any) {
+      res.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/financeiro/centros-custo", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
+    try {
+      const nome = String(req.body?.nome || "").trim();
+      if (!nome) return res.status(400).json({ error: "Informe o nome do Centro de Custo" });
+      const updated = await addFinanceiroCadastro("centro_custo", nome);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/admin/financeiro/centros-custo", authenticateToken, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.sendStatus(403);
+    try {
+      const nome = String(req.body?.nome || req.query?.nome || "").trim();
+      const updated = await deleteFinanceiroCadastro("centro_custo", nome);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(error.status || 500).json({ error: error.message });
     }
   });
 

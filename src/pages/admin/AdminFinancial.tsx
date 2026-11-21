@@ -64,6 +64,7 @@ let financialCache: {
   stores: any[];
   contasAnalise?: string[];
   empresas?: string[];
+  centrosCusto?: string[];
 } | null = null;
 
 let summaryCache: any = null;
@@ -137,6 +138,7 @@ export default function AdminFinancial() {
   const [fornecedores, setFornecedores] = useState<any[]>(() => financialCache?.fornecedores || []);
   const [savedContasAnalise, setSavedContasAnalise] = useState<string[]>(() => financialCache?.contasAnalise || []);
   const [savedEmpresas, setSavedEmpresas] = useState<string[]>(() => financialCache?.empresas || []);
+  const [savedCentrosCusto, setSavedCentrosCusto] = useState<string[]>(() => financialCache?.centrosCusto || []);
   const [summaryData, setSummaryData] = useState<any>(() => summaryCache);
   const [isLoading, setIsLoading] = useState(() => !summaryCache);
   const [isTabLoading, setIsTabLoading] = useState(false);
@@ -285,24 +287,27 @@ export default function AdminFinancial() {
      try {
         if (tab === "faturas_compras" || tab === "faturas_despesas") {
            if (faturas.length === 0 || forceRefresh) {
-              const [fatRes, fornRes, usersRes, contasRes, empresasRes] = await Promise.all([
+              const [fatRes, fornRes, usersRes, contasRes, empresasRes, centrosRes] = await Promise.all([
                  api.get("/admin/faturas-financeiro"),
                  api.get("/admin/fornecedores"),
                  api.get("/admin/users"),
                  api.get("/admin/financeiro/contas-analise").catch(() => ({ data: [] })),
                  api.get("/admin/financeiro/empresas").catch(() => ({ data: [] })),
+                 api.get("/admin/financeiro/centros-custo").catch(() => ({ data: [] })),
               ]);
               const fatData = fatRes.data || [];
               const fornData = fornRes.data || [];
               const storesData = ((usersRes.data as any[]) || []).filter((u: any) => u.role === 'loja');
               const contasData = Array.isArray(contasRes.data) ? contasRes.data : [];
               const empresasData = Array.isArray(empresasRes.data) ? empresasRes.data : [];
+              const centrosData = Array.isArray(centrosRes.data) ? centrosRes.data : [];
               
               setFaturas(fatData);
               setFornecedores(fornData);
               setStores(storesData);
               setSavedContasAnalise(contasData);
               setSavedEmpresas(empresasData);
+              setSavedCentrosCusto(centrosData);
               
               financialCache = {
                  ...financialCache,
@@ -312,6 +317,7 @@ export default function AdminFinancial() {
                  stores: storesData,
                  contasAnalise: contasData,
                  empresas: empresasData,
+                 centrosCusto: centrosData,
               } as any;
            }
         } else if (tab === "fornecedores") { // Actually "Faturas a Receber"
@@ -875,6 +881,17 @@ export default function AdminFinancial() {
       }
     });
 
+    savedCentrosCusto.forEach((cc) => {
+      const clean = String(cc || "").trim();
+      if (
+        clean &&
+        !builtInCentros.has(clean.toLowerCase()) &&
+        !storeNames.has(clean.toLowerCase())
+      ) {
+        customCentros.add(clean);
+      }
+    });
+
     savedContasAnalise.forEach((ca) => {
       const clean = String(ca || "").trim();
       if (clean && !contasMap.has(clean.toLowerCase())) {
@@ -905,7 +922,7 @@ export default function AdminFinancial() {
       customCentros: Array.from(customCentros).sort((a, b) => a.localeCompare(b, "pt-PT")),
       contasAnalise: Array.from(contasMap.values()).sort((a, b) => a.localeCompare(b, "pt-PT")),
     };
-  }, [faturas, stores, savedContasAnalise, savedEmpresas]);
+  }, [faturas, stores, savedContasAnalise, savedEmpresas, savedCentrosCusto]);
 
   const handlePesquisarFaturas = async () => {
     if (faturas.length === 0) {
@@ -2387,6 +2404,20 @@ export default function AdminFinancial() {
       <Modal isOpen={isPurchaseModalOpen} onClose={() => setIsPurchaseModalOpen(false)} title="Nova Fatura" maxWidth="page">
           <AdminPurchaseEntries
              compact={true}
+             onCatalogChange={(payload) => {
+                if (payload.empresas) {
+                   setSavedEmpresas(payload.empresas);
+                   if (financialCache) financialCache.empresas = payload.empresas;
+                }
+                if (payload.contasAnalise) {
+                   setSavedContasAnalise(payload.contasAnalise);
+                   if (financialCache) financialCache.contasAnalise = payload.contasAnalise;
+                }
+                if (payload.centrosCusto) {
+                   setSavedCentrosCusto(payload.centrosCusto);
+                   if (financialCache) financialCache.centrosCusto = payload.centrosCusto;
+                }
+             }}
              onSuccess={() => {
                 setIsPurchaseModalOpen(false);
                 setActiveTab("faturas_compras");
