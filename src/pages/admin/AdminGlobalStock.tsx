@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   Search, Plus, AlertCircle, RefreshCcw, Package,
   Wallet, Layers, Download, History, ArchiveRestore, TrendingUp, TrendingDown,
-  AlertTriangle, Filter
+  AlertTriangle, Filter, RotateCcw, ChevronDown, X, Check
 } from "lucide-react";
 import api from "../../lib/api";
 import { supabase } from "../../lib/supabase";
@@ -22,6 +22,47 @@ import { useAuth } from "../../context/AuthContext";
 import { ProductDescriptionModal } from "../../components/ProductDescriptionModal";
 import { sortCategories } from "../../lib/categoryUtils";
 
+interface MoveFilterState {
+  startDate: string;
+  endDate: string;
+  storeId: string;
+  produtoId: string;
+  productQuery: string;
+}
+
+const DEFAULT_MOVE_FILTER: MoveFilterState = {
+  startDate: "",
+  endDate: "",
+  storeId: "all",
+  produtoId: "all",
+  productQuery: "",
+};
+
+function toLocalDayIsoRange(startDateStr: string, endDateStr: string): { startIso?: string; endIso?: string } {
+  let s = startDateStr.trim();
+  let e = endDateStr.trim();
+  if (s && e && s > e) {
+    const tmp = s;
+    s = e;
+    e = tmp;
+  }
+  let startIso: string | undefined;
+  let endIso: string | undefined;
+  if (s) {
+    const [y, m, d] = s.split("-").map(Number);
+    if (y && m && d) {
+      startIso = new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+    }
+  }
+  if (e) {
+    const [y, m, d] = e.split("-").map(Number);
+    if (y && m && d) {
+      endIso = new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
+    }
+  }
+  return { startIso, endIso };
+}
+
 export default function AdminGlobalStock() {
   const { user } = useAuth();
   const isArmazem = user?.role === "armazem";
@@ -34,6 +75,14 @@ export default function AdminGlobalStock() {
   const [activeFilter, setActiveFilter] = useState("todos");
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
   const [movements, setMovements] = useState<any[]>([]);
+  const [overviewMovements, setOverviewMovements] = useState<any[]>([]);
+  const [hasSearchedMovements, setHasSearchedMovements] = useState(false);
+  const [loadingMovements, setLoadingMovements] = useState(false);
+  const [draftMoveFilter, setDraftMoveFilter] = useState<MoveFilterState>(DEFAULT_MOVE_FILTER);
+  const [appliedMoveFilter, setAppliedMoveFilter] = useState<MoveFilterState>(DEFAULT_MOVE_FILTER);
+  const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
+  const productDropdownRef = useRef<HTMLDivElement | null>(null);
+
   const [stores, setStores] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const deferredSearchTerm = React.useDeferredValue(searchTerm);
@@ -74,87 +123,178 @@ export default function AdminGlobalStock() {
     setExpandedMoveGroups(prev => ({ ...prev, [groupId]: !prev[groupId] }));
   };
 
-  const [moveSearchTerm, setMoveSearchTerm] = useState("");
-  const deferredMoveSearchTerm = React.useDeferredValue(moveSearchTerm);
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        productDropdownRef.current &&
+        !productDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsProductDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
-  const groupedMovements = useMemo(() => {
+  const filteredProductOptions = useMemo(() => {
+    const q = draftMoveFilter.productQuery.trim().toLowerCase();
+    if (!q || draftMoveFilter.produtoId !== "all") {
+      return products.slice(0, 80);
+    }
+    return products
+      .filter(
+        (p) =>
+          String(p.nome || "").toLowerCase().includes(q) ||
+          String(p.barcode_ean || p.codigo_barras || "").toLowerCase().includes(q)
+      )
+      .slice(0, 80);
+  }, [products, draftMoveFilter.productQuery, draftMoveFilter.produtoId]);
+
+  const buildMovementGroups = React.useCallback((list: any[]) => {
     const groups: Record<string, any> = {};
-    
-    // Filter movements by search term first
-    const filteredMovements = movements.filter(m => {
-       if (!deferredMoveSearchTerm) return true;
-       const q = deferredMoveSearchTerm.toLowerCase();
-       const prodName = (m.produto?.nome || m.produto_nome || "").toLowerCase();
-       const motivo = (m.motivo || "").toLowerCase();
-       const storeName = stores.find(s => s.id === m.user_target_id)?.name?.toLowerCase() || "";
-       
-       return prodName.includes(q) || motivo.includes(q) || storeName.includes(q);
+
+    list.forEach((m) => {
+      const date = new Date(m.created_at).toDateString();
+      let groupKey = "";
+      let displayTitle = "";
+      let isGroup = true;
+
+      const cleanMotivo = (m.motivo || "").replace(/\s*\[ref:[^\]]+\]/gi, "").trim();
+      const prodName = m.produto?.nome || m.produto_nome || "";
+
+      if (m.tipo === "entrada") {
+        const faturaMatch = cleanMotivo.match(/Fatura\s*#?\s*([^\s,)]+)/i);
+        const refMatch = m.motivo?.match(/\[ref:([^\]]+)\]/i);
+        if (faturaMatch) {
+          const faturaNum = faturaMatch[1];
+          groupKey = refMatch ? `entrada_fatura_ref_${refMatch[1]}` : `entrada_fatura_${faturaNum}_${date}`;
+          displayTitle = `Entrada Fatura #${faturaNum}`;
+        } else {
+          groupKey = `entrada_outros_${m.id}`;
+          displayTitle = prodName
+            ? `${prodName}${cleanMotivo ? ` — ${cleanMotivo}` : ""}`
+            : cleanMotivo || "Entrada de Stock";
+          isGroup = false;
+        }
+      } else {
+        if (m.user_target_id) {
+          const storeName = stores.find((s) => String(s.id) === String(m.user_target_id))?.name || "Loja";
+          groupKey = `saida_loja_${m.user_target_id}_${date}`;
+          displayTitle = `Saída para ${storeName}`;
+        } else {
+          groupKey = `saida_outros_${m.id}`;
+          displayTitle = prodName
+            ? `${prodName}${cleanMotivo ? ` — ${cleanMotivo}` : ""}`
+            : cleanMotivo || "Saída de Stock";
+          isGroup = false;
+        }
+      }
+
+      if (!groups[groupKey]) {
+        groups[groupKey] = {
+          id: groupKey,
+          isGroup,
+          title: displayTitle,
+          tipo: m.tipo,
+          created_at: m.created_at,
+          user_target_id: m.user_target_id,
+          items: [],
+          totalItems: 0,
+        };
+      }
+      groups[groupKey].items.push(m);
+      groups[groupKey].totalItems += 1;
     });
 
-    filteredMovements.forEach(m => {
-       const date = new Date(m.created_at).toDateString();
-       let groupKey = "";
-       let displayTitle = "";
-       let isGroup = true;
+    return Object.values(groups).sort(
+      (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+  }, [stores]);
 
-       const cleanMotivo = (m.motivo || "").replace(/\s*\[ref:[^\]]+\]/gi, "").trim();
+  const groupedMovements = useMemo(
+    () => buildMovementGroups(movements),
+    [movements, buildMovementGroups]
+  );
 
-       if (m.tipo === "entrada") {
-          // Group entries by invoice if present, otherwise individual/reason
-          const faturaMatch = cleanMotivo.match(/Fatura\s*#?\s*([^\s,)]+)/i);
-          const refMatch = m.motivo?.match(/\[ref:([^\]]+)\]/i);
-          if (faturaMatch) {
-             const faturaNum = faturaMatch[1];
-             groupKey = refMatch ? `entrada_fatura_ref_${refMatch[1]}` : `entrada_fatura_${faturaNum}_${date}`;
-             displayTitle = `Entrada Fatura #${faturaNum}`;
-          } else {
-             groupKey = `entrada_outros_${m.id}`;
-             displayTitle = cleanMotivo || "Entrada de Stock";
-             isGroup = false;
-          }
-       } else {
-          // Group exits by store
-          if (m.user_target_id) {
-             const storeName = stores.find(s => s.id === m.user_target_id)?.name || "Loja";
-             groupKey = `saida_loja_${m.user_target_id}_${date}`;
-             displayTitle = `Saída para ${storeName}`;
-          } else {
-             groupKey = `saida_outros_${m.id}`;
-             displayTitle = cleanMotivo || "Saída de Stock";
-             isGroup = false;
-          }
-       }
+  const handleSearchMovements = async () => {
+    const nextFilter = { ...draftMoveFilter };
+    setIsProductDropdownOpen(false);
+    setAppliedMoveFilter(nextFilter);
+    setHasSearchedMovements(true);
+    setDisplayCountMovements(30);
 
-       if (!groups[groupKey]) {
-          groups[groupKey] = {
-             id: groupKey,
-             isGroup,
-             title: displayTitle,
-             tipo: m.tipo,
-             created_at: m.created_at,
-             user_target_id: m.user_target_id,
-             items: [],
-             totalItems: 0
-          };
-       }
-       groups[groupKey].items.push(m);
-       groups[groupKey].totalItems += 1;
-    });
+    try {
+      setLoadingMovements(true);
+      const { startIso, endIso } = toLocalDayIsoRange(nextFilter.startDate, nextFilter.endDate);
+      const params: Record<string, string> = {
+        _t: String(Date.now()),
+      };
+      if (startIso) params.startDate = startIso;
+      if (endIso) params.endDate = endIso;
+      if (nextFilter.storeId && nextFilter.storeId !== "all") {
+        params.lojaId = nextFilter.storeId;
+      }
+      if (nextFilter.produtoId && nextFilter.produtoId !== "all") {
+        params.produtoId = nextFilter.produtoId;
+      } else if (nextFilter.productQuery.trim()) {
+        params.search = nextFilter.productQuery.trim();
+      }
 
-    return Object.values(groups).sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [movements, stores, deferredMoveSearchTerm]);
+      const res = await api.get("/admin/stock/movimentacoes", { params });
+      const fetched = Array.isArray(res.data) ? res.data : [];
+      setMovements(fetched);
+
+      const isProductFiltered =
+        nextFilter.produtoId !== "all" || Boolean(nextFilter.productQuery.trim());
+      if (isProductFiltered && fetched.length > 0) {
+        const builtGroups = buildMovementGroups(fetched);
+        const initialExpanded: Record<string, boolean> = {};
+        builtGroups.slice(0, 30).forEach((g: any) => {
+          initialExpanded[g.id] = true;
+        });
+        setExpandedMoveGroups(initialExpanded);
+      } else {
+        setExpandedMoveGroups({});
+      }
+    } catch (error) {
+      console.error("Erro ao pesquisar movimentações:", error);
+      Swal.fire({
+        icon: "error",
+        title: "Erro",
+        text: "Não foi possível carregar os movimentos de stock.",
+        background: "#18181b",
+        color: "#fff",
+      });
+    } finally {
+      setLoadingMovements(false);
+    }
+  };
+
+  const handleClearMovements = () => {
+    setDraftMoveFilter(DEFAULT_MOVE_FILTER);
+    setAppliedMoveFilter(DEFAULT_MOVE_FILTER);
+    setMovements([]);
+    setExpandedMoveGroups({});
+    setHasSearchedMovements(false);
+    setIsProductDropdownOpen(false);
+    setDisplayCountMovements(30);
+  };
 
   const fetchData = async () => {
     try {
-      const [prodRes, moveRes, usersRes, catRes] = await Promise.all([
+      const [prodRes, usersRes, catRes] = await Promise.all([
         api.get("/produtos"),
-        api.get("/admin/stock/movimentacoes"),
         api.get("/admin/users"),
         api.get("/categorias")
       ]);
-      setProducts(Array.isArray(prodRes.data) ? prodRes.data.sort((a: any, b: any) => (a.nome || "").localeCompare(b.nome || "")) : []);
-      setMovements(Array.isArray(moveRes.data) ? moveRes.data : []);
-      setStores(Array.isArray(usersRes.data) ? usersRes.data.filter((u: any) => u.role === "loja") : []);
+      setProducts(Array.isArray(prodRes.data) ? prodRes.data.sort((a: any, b: any) => (a.nome || "").localeCompare(b.nome || "", "pt-PT")) : []);
+      setStores(
+        Array.isArray(usersRes.data)
+          ? usersRes.data
+              .filter((u: any) => u.role === "loja")
+              .sort((a: any, b: any) => String(a.name || "").localeCompare(String(b.name || ""), "pt-PT"))
+          : []
+      );
       setCategories(Array.isArray(catRes.data) ? sortCategories(catRes.data) : []);
     } catch (error) {
       console.error("Erro ao carregar dados de stock global:", error);
@@ -167,12 +307,25 @@ export default function AdminGlobalStock() {
     fetchData();
     const channel = supabase
       .channel("global-stock-updates")
-      .on("postgres_changes", { event: "*", schema: "public", table: "movimentacoes_stock" }, fetchData)
       .on("postgres_changes", { event: "*", schema: "public", table: "produtos" }, fetchData)
       .on("postgres_changes", { event: "*", schema: "public", table: "stock_loja" }, fetchData)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, []);
+
+  useEffect(() => {
+    if (
+      (activeFilter === "mais_movimentados" || activeFilter === "menos_movimentados") &&
+      overviewMovements.length === 0
+    ) {
+      api
+        .get("/admin/stock/movimentacoes")
+        .then((res) => {
+          if (Array.isArray(res.data)) setOverviewMovements(res.data);
+        })
+        .catch((err) => console.error("Erro ao carregar resumo de movimentações:", err));
+    }
+  }, [activeFilter, overviewMovements.length]);
 
   const exportToCSV = () => {
     let csvContent = "\uFEFFData;Produto;Tipo;Quantidade;Destino/Motivo\n";
@@ -240,21 +393,21 @@ export default function AdminGlobalStock() {
       case "maior_pvp": return result.sort((a,b) => ((Number(b.stock_armazem) || 0) * (Number(b.preco) || 0)) - ((Number(a.stock_armazem) || 0) * (Number(a.preco) || 0)));
       case "mais_movimentados": {
          const movMap = new Map();
-         movements.forEach(m => {
+         overviewMovements.forEach(m => {
             if (m.produto_id) movMap.set(m.produto_id, (movMap.get(m.produto_id) || 0) + Number(m.quantidade || 0));
          });
          return result.sort((a,b) => (movMap.get(b.id) || 0) - (movMap.get(a.id) || 0));
       }
       case "menos_movimentados": {
          const movMap = new Map();
-         movements.forEach(m => {
+         overviewMovements.forEach(m => {
             if (m.produto_id) movMap.set(m.produto_id, (movMap.get(m.produto_id) || 0) + Number(m.quantidade || 0));
          });
          return result.sort((a,b) => (movMap.get(a.id) || 0) - (movMap.get(b.id) || 0));
       }
       default: return result;
     }
-  }, [products, searchTerm, selectedCategory, activeFilter, movements]);
+  }, [products, deferredSearchTerm, selectedCategory, activeFilter, overviewMovements]);
 
   // Estatísticas
   const valorTotalCusto = products.reduce((acc, p) => acc + ((Number(p.stock_armazem) || 0) * (Number(p.preco_custo) || 0)), 0);
@@ -555,121 +708,372 @@ export default function AdminGlobalStock() {
          )}
 
          {activeTab === "movimentos" && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-               <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <div className="relative w-full sm:w-64">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={16} />
-                    <input 
-                      type="text" 
-                      placeholder="Pesquisar movimentos..." 
-                      value={moveSearchTerm} 
-                      onChange={e => setMoveSearchTerm(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-800 py-2.5 pl-9 pr-3 rounded-xl text-xs font-medium outline-none text-white placeholder:text-zinc-600 focus:bg-zinc-800/50 focus:border-zinc-700 transition-colors shadow-sm"
-                    />
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+               {/* Painel de Filtros sob demanda */}
+               <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-5 shadow-xl">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                     {/* 1. Data de Início */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Data de Início
+                        </label>
+                        <input
+                           type="date"
+                           value={draftMoveFilter.startDate}
+                           onChange={(e) =>
+                              setDraftMoveFilter((prev) => ({ ...prev, startDate: e.target.value }))
+                           }
+                           onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                 e.preventDefault();
+                                 handleSearchMovements();
+                              }
+                           }}
+                           className="w-full px-3 h-10 bg-zinc-950/70 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm text-zinc-200 outline-none transition-colors [color-scheme:dark]"
+                        />
+                     </div>
+
+                     {/* 2. Data de Fim */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Data de Fim
+                        </label>
+                        <input
+                           type="date"
+                           value={draftMoveFilter.endDate}
+                           onChange={(e) =>
+                              setDraftMoveFilter((prev) => ({ ...prev, endDate: e.target.value }))
+                           }
+                           onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                 e.preventDefault();
+                                 handleSearchMovements();
+                              }
+                           }}
+                           className="w-full px-3 h-10 bg-zinc-950/70 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm text-zinc-200 outline-none transition-colors [color-scheme:dark]"
+                        />
+                     </div>
+
+                     {/* 3. Lojas */}
+                     <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Loja
+                        </label>
+                        <select
+                           value={draftMoveFilter.storeId}
+                           onChange={(e) =>
+                              setDraftMoveFilter((prev) => ({ ...prev, storeId: e.target.value }))
+                           }
+                           className="w-full px-3 h-10 bg-zinc-950/70 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm text-zinc-200 outline-none transition-colors"
+                        >
+                           <option value="all">Todas as Lojas</option>
+                           <option value="armazem">Armazém Central (Entradas / Ajustes)</option>
+                           {stores.map((store) => (
+                              <option key={store.id} value={String(store.id)}>
+                                 {store.name}
+                              </option>
+                           ))}
+                        </select>
+                     </div>
+
+                     {/* 4. Produto (Pesquisável + Seleção) */}
+                     <div ref={productDropdownRef} className="relative">
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1.5">
+                           Produto
+                        </label>
+                        <div className="relative">
+                           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none" />
+                           <input
+                              type="text"
+                              placeholder="Todos os produtos..."
+                              value={draftMoveFilter.productQuery}
+                              onFocus={() => setIsProductDropdownOpen(true)}
+                              onChange={(e) => {
+                                 const val = e.target.value;
+                                 setDraftMoveFilter((prev) => ({
+                                    ...prev,
+                                    productQuery: val,
+                                    produtoId: "all",
+                                 }));
+                                 setIsProductDropdownOpen(true);
+                              }}
+                              onKeyDown={(e) => {
+                                 if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handleSearchMovements();
+                                 } else if (e.key === "Escape") {
+                                    setIsProductDropdownOpen(false);
+                                 }
+                              }}
+                              className="w-full pl-9 pr-14 h-10 bg-zinc-950/70 border border-zinc-800 hover:border-zinc-700 focus:border-blue-500/60 rounded-xl text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors"
+                           />
+                           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                              {(draftMoveFilter.productQuery || draftMoveFilter.produtoId !== "all") && (
+                                 <button
+                                    type="button"
+                                    onClick={() => {
+                                       setDraftMoveFilter((prev) => ({
+                                          ...prev,
+                                          produtoId: "all",
+                                          productQuery: "",
+                                       }));
+                                    }}
+                                    className="p-1 text-zinc-500 hover:text-zinc-200 rounded-md transition-colors cursor-pointer"
+                                    title="Limpar produto"
+                                 >
+                                    <X className="w-3.5 h-3.5" />
+                                 </button>
+                              )}
+                              <button
+                                 type="button"
+                                 onClick={() => setIsProductDropdownOpen((prev) => !prev)}
+                                 className="p-1 text-zinc-500 hover:text-zinc-300 rounded-md transition-colors cursor-pointer"
+                                 tabIndex={-1}
+                              >
+                                 <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", isProductDropdownOpen ? "rotate-180" : "")} />
+                              </button>
+                           </div>
+                        </div>
+
+                        {isProductDropdownOpen && (
+                           <div className="absolute left-0 right-0 top-full mt-1.5 max-h-64 overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl z-50 divide-y divide-zinc-800/60">
+                              <button
+                                 type="button"
+                                 onClick={() => {
+                                    setDraftMoveFilter((prev) => ({
+                                       ...prev,
+                                       produtoId: "all",
+                                       productQuery: "",
+                                    }));
+                                    setIsProductDropdownOpen(false);
+                                 }}
+                                 className={cn(
+                                    "w-full px-3.5 py-2.5 text-left text-xs font-semibold flex items-center justify-between hover:bg-zinc-900 transition-colors cursor-pointer",
+                                    draftMoveFilter.produtoId === "all" && !draftMoveFilter.productQuery
+                                       ? "text-blue-400 bg-blue-500/10"
+                                       : "text-zinc-300"
+                                 )}
+                              >
+                                 <span>Todos os Produtos</span>
+                                 {draftMoveFilter.produtoId === "all" && !draftMoveFilter.productQuery && (
+                                    <Check className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                                 )}
+                              </button>
+                              {filteredProductOptions.length === 0 ? (
+                                 <div className="px-3.5 py-3 text-xs text-zinc-500">
+                                    Nenhum produto na lista (prima Pesquisar para procurar no motivo).
+                                 </div>
+                              ) : (
+                                 filteredProductOptions.map((prod) => {
+                                    const isSel = String(draftMoveFilter.produtoId) === String(prod.id);
+                                    return (
+                                       <button
+                                          key={prod.id}
+                                          type="button"
+                                          onClick={() => {
+                                             setDraftMoveFilter((prev) => ({
+                                                ...prev,
+                                                produtoId: String(prod.id),
+                                                productQuery: String(prod.nome || ""),
+                                             }));
+                                             setIsProductDropdownOpen(false);
+                                          }}
+                                          className={cn(
+                                             "w-full px-3.5 py-2 text-left text-xs flex items-center justify-between gap-2 hover:bg-zinc-900 transition-colors cursor-pointer",
+                                             isSel ? "bg-blue-500/15 text-blue-300 font-bold" : "text-zinc-200"
+                                          )}
+                                       >
+                                          <span className="truncate">{prod.nome}</span>
+                                          <div className="flex items-center gap-1.5 shrink-0">
+                                             <span className="text-[10px] uppercase font-mono text-zinc-500">
+                                                {prod.unidade_base || "un"}
+                                             </span>
+                                             {isSel && <Check className="w-3.5 h-3.5 text-blue-400" />}
+                                          </div>
+                                       </button>
+                                    );
+                                 })
+                              )}
+                           </div>
+                        )}
+                     </div>
                   </div>
-                  <div className="flex items-center gap-2 w-full sm:w-auto">
-                    <button onClick={exportToCSV} className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-xs font-bold uppercase tracking-widest text-white transition-all shadow-sm active:scale-95">
-                       <Download size={16} /> <span>Exportar Base</span>
-                    </button>
+
+                  {/* Barra de ações: Exportar + Limpar + Pesquisar */}
+                  <div className="mt-4 pt-3.5 border-t border-zinc-800/70 flex flex-wrap items-center justify-between gap-2.5">
+                     <div className="flex items-center gap-2.5">
+                        {hasSearchedMovements && !loadingMovements && (
+                           <span className="text-xs text-zinc-400 font-medium">
+                              <strong className="text-zinc-100">{movements.length}</strong>{" "}
+                              {movements.length === 1 ? "registo encontrado" : "registos encontrados"}
+                              {appliedMoveFilter.startDate || appliedMoveFilter.endDate ? (
+                                 <span className="text-zinc-500 ml-1">
+                                    ({appliedMoveFilter.startDate ? new Date(`${appliedMoveFilter.startDate}T12:00:00`).toLocaleDateString("pt-PT") : "início"}
+                                    {" → "}
+                                    {appliedMoveFilter.endDate ? new Date(`${appliedMoveFilter.endDate}T12:00:00`).toLocaleDateString("pt-PT") : "hoje"})
+                                 </span>
+                              ) : null}
+                           </span>
+                        )}
+                        {hasSearchedMovements && movements.length > 0 && (
+                           <button
+                              type="button"
+                              onClick={exportToCSV}
+                              className="px-3.5 h-9 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/80 rounded-xl text-[11px] font-bold uppercase tracking-wider text-zinc-200 transition-all flex items-center gap-1.5 cursor-pointer"
+                           >
+                              <Download size={14} /> <span>Exportar CSV</span>
+                           </button>
+                        )}
+                     </div>
+
+                     <div className="flex items-center gap-2.5 ml-auto">
+                        <button
+                           type="button"
+                           onClick={handleClearMovements}
+                           className="px-4 h-10 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-zinc-100 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                           title="Limpar filtros e ocultar lista"
+                        >
+                           <RotateCcw className="w-3.5 h-3.5" />
+                           Limpar
+                        </button>
+                        <button
+                           type="button"
+                           onClick={handleSearchMovements}
+                           disabled={loadingMovements}
+                           className="px-6 h-10 bg-blue-600 hover:bg-blue-500 active:scale-[0.99] disabled:opacity-50 text-white rounded-xl text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
+                        >
+                           <Search className="w-4 h-4" />
+                           {loadingMovements ? "A carregar..." : "Pesquisar"}
+                        </button>
+                     </div>
                   </div>
                </div>
-               
-               <div className="bg-zinc-900 border border-zinc-800 shadow-xl rounded-2xl overflow-hidden mt-6">
-                 <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse whitespace-nowrap">
-                       <thead>
-                         <tr className="border-b border-zinc-800 bg-zinc-950/50">
-                            <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest w-10"></th>
-                            <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Data / Lote</th>
-                            <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Descrição / Motivo</th>
-                            <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-center">Operação</th>
-                            <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Items</th>
-                         </tr>
-                       </thead>
-                       <tbody className="divide-y divide-zinc-800/50">
-                          {groupedMovements.slice(0, displayCountMovements).map(group => (
-                             <React.Fragment key={group.id}>
-                                <tr 
-                                  className={cn("hover:bg-zinc-800/30 transition-colors group cursor-pointer", expandedMoveGroups[group.id] ? "bg-zinc-800/20" : "")}
-                                  onClick={() => toggleMoveGroup(group.id)}
-                                >
-                                   <td className="p-4 text-center">
-                                      {group.isGroup && (
-                                         <Plus size={14} className={cn("text-zinc-500 transition-transform", expandedMoveGroups[group.id] ? "rotate-45 text-white" : "")} />
-                                      )}
-                                   </td>
-                                   <td className="p-4">
-                                      <div className="text-xs font-mono font-medium text-zinc-500 flex flex-col">
-                                         <span className="text-zinc-300">{new Date(group.created_at).toLocaleDateString("pt-PT")}</span>
-                                         <span>{new Date(group.created_at).toLocaleTimeString("pt-PT")}</span>
-                                      </div>
-                                   </td>
-                                   <td className="p-4">
-                                     <p className={cn("text-sm font-bold truncate max-w-[300px]", expandedMoveGroups[group.id] ? "text-blue-400" : "text-zinc-200")}>
-                                       {group.title}
-                                     </p>
-                                   </td>
-                                   <td className="p-4 text-center">
-                                     <div className={`inline-flex items-center justify-center px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest border ${group.tipo === "entrada" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : group.tipo === "saida" ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"}`}>
-                                       {group.tipo === "entrada" ? "Reposição" : group.tipo === "saida" ? "Saída" : group.tipo}
-                                     </div>
-                                   </td>
-                                   <td className="p-4 text-right">
-                                     <span className="text-sm font-bold text-white">
-                                       {group.totalItems} {group.totalItems === 1 ? "artigo" : "artigos"}
-                                     </span>
-                                   </td>
-                                 </tr>
-                                
-                                {expandedMoveGroups[group.id] && (
-                                   <tr>
-                                      <td colSpan={5} className="p-0 bg-black/40">
-                                         <div className="px-12 py-4 border-l-2 border-blue-500/50 space-y-2">
-                                            {group.items.map((m: any) => (
-                                               <div key={m.id} className="flex items-center justify-between py-2 border-b border-zinc-800/50 last:border-0 hover:bg-white/5 px-4 rounded-lg transition-colors">
-                                                  <div className="flex flex-col">
-                                                     <span className="text-sm font-bold text-zinc-200">{m.produto?.nome || m.produto_nome || "Desconhecido"}</span>
-                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-[10px] text-zinc-500 uppercase font-mono">{m.created_at ? new Date(m.created_at).toLocaleTimeString("pt-PT") : ""}</span>
-                                                        {m.motivo && group.isGroup && (
-                                                           <span className="text-[9px] text-zinc-600 italic">({String(m.motivo).replace(/\s*\[ref:[^\]]+\]/gi, "").trim()})</span>
-                                                        )}
-                                                     </div>
-                                                  </div>
-                                                  <div className="flex items-center gap-6">
-                                                     <div className="text-right">
-                                                        <p className={cn("text-sm font-black", m.tipo === 'saida' ? 'text-red-400' : 'text-emerald-400')}>
-                                                           {m.tipo === "saida" ? "-" : "+"}{m.quantidade} <span className="text-[10px] text-zinc-500 uppercase ml-0.5">{m.unidade || m.produto?.unidade_base}</span>
-                                                        </p>
-                                                     </div>
-                                                  </div>
-                                               </div>
-                                            ))}
-                                         </div>
-                                      </td>
-                                   </tr>
-                                )}
-                             </React.Fragment>
-                          ))}
-                       </tbody>
-                    </table>
-                    {groupedMovements.length > displayCountMovements && (
-                      <div ref={loadMoreMovementsRef} className="w-full flex justify-center py-6">
-                        <span className="px-6 py-3 text-zinc-500 font-medium tracking-tight text-sm">
-                          Carregando mais itens...
-                        </span>
-                      </div>
-                    )}
-                 </div>
-                 {groupedMovements.length === 0 && (
-                    <div className="p-16 text-center flex flex-col items-center">
-                       <History size={48} className="text-zinc-700 mb-4" />
-                       <p className="text-sm font-black text-zinc-500 uppercase tracking-widest">
-                          Nenhum registo encontrado
-                       </p>
-                    </div>
-                 )}
-               </div>
+
+               {/* Resultados sob demanda */}
+               {!hasSearchedMovements ? (
+                  <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-2xl py-16 px-6 text-center">
+                     <div className="w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto mb-3.5 text-zinc-400">
+                        <Search className="w-5 h-5" />
+                     </div>
+                     <p className="text-sm font-semibold text-zinc-200">
+                        Os movimentos estão ocultos até realizar a pesquisa
+                     </p>
+                     <p className="text-xs text-zinc-500 mt-1 max-w-md mx-auto">
+                        Selecione a data de início e fim, a loja ou o produto acima e clique em Pesquisar.
+                     </p>
+                  </div>
+               ) : loadingMovements ? (
+                  <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-2xl py-20 px-6 flex flex-col items-center justify-center gap-3">
+                     <RefreshCcw className="w-7 h-7 text-blue-400 animate-spin" />
+                     <p className="text-xs text-zinc-400 font-medium">A carregar movimentos de stock...</p>
+                  </div>
+               ) : groupedMovements.length === 0 ? (
+                  <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-2xl py-16 px-6 text-center flex flex-col items-center">
+                     <History size={44} className="text-zinc-700 mb-3" />
+                     <p className="text-sm font-bold text-zinc-200 mb-1">
+                        Nenhum movimento encontrado
+                     </p>
+                     <p className="text-xs text-zinc-500">
+                        Não existem movimentos para os filtros selecionados.
+                     </p>
+                  </div>
+               ) : (
+                  <div className="bg-zinc-900 border border-zinc-800 shadow-xl rounded-2xl overflow-hidden">
+                     <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse whitespace-nowrap">
+                           <thead>
+                              <tr className="border-b border-zinc-800 bg-zinc-950/50">
+                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest w-10"></th>
+                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Data / Lote</th>
+                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Descrição / Motivo</th>
+                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-center">Operação</th>
+                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Items</th>
+                              </tr>
+                           </thead>
+                           <tbody className="divide-y divide-zinc-800/50">
+                              {groupedMovements.slice(0, displayCountMovements).map((group: any) => (
+                                 <React.Fragment key={group.id}>
+                                    <tr
+                                       className={cn(
+                                          "hover:bg-zinc-800/30 transition-colors group cursor-pointer",
+                                          expandedMoveGroups[group.id] ? "bg-zinc-800/20" : ""
+                                       )}
+                                       onClick={() => toggleMoveGroup(group.id)}
+                                    >
+                                       <td className="p-4 text-center">
+                                          <Plus
+                                             size={14}
+                                             className={cn(
+                                                "text-zinc-500 transition-transform inline-block",
+                                                expandedMoveGroups[group.id] ? "rotate-45 text-white" : ""
+                                             )}
+                                          />
+                                       </td>
+                                       <td className="p-4">
+                                          <div className="text-xs font-mono font-medium text-zinc-500 flex flex-col">
+                                             <span className="text-zinc-300">{new Date(group.created_at).toLocaleDateString("pt-PT")}</span>
+                                             <span>{new Date(group.created_at).toLocaleTimeString("pt-PT")}</span>
+                                          </div>
+                                       </td>
+                                       <td className="p-4">
+                                          <p className={cn("text-sm font-bold truncate max-w-[340px] sm:max-w-[480px]", expandedMoveGroups[group.id] ? "text-blue-400" : "text-zinc-200")}>
+                                             {group.title}
+                                          </p>
+                                       </td>
+                                       <td className="p-4 text-center">
+                                          <div className={`inline-flex items-center justify-center px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest border ${group.tipo === "entrada" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : group.tipo === "saida" ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"}`}>
+                                             {group.tipo === "entrada" ? "Reposição" : group.tipo === "saida" ? "Saída" : group.tipo}
+                                          </div>
+                                       </td>
+                                       <td className="p-4 text-right">
+                                          <span className="text-sm font-bold text-white">
+                                             {group.totalItems} {group.totalItems === 1 ? "artigo" : "artigos"}
+                                          </span>
+                                       </td>
+                                    </tr>
+
+                                    {expandedMoveGroups[group.id] && (
+                                       <tr>
+                                          <td colSpan={5} className="p-0 bg-black/40">
+                                             <div className="px-6 sm:px-12 py-4 border-l-2 border-blue-500/50 space-y-2">
+                                                {group.items.map((m: any) => (
+                                                   <div key={m.id} className="flex items-center justify-between py-2 border-b border-zinc-800/50 last:border-0 hover:bg-white/5 px-4 rounded-lg transition-colors">
+                                                      <div className="flex flex-col">
+                                                         <span className="text-sm font-bold text-zinc-200">{m.produto?.nome || m.produto_nome || "Desconhecido"}</span>
+                                                         <div className="flex items-center flex-wrap gap-2">
+                                                            <span className="text-[10px] text-zinc-500 uppercase font-mono">{m.created_at ? new Date(m.created_at).toLocaleTimeString("pt-PT") : ""}</span>
+                                                            {m.motivo && (
+                                                               <span className="text-[10px] text-zinc-500 italic">({String(m.motivo).replace(/\s*\[ref:[^\]]+\]/gi, "").trim()})</span>
+                                                            )}
+                                                         </div>
+                                                      </div>
+                                                      <div className="flex items-center gap-6 shrink-0">
+                                                         <div className="text-right">
+                                                            <p className={cn("text-sm font-black tabular-nums", m.tipo === "saida" ? "text-red-400" : "text-emerald-400")}>
+                                                               {m.tipo === "saida" ? "-" : "+"}{m.quantidade} <span className="text-[10px] text-zinc-500 uppercase ml-0.5">{m.unidade || m.produto?.unidade_base}</span>
+                                                            </p>
+                                                         </div>
+                                                      </div>
+                                                   </div>
+                                                ))}
+                                             </div>
+                                          </td>
+                                       </tr>
+                                    )}
+                                 </React.Fragment>
+                              ))}
+                           </tbody>
+                        </table>
+                        {groupedMovements.length > displayCountMovements && (
+                           <div ref={loadMoreMovementsRef} className="w-full flex justify-center py-6">
+                              <span className="px-6 py-3 text-zinc-500 font-medium tracking-tight text-sm">
+                                 Carregando mais itens...
+                              </span>
+                           </div>
+                        )}
+                     </div>
+                  </div>
+               )}
             </motion.div>
          )}
          

@@ -181,37 +181,121 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
     }
   });
 
-  // GET Stock Movements History
+  // GET Stock Movements History (On-Demand Filtered)
   app.get("/api/admin/stock/movimentacoes", authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     try {
-      const { startDate, endDate, search } = req.query;
-      
-      let query = supabase
-        .from("movimentacoes_stock")
-        .select(`
-          *,
-          produto:produtos!inner(id, nome, unidade_base)
-        `)
-        .order("created_at", { ascending: false });
+      const rawStart = typeof req.query.startDate === "string" ? req.query.startDate.trim() : "";
+      const rawEnd = typeof req.query.endDate === "string" ? req.query.endDate.trim() : "";
+      const lojaId = typeof req.query.lojaId === "string" ? req.query.lojaId.trim() : "";
+      const produtoId = typeof req.query.produtoId === "string" ? req.query.produtoId.trim() : "";
+      const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
 
-      if (startDate) {
-        query = query.gte("created_at", startDate);
-      }
-      if (endDate) {
-        query = query.lte("created_at", endDate);
-      }
-      if (search) {
-        query = query.ilike("produtos.nome", `%${search}%`);
-      } else {
-        // If no search, limit to 1000 to prevent performance issues
-        query = query.limit(1000);
+      let startIso = rawStart
+        ? rawStart.length === 10
+          ? `${rawStart}T00:00:00.000Z`
+          : rawStart
+        : "";
+      let endIso = rawEnd
+        ? rawEnd.length === 10
+          ? `${rawEnd}T23:59:59.999Z`
+          : rawEnd
+        : "";
+
+      if (startIso && endIso && startIso > endIso) {
+        const temp = startIso;
+        startIso = endIso;
+        endIso = temp;
       }
 
-      const { data, error } = await query;
+      const buildBaseMovementsQuery = (innerJoinProduto = false) => {
+        const prodRel = innerJoinProduto
+          ? "produto:produtos!inner(id, nome, unidade_base)"
+          : "produto:produtos(id, nome, unidade_base)";
+        let q = supabase
+          .from("movimentacoes_stock")
+          .select(`*, ${prodRel}`)
+          .order("created_at", { ascending: false });
 
+        if (startIso) {
+          q = q.gte("created_at", startIso);
+        }
+        if (endIso) {
+          q = q.lte("created_at", endIso);
+        }
+        if (lojaId && lojaId !== "all") {
+          if (lojaId === "armazem") {
+            q = q.is("user_target_id", null);
+          } else {
+            q = q.eq("user_target_id", lojaId);
+          }
+        }
+        return q;
+      };
+
+      // Case 1: Specific product selected
+      if (produtoId && produtoId !== "all") {
+        const { data, error } = await buildBaseMovementsQuery(false)
+          .eq("produto_id", produtoId)
+          .limit(2000);
+        if (error) throw error;
+        return res.json(data || []);
+      }
+
+      // Case 2: Free-text search (matches product name, barcode_ean, or movement motivo)
+      const safeSearch = search.replace(/[,%()]/g, " ").trim();
+      if (safeSearch) {
+        let { data: matchedProds, error: prodErr } = await supabase
+          .from("produtos")
+          .select("id")
+          .or(`nome.ilike.%${safeSearch}%,barcode_ean.ilike.%${safeSearch}%`)
+          .limit(150);
+
+        if (prodErr) {
+          const retry = await supabase
+            .from("produtos")
+            .select("id")
+            .ilike("nome", `%${safeSearch}%`)
+            .limit(150);
+          matchedProds = retry.data;
+        }
+
+        const matchedIds = (matchedProds || []).map((p: any) => p.id);
+
+        const queries: Promise<any>[] = [
+          buildBaseMovementsQuery(false).ilike("motivo", `%${safeSearch}%`).limit(1000),
+        ];
+
+        if (matchedIds.length > 0 && matchedIds.length <= 120) {
+          queries.push(
+            buildBaseMovementsQuery(false).in("produto_id", matchedIds).limit(1500)
+          );
+        } else if (matchedIds.length > 120) {
+          queries.push(
+            buildBaseMovementsQuery(true).ilike("produtos.nome", `%${safeSearch}%`).limit(1500)
+          );
+        }
+
+        const results = await Promise.all(queries);
+        const mergedMap = new Map<string, any>();
+        for (const r of results) {
+          if (r.error) throw r.error;
+          for (const row of r.data || []) {
+            mergedMap.set(String(row.id), row);
+          }
+        }
+
+        const merged = Array.from(mergedMap.values())
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .slice(0, 2000);
+
+        return res.json(merged);
+      }
+
+      // Case 3: Date / Store filter (or all recent movements)
+      const { data, error } = await buildBaseMovementsQuery(false).limit(2000);
       if (error) throw error;
-      res.json(data);
+      res.json(data || []);
     } catch (error: any) {
       console.error("Erro ao buscar movimentações:", error);
       res.status(500).json({ error: error.message });
