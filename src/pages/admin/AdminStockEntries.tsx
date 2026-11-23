@@ -853,7 +853,6 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                <textarea 
                   value={checkoutFormData.observacoes}
                   onChange={e => setCheckoutFormData({...checkoutFormData, observacoes: e.target.value})}
-                  placeholder="Ex: Teve 20€ de taxa e 10€ de desconto. Valor corrigido conforme fatura física."
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 focus:border-indigo-500/50 outline-none min-h-[100px] resize-none"
                />
             </div>
@@ -1046,8 +1045,7 @@ export default function AdminStockEntries({ onSuccess }: { onSuccess?: () => voi
                 <textarea 
                   value={observacoes}
                   onChange={e => setObservacoes(e.target.value)}
-                  placeholder="Escreva qualquer observação sobre a entrega ou fatura (ex: faltou mercadoria, diferença de peso, taxa extra...)"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all placeholder:text-zinc-600 min-h-[80px] resize-none"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all min-h-[80px] resize-none"
                 />
               </div>
             </div>

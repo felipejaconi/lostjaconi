@@ -744,13 +744,9 @@ export default function AdminGlobalStock() {
                           <tr className="border-b border-zinc-800 bg-zinc-950/50">
                              <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Identificação do Artigo</th>
                              <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Arm. Central</th>
-                             {!isArmazem && (
-                               <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Custo Un.</th>
-                             )}
+                             <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Custo Un.</th>
                              <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">P.V.P Un.</th>
-                             {!isArmazem && (
-                               <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Total (PVP)</th>
-                             )}
+                             <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Total (PVP)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-800/50">
@@ -799,19 +795,15 @@ export default function AdminGlobalStock() {
                                      </span>
                                    </div>
                                  </td>
-                                 {!isArmazem && (
-                                   <td className="p-4 text-right">
-                                     <span className="text-sm font-medium text-zinc-400">€{Number(p.preco_custo || 0).toFixed(2)}</span>
-                                   </td>
-                                 )}
+                                 <td className="p-4 text-right">
+                                   <span className="text-sm font-medium text-zinc-400">€{Number(p.preco_custo || 0).toFixed(2)}</span>
+                                 </td>
                                  <td className="p-4 text-right">
                                    <span className="text-sm font-medium text-blue-400">€{Number(p.preco || 0).toFixed(2)}</span>
                                  </td>
-                                 {!isArmazem && (
-                                   <td className="p-4 text-right">
-                                     <span className="text-sm font-black text-white">€{(Number(p.stock_armazem || 0) * Number(p.preco || 0)).toFixed(2)}</span>
-                                   </td>
-                                 )}
+                                 <td className="p-4 text-right">
+                                   <span className="text-sm font-black text-white">€{(Number(p.stock_armazem || 0) * Number(p.preco || 0)).toFixed(2)}</span>
+                                 </td>
                               </tr>
                            ))}
                         </tbody>
@@ -1320,7 +1312,7 @@ export default function AdminGlobalStock() {
         onClose={() => setSelectedProduct(null)} 
         product={selectedProduct} 
         adminMode={true}
-        hideCostAndTotal={isArmazem}
+        hideCostAndTotal={false}
       />
     </div>
   );
