@@ -219,15 +219,22 @@ export function setupStatsRoutes({ app, supabase, authenticateToken, upload, upl
       today.setHours(0,0,0,0);
       const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
       
+      const startOfThisMonthIso = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
       const [
         finFaturasRes,
-        { data: pedidos }
+        { data: unpaidPedidos },
+        { data: monthConcludedPedidos }
       ] = await Promise.all([
         fetchFaturasFinanceiro(supabase, { includeRelations: false }),
         supabase.from("pedidos")
-          .select("total, status, created_at, pedido_itens(quantidade, preco_unitario, iva, produto:produtos(iva))")
-          .in("status", ["pronto", "entregue", "concluido"])
+          .select("id, total, status, created_at, pedido_itens(quantidade, preco_unitario, iva, produto:produtos(iva))")
+          .in("status", ["pronto", "entregue"]),
+        supabase.from("pedidos")
+          .select("id, total, status, created_at, pedido_itens(quantidade, preco_unitario, iva, produto:produtos(iva))")
+          .eq("status", "concluido")
+          .gte("created_at", startOfThisMonthIso)
       ]);
+      const pedidos = [...(unpaidPedidos || []), ...(monthConcludedPedidos || [])];
 
       let totalPendenteCompras = 0;
       let totalPendenteDespesas = 0;

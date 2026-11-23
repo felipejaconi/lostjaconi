@@ -232,11 +232,86 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
   };
 
   // Limpa faturas marcadas para remoção permanente e sincroniza registos legados do financeiro
+  const BULK_RECEBER_CUTOFF_ISO = "2026-11-23T22:15:00.000Z";
+  const BULK_RECEBER_MARKER = "migrations/bulk_receber_2026_11_23_v1.json";
   (async () => {
     try {
       const purged = await purgeSpecificDeletedFinancialInvoices(supabase);
       await ensureLegacyFinancialRowsMigrated(supabase);
-      if (purged) clearFinanceCache();
+
+      const { data: markerFile } = await supabase.storage
+        .from("uploads")
+        .download(BULK_RECEBER_MARKER);
+
+      if (!markerFile) {
+        const excludedStoreIds = new Set([
+          "f94d4248-feac-4aed-9e8f-4dbcb513948b", // BENAVENTE
+          "755c5de6-53de-42bd-a79c-bfa6fb7da459", // POVOS
+          "0599bb97-17df-4e7e-8dc8-d0789a395c9c", // WIN BURGUER
+        ]);
+
+        const pendingRows: any[] = [];
+        let fromIdx = 0;
+        const pageSz = 1000;
+        while (true) {
+          const { data: chunk, error: pedErr } = await supabase
+            .from("pedidos")
+            .select("id, user_id, status, created_at, user:users(name)")
+            .in("status", ["pronto", "entregue"])
+            .lte("created_at", BULK_RECEBER_CUTOFF_ISO)
+            .order("id", { ascending: true })
+            .range(fromIdx, fromIdx + pageSz - 1);
+          if (pedErr || !chunk || chunk.length === 0) break;
+          pendingRows.push(...chunk);
+          if (chunk.length < pageSz) break;
+          fromIdx += pageSz;
+        }
+
+        const idsToConclude: string[] = [];
+        for (const row of pendingRows) {
+          const uid = String(row.user_id || "");
+          const storeName = String((row as any).user?.name || "").trim().toLowerCase();
+          const isExcluded =
+            excludedStoreIds.has(uid) ||
+            storeName.includes("benavente") ||
+            storeName.includes("povos") ||
+            storeName.includes("win burguer") ||
+            storeName.includes("win burger");
+          if (!isExcluded) {
+            idsToConclude.push(String(row.id));
+          }
+        }
+
+        if (idsToConclude.length > 0) {
+          for (let i = 0; i < idsToConclude.length; i += 200) {
+            const batch = idsToConclude.slice(i, i + 200);
+            const { error: updErr } = await supabase
+              .from("pedidos")
+              .update({ status: "concluido" })
+              .in("id", batch);
+            if (updErr) throw updErr;
+          }
+          console.log(`[Financeiro] ${idsToConclude.length} faturas a receber marcadas como recebidas.`);
+        }
+
+        await supabase.storage
+          .from("uploads")
+          .upload(
+            BULK_RECEBER_MARKER,
+            Buffer.from(
+              JSON.stringify({
+                appliedAt: new Date().toISOString(),
+                updatedCount: idsToConclude.length,
+              })
+            ),
+            { contentType: "application/json", upsert: true }
+          )
+          .catch(() => {});
+
+        clearFinanceCache();
+      } else if (purged) {
+        clearFinanceCache();
+      }
     } catch (e) {
       console.warn("[Migration] Aviso ao verificar faturas_financeiro:", e);
     }
@@ -250,26 +325,39 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       const cached = cache.get(cacheKey);
       if (cached) return res.json(cached);
 
-      let query = supabase
-        .from("pedidos")
-        .select("id, user_id, status, created_at, user:users(name), pedido_itens(quantidade, preco_unitario, produto:produtos(iva))")
-        .in("status", ["pronto", "entregue", "concluido"]);
+      const now = new Date();
+      const startFilter =
+        period === "mes"
+          ? new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+          : period === "ano"
+          ? new Date(now.getFullYear(), 0, 1).toISOString()
+          : null;
 
-      if (period === 'mes') {
-         const now = new Date();
-         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-         query = query.gte("created_at", startOfMonth);
-      } else if (period === 'ano') {
-         const now = new Date();
-         const startOfYear = new Date(now.getFullYear(), 0, 1).toISOString();
-         query = query.gte("created_at", startOfYear);
+      const allRows: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        let query = supabase
+          .from("pedidos")
+          .select("id, user_id, status, created_at, user:users(name), pedido_itens(quantidade, preco_unitario, produto:produtos(iva))")
+          .in("status", ["pronto", "entregue", "concluido"]);
+
+        if (startFilter) {
+          query = query.gte("created_at", startFilter);
+        }
+
+        const { data: chunk, error } = await query
+          .order("created_at", { ascending: false })
+          .range(from, from + pageSize - 1);
+
+        if (error) throw error;
+        if (!chunk || chunk.length === 0) break;
+        allRows.push(...chunk);
+        if (chunk.length < pageSize) break;
+        from += pageSize;
       }
 
-      const { data, error } = await query.order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      const mapped = (data || []).map((p: any) => {
+      const mapped = allRows.map((p: any) => {
         let sumSubtotal = 0;
         let sumIva = 0;
         (p.pedido_itens || []).forEach((item: any) => {
