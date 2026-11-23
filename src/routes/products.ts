@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { canAccessProducaoArmazem, isProducaoArmazemCategory } from '../lib/categoryUtils';
+import { withStockBalanceTag } from '../lib/stockMovementBalance';
 
 export function setupProductsRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, deleteFromSupabase, JWT_SECRET, cache }: any) {
   // Products CRUD
@@ -149,11 +150,40 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
     const { stock_armazem } = req.body;
     try {
+      const nextStock = Number(stock_armazem) || 0;
+      const { data: prevProd } = await supabase
+        .from("produtos")
+        .select("stock_armazem, unidade_base")
+        .eq("id", req.params.id)
+        .maybeSingle();
+
+      const prevStock = prevProd ? Number(prevProd.stock_armazem || 0) : 0;
+      const diff = nextStock - prevStock;
+
       const { error } = await supabase
         .from("produtos")
-        .update({ stock_armazem })
+        .update({ stock_armazem: nextStock })
         .eq("id", req.params.id);
       if (error) throw error;
+
+      if (diff !== 0) {
+        await supabase.from("movimentacoes_stock").insert([
+          {
+            produto_id: req.params.id,
+            user_id: req.user.id,
+            tipo: diff > 0 ? "entrada" : "saida",
+            quantidade: Math.abs(diff),
+            unidade: prevProd?.unidade_base || "un",
+            motivo: withStockBalanceTag(
+              diff > 0 ? "Ajuste rápido no Armazém (Entrada)" : "Ajuste rápido no Armazém (Saída)",
+              prevStock,
+              nextStock
+            ),
+          },
+        ]);
+      }
+
+      if (cache) cache.del("admin_produtos");
       res.json({ message: "Stock atualizado!" });
     } catch (e: any) {
       console.error(e);
@@ -218,9 +248,10 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
 
       try {
         if (stock_armazem !== undefined && stock_armazem !== "") {
-           const { data: previousData } = await supabase.from("produtos").select("stock_armazem").eq("id", req.params.id).single();
+           const { data: previousData } = await supabase.from("produtos").select("stock_armazem, unidade_base").eq("id", req.params.id).single();
            const previousStock = previousData ? Number(previousData.stock_armazem || 0) : 0;
-           const diff = Number(stock_armazem) - previousStock;
+           const nextStockNum = Number(stock_armazem);
+           const diff = nextStockNum - previousStock;
            
            if (diff !== 0) {
              await supabase.from("movimentacoes_stock").insert([{
@@ -228,7 +259,12 @@ export function setupProductsRoutes({ app, supabase, authenticateToken, upload, 
                user_id: req.user.id,
                tipo: diff > 0 ? "entrada" : "saida",
                quantidade: Math.abs(diff),
-               motivo: diff > 0 ? "Ajuste manual (Entrada)" : "Ajuste manual (Corrigida Saída)"
+               unidade: unidade_base || previousData?.unidade_base || "un",
+               motivo: withStockBalanceTag(
+                 diff > 0 ? "Ajuste manual (Entrada)" : "Ajuste manual (Corrigida Saída)",
+                 previousStock,
+                 nextStockNum
+               )
              }]);
            }
         }

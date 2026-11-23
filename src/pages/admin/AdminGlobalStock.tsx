@@ -63,6 +63,134 @@ function toLocalDayIsoRange(startDateStr: string, endDateStr: string): { startIs
   return { startIso, endIso };
 }
 
+function cleanMovementMotivo(raw?: string | null): string {
+  if (!raw) return "";
+  return String(raw)
+    .replace(/\s*\[ref:[^\]]+\]/gi, "")
+    .replace(/\s*\[bal:[^\]]+\]/gi, "")
+    .trim();
+}
+
+function roundStockVal(val: any): number {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num * 1000) / 1000;
+}
+
+function formatStockQty(val: any): string {
+  return roundStockVal(val).toLocaleString("pt-PT", {
+    maximumFractionDigits: 3,
+  });
+}
+
+function getMovementBalanceInfo(m: any) {
+  const isSaida = m?.tipo === "saida";
+  const movQty = roundStockVal(Math.abs(Number(m?.quantidade || 0)));
+  const unit = String(m?.unidade || m?.produto?.unidade_base || m?.produto?.unidade_medida || "un");
+
+  let tinha: number | null =
+    m?.stock_antes !== undefined && m?.stock_antes !== null && Number.isFinite(Number(m.stock_antes))
+      ? roundStockVal(m.stock_antes)
+      : null;
+  let ficou: number | null =
+    m?.stock_depois !== undefined && m?.stock_depois !== null && Number.isFinite(Number(m.stock_depois))
+      ? roundStockVal(m.stock_depois)
+      : null;
+
+  if (tinha === null || ficou === null) {
+    const match = String(m?.motivo || "").match(/\[bal:(-?\d+(?:\.\d+)?)->(-?\d+(?:\.\d+)?)\]/i);
+    if (match) {
+      tinha = roundStockVal(Number(match[1]));
+      ficou = roundStockVal(Number(match[2]));
+    }
+  }
+
+  return {
+    hasBalance: tinha !== null && ficou !== null,
+    tinha: tinha ?? 0,
+    movQty,
+    ficou: ficou ?? 0,
+    unit,
+    isSaida,
+  };
+}
+
+function StockBalanceEquation({ movement }: { movement: any }) {
+  const { hasBalance, tinha, movQty, ficou, unit, isSaida } = getMovementBalanceInfo(movement);
+
+  if (!hasBalance) {
+    return (
+      <div className="text-right font-mono tabular-nums">
+        <span className={cn("text-sm font-black", isSaida ? "text-rose-400" : "text-emerald-400")}>
+          {isSaida ? "−" : "+"}
+          {formatStockQty(movQty)}
+        </span>
+        <span className="text-[10px] text-zinc-500 uppercase ml-1">{unit}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="inline-flex items-end gap-1.5 sm:gap-2.5 bg-zinc-950/70 border border-zinc-800/80 rounded-xl px-3 py-1.5">
+      {/* TINHA */}
+      <div className="flex flex-col items-end min-w-[46px]">
+        <span className="text-[9px] font-black uppercase tracking-wider text-yellow-400 leading-none mb-1">
+          Tinha
+        </span>
+        <span className="text-sm font-black font-mono tabular-nums text-yellow-300 leading-none">
+          {formatStockQty(tinha)}
+        </span>
+      </div>
+
+      {/* SINAL (- ou +) */}
+      <span
+        className={cn(
+          "text-base font-black font-mono leading-none pb-0.5 select-none",
+          isSaida ? "text-rose-400" : "text-emerald-400"
+        )}
+      >
+        {isSaida ? "−" : "+"}
+      </span>
+
+      {/* SAIU ou ENTROU */}
+      <div className="flex flex-col items-end min-w-[46px]">
+        <span
+          className={cn(
+            "text-[9px] font-black uppercase tracking-wider leading-none mb-1",
+            isSaida ? "text-rose-400" : "text-emerald-400"
+          )}
+        >
+          {isSaida ? "Saiu" : "Entrou"}
+        </span>
+        <span
+          className={cn(
+            "text-sm font-black font-mono tabular-nums leading-none",
+            isSaida ? "text-rose-400" : "text-emerald-400"
+          )}
+        >
+          {formatStockQty(movQty)}
+        </span>
+      </div>
+
+      {/* IGUAL (=) */}
+      <span className="text-base font-black font-mono text-zinc-400 leading-none pb-0.5 select-none">
+        =
+      </span>
+
+      {/* FICOU */}
+      <div className="flex flex-col items-end min-w-[62px] pl-2 border-l border-zinc-800">
+        <span className="text-[9px] font-black uppercase tracking-wider leading-none mb-1 text-emerald-400">
+          Ficou
+        </span>
+        <span className="text-sm font-black font-mono tabular-nums leading-none text-emerald-300">
+          {formatStockQty(ficou)}
+          <span className="text-[10px] font-bold uppercase text-zinc-400 ml-1">{unit}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminGlobalStock() {
   const { user } = useAuth();
   const isArmazem = user?.role === "armazem";
@@ -159,7 +287,7 @@ export default function AdminGlobalStock() {
       let displayTitle = "";
       let isGroup = true;
 
-      const cleanMotivo = (m.motivo || "").replace(/\s*\[ref:[^\]]+\]/gi, "").trim();
+      const cleanMotivo = cleanMovementMotivo(m.motivo);
       const prodName = m.produto?.nome || m.produto_nome || "";
 
       if (m.tipo === "entrada") {
@@ -250,7 +378,9 @@ export default function AdminGlobalStock() {
         const builtGroups = buildMovementGroups(fetched);
         const initialExpanded: Record<string, boolean> = {};
         builtGroups.slice(0, 30).forEach((g: any) => {
-          initialExpanded[g.id] = true;
+          if (g.totalItems > 1) {
+            initialExpanded[g.id] = true;
+          }
         });
         setExpandedMoveGroups(initialExpanded);
       } else {
@@ -328,18 +458,23 @@ export default function AdminGlobalStock() {
   }, [activeFilter, overviewMovements.length]);
 
   const exportToCSV = () => {
-    let csvContent = "\uFEFFData;Produto;Tipo;Quantidade;Destino/Motivo\n";
-    movements.forEach(m => {
+    let csvContent = "\uFEFFData;Produto;Tipo;Tinha (Antes);Movimento;Ficou (Depois);Unidade;Destino/Motivo\n";
+    movements.forEach((m) => {
       const data = new Date(m.created_at).toLocaleString("pt-PT");
       const produto = (m.produto?.nome || m.produto_nome || "").replace(/;/g, ",");
-      const tipo = m.tipo === "entrada" ? "ENTRADA" : "SAÍDA";
-      const quantidade = `${m.quantidade} ${m.unidade || m.produto?.unidade_medida}`;
-      const cleanExportMotivo = (m.motivo || "").replace(/\s*\[ref:[^\]]+\]/gi, "").trim();
-      const destino = m.user_target_id ? `LOJA: ${stores.find((s) => s.id === m.user_target_id)?.name || m.user_target_id}` : cleanExportMotivo;
-      
-      csvContent += `${data};${produto};${tipo};${quantidade};${destino}\n`;
+      const { hasBalance, tinha, movQty, ficou, unit, isSaida } = getMovementBalanceInfo(m);
+      const tipo = isSaida ? "SAÍDA" : "ENTRADA";
+      const tinhaStr = hasBalance ? formatStockQty(tinha) : "-";
+      const movStr = `${isSaida ? "-" : "+"}${formatStockQty(movQty)}`;
+      const ficouStr = hasBalance ? formatStockQty(ficou) : "-";
+      const cleanExportMotivo = cleanMovementMotivo(m.motivo);
+      const destino = m.user_target_id
+        ? `LOJA: ${stores.find((s) => s.id === m.user_target_id)?.name || m.user_target_id}`
+        : cleanExportMotivo;
+
+      csvContent += `${data};${produto};${tipo};${tinhaStr};${movStr};${ficouStr};${unit};${destino}\n`;
     });
-    
+
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -977,91 +1112,192 @@ export default function AdminGlobalStock() {
                         Não existem movimentos para os filtros selecionados.
                      </p>
                   </div>
-               ) : (
+                ) : (
                   <div className="bg-zinc-900 border border-zinc-800 shadow-xl rounded-2xl overflow-hidden">
+                     {/* Legenda clara de cores + botão Expandir/Recolher lotes */}
+                     <div className="px-4 sm:px-5 py-3 bg-zinc-950/70 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+                           <span className="text-zinc-500 font-semibold">Leitura do cálculo:</span>
+                           <span className="font-bold text-yellow-400">Tinha (antes)</span>
+                           <span className="text-zinc-600" aria-hidden="true">·</span>
+                           <span className="font-bold text-emerald-400">+ Entrou</span>
+                           <span className="text-zinc-600" aria-hidden="true">/</span>
+                           <span className="font-bold text-rose-400">− Saiu</span>
+                           <span className="text-zinc-600" aria-hidden="true">·</span>
+                           <span className="font-bold text-emerald-400">= Ficou (saldo)</span>
+                        </div>
+
+                        {groupedMovements.some((g: any) => g.totalItems > 1) && (
+                           <button
+                              type="button"
+                              onClick={() => {
+                                 const visibleMulti = groupedMovements
+                                    .slice(0, displayCountMovements)
+                                    .filter((g: any) => g.totalItems > 1);
+                                 const allExpanded = visibleMulti.every((g: any) => expandedMoveGroups[g.id]);
+                                 if (allExpanded) {
+                                    setExpandedMoveGroups({});
+                                 } else {
+                                    const next: Record<string, boolean> = { ...expandedMoveGroups };
+                                    visibleMulti.forEach((g: any) => {
+                                       next[g.id] = true;
+                                    });
+                                    setExpandedMoveGroups(next);
+                                 }
+                              }}
+                              className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-xs font-semibold text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                           >
+                              {groupedMovements
+                                 .slice(0, displayCountMovements)
+                                 .filter((g: any) => g.totalItems > 1)
+                                 .every((g: any) => expandedMoveGroups[g.id])
+                                 ? "Recolher Lotes"
+                                 : "Expandir Todos os Lotes"}
+                           </button>
+                        )}
+                     </div>
+
                      <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse whitespace-nowrap">
                            <thead>
                               <tr className="border-b border-zinc-800 bg-zinc-950/50">
                                  <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest w-10"></th>
-                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Data / Lote</th>
-                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Descrição / Motivo</th>
+                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Data / Hora</th>
+                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Produto / Destino / Motivo</th>
                                  <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-center">Operação</th>
-                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Items</th>
+                                 <th className="p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Cálculo de Stock (Tinha · Mov · Ficou)</th>
                               </tr>
                            </thead>
                            <tbody className="divide-y divide-zinc-800/50">
-                              {groupedMovements.slice(0, displayCountMovements).map((group: any) => (
-                                 <React.Fragment key={group.id}>
-                                    <tr
-                                       className={cn(
-                                          "hover:bg-zinc-800/30 transition-colors group cursor-pointer",
-                                          expandedMoveGroups[group.id] ? "bg-zinc-800/20" : ""
-                                       )}
-                                       onClick={() => toggleMoveGroup(group.id)}
-                                    >
-                                       <td className="p-4 text-center">
-                                          <Plus
-                                             size={14}
-                                             className={cn(
-                                                "text-zinc-500 transition-transform inline-block",
-                                                expandedMoveGroups[group.id] ? "rotate-45 text-white" : ""
-                                             )}
-                                          />
-                                       </td>
-                                       <td className="p-4">
-                                          <div className="text-xs font-mono font-medium text-zinc-500 flex flex-col">
-                                             <span className="text-zinc-300">{new Date(group.created_at).toLocaleDateString("pt-PT")}</span>
-                                             <span>{new Date(group.created_at).toLocaleTimeString("pt-PT")}</span>
-                                          </div>
-                                       </td>
-                                       <td className="p-4">
-                                          <p className={cn("text-sm font-bold truncate max-w-[340px] sm:max-w-[480px]", expandedMoveGroups[group.id] ? "text-blue-400" : "text-zinc-200")}>
-                                             {group.title}
-                                          </p>
-                                       </td>
-                                       <td className="p-4 text-center">
-                                          <div className={`inline-flex items-center justify-center px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest border ${group.tipo === "entrada" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : group.tipo === "saida" ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"}`}>
-                                             {group.tipo === "entrada" ? "Reposição" : group.tipo === "saida" ? "Saída" : group.tipo}
-                                          </div>
-                                       </td>
-                                       <td className="p-4 text-right">
-                                          <span className="text-sm font-bold text-white">
-                                             {group.totalItems} {group.totalItems === 1 ? "artigo" : "artigos"}
-                                          </span>
-                                       </td>
-                                    </tr>
+                              {groupedMovements.slice(0, displayCountMovements).map((group: any) => {
+                                 const isSingleItem = group.totalItems === 1;
+                                 const singleItem = isSingleItem ? group.items[0] : null;
+                                 const singleProdName = singleItem
+                                    ? singleItem.produto?.nome || singleItem.produto_nome || "Desconhecido"
+                                    : "";
+                                 const singleCleanMotivo = singleItem ? cleanMovementMotivo(singleItem.motivo) : "";
 
-                                    {expandedMoveGroups[group.id] && (
-                                       <tr>
-                                          <td colSpan={5} className="p-0 bg-black/40">
-                                             <div className="px-6 sm:px-12 py-4 border-l-2 border-blue-500/50 space-y-2">
-                                                {group.items.map((m: any) => (
-                                                   <div key={m.id} className="flex items-center justify-between py-2 border-b border-zinc-800/50 last:border-0 hover:bg-white/5 px-4 rounded-lg transition-colors">
-                                                      <div className="flex flex-col">
-                                                         <span className="text-sm font-bold text-zinc-200">{m.produto?.nome || m.produto_nome || "Desconhecido"}</span>
-                                                         <div className="flex items-center flex-wrap gap-2">
-                                                            <span className="text-[10px] text-zinc-500 uppercase font-mono">{m.created_at ? new Date(m.created_at).toLocaleTimeString("pt-PT") : ""}</span>
-                                                            {m.motivo && (
-                                                               <span className="text-[10px] text-zinc-500 italic">({String(m.motivo).replace(/\s*\[ref:[^\]]+\]/gi, "").trim()})</span>
-                                                            )}
-                                                         </div>
-                                                      </div>
-                                                      <div className="flex items-center gap-6 shrink-0">
-                                                         <div className="text-right">
-                                                            <p className={cn("text-sm font-black tabular-nums", m.tipo === "saida" ? "text-red-400" : "text-emerald-400")}>
-                                                               {m.tipo === "saida" ? "-" : "+"}{m.quantidade} <span className="text-[10px] text-zinc-500 uppercase ml-0.5">{m.unidade || m.produto?.unidade_base}</span>
-                                                            </p>
-                                                         </div>
-                                                      </div>
-                                                   </div>
-                                                ))}
+                                 return (
+                                    <React.Fragment key={group.id}>
+                                       <tr
+                                          className={cn(
+                                             "hover:bg-zinc-800/30 transition-colors group",
+                                             !isSingleItem && "cursor-pointer",
+                                             !isSingleItem && expandedMoveGroups[group.id] ? "bg-zinc-800/20" : ""
+                                          )}
+                                          onClick={() => {
+                                             if (!isSingleItem) toggleMoveGroup(group.id);
+                                          }}
+                                       >
+                                          <td className="p-4 text-center">
+                                             {!isSingleItem ? (
+                                                <Plus
+                                                   size={14}
+                                                   className={cn(
+                                                      "text-zinc-500 transition-transform inline-block",
+                                                      expandedMoveGroups[group.id] ? "rotate-45 text-white" : ""
+                                                   )}
+                                                />
+                                             ) : (
+                                                <span className="inline-block w-3.5" />
+                                             )}
+                                          </td>
+                                          <td className="p-4">
+                                             <div className="text-xs font-mono font-medium text-zinc-500 flex flex-col">
+                                                <span className="text-zinc-300">{new Date(group.created_at).toLocaleDateString("pt-PT")}</span>
+                                                <span>{new Date(group.created_at).toLocaleTimeString("pt-PT")}</span>
                                              </div>
                                           </td>
+                                          <td className="p-4">
+                                             {isSingleItem ? (
+                                                <div className="flex flex-col max-w-[340px] sm:max-w-[480px]">
+                                                   <span className="text-sm font-bold text-zinc-100 truncate">
+                                                      {singleProdName}
+                                                   </span>
+                                                   <span className="text-xs text-zinc-400 truncate mt-0.5">
+                                                      {group.isGroup
+                                                         ? `${group.title}${singleCleanMotivo ? ` · ${singleCleanMotivo}` : ""}`
+                                                         : singleCleanMotivo || group.title}
+                                                   </span>
+                                                </div>
+                                             ) : (
+                                                <p className={cn("text-sm font-bold truncate max-w-[340px] sm:max-w-[480px]", expandedMoveGroups[group.id] ? "text-blue-400" : "text-zinc-200")}>
+                                                   {group.title}
+                                                </p>
+                                             )}
+                                          </td>
+                                          <td className="p-4 text-center">
+                                             <span
+                                                className={cn(
+                                                   "text-xs font-bold uppercase tracking-wider",
+                                                   group.tipo === "entrada"
+                                                      ? "text-emerald-400"
+                                                      : group.tipo === "saida"
+                                                      ? "text-rose-400"
+                                                      : "text-amber-400"
+                                                )}
+                                             >
+                                                {group.tipo === "entrada" ? "Entrada" : group.tipo === "saida" ? "Saída" : group.tipo}
+                                             </span>
+                                          </td>
+                                          <td className="p-4 text-right">
+                                             {isSingleItem && singleItem ? (
+                                                <StockBalanceEquation movement={singleItem} />
+                                             ) : (
+                                                <div className="inline-flex flex-col items-end">
+                                                   <span className="text-sm font-bold text-white">
+                                                      {group.totalItems} artigos
+                                                   </span>
+                                                   <span className="text-[11px] text-blue-400 font-medium">
+                                                      {expandedMoveGroups[group.id] ? "Ocultar cálculo" : "Clique para ver saldos"}
+                                                   </span>
+                                                </div>
+                                             )}
+                                          </td>
                                        </tr>
-                                    )}
-                                 </React.Fragment>
-                              ))}
+
+                                       {!isSingleItem && expandedMoveGroups[group.id] && (
+                                          <tr>
+                                             <td colSpan={5} className="p-0 bg-black/40">
+                                                <div className="px-4 sm:px-10 py-3.5 border-l-2 border-blue-500/50 space-y-2">
+                                                   {group.items.map((m: any) => {
+                                                      const itemMotivo = cleanMovementMotivo(m.motivo);
+                                                      return (
+                                                         <div
+                                                            key={m.id}
+                                                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 py-2.5 border-b border-zinc-800/50 last:border-0 hover:bg-white/[0.03] px-3 sm:px-4 rounded-xl transition-colors"
+                                                         >
+                                                            <div className="flex flex-col min-w-0">
+                                                               <span className="text-sm font-bold text-zinc-100 truncate">
+                                                                  {m.produto?.nome || m.produto_nome || "Desconhecido"}
+                                                               </span>
+                                                               <div className="flex items-center flex-wrap gap-2 mt-0.5">
+                                                                  <span className="text-[11px] text-zinc-500 font-mono tabular-nums">
+                                                                     {m.created_at ? new Date(m.created_at).toLocaleTimeString("pt-PT") : ""}
+                                                                  </span>
+                                                                  {itemMotivo && (
+                                                                     <>
+                                                                        <span className="text-zinc-700" aria-hidden="true">·</span>
+                                                                        <span className="text-[11px] text-zinc-400 truncate max-w-[360px]">
+                                                                           {itemMotivo}
+                                                                        </span>
+                                                                     </>
+                                                                  )}
+                                                               </div>
+                                                            </div>
+                                                            <div className="flex items-center justify-end shrink-0">
+                                                               <StockBalanceEquation movement={m} />
+                                                            </div>
+                                                         </div>
+                                                      );
+                                                   })}
+                                                </div>
+                                             </td>
+                                          </tr>
+                                       )}
+                                    </React.Fragment>
+                                 );
+                              })}
                            </tbody>
                         </table>
                         {groupedMovements.length > displayCountMovements && (
@@ -1073,7 +1309,7 @@ export default function AdminGlobalStock() {
                         )}
                      </div>
                   </div>
-               )}
+                )}
             </motion.div>
          )}
          

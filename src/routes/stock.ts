@@ -1,6 +1,10 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import {
+  withStockBalanceTag,
+  enrichMovementsWithStockBalance,
+} from '../lib/stockMovementBalance';
 
 export function setupStockRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
   // Manual stock entry (Invoice / Purchase)
@@ -210,8 +214,8 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
 
       const buildBaseMovementsQuery = (innerJoinProduto = false) => {
         const prodRel = innerJoinProduto
-          ? "produto:produtos!inner(id, nome, unidade_base)"
-          : "produto:produtos(id, nome, unidade_base)";
+          ? "produto:produtos!inner(id, nome, unidade_base, stock_armazem)"
+          : "produto:produtos(id, nome, unidade_base, stock_armazem)";
         let q = supabase
           .from("movimentacoes_stock")
           .select(`*, ${prodRel}`)
@@ -239,7 +243,8 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
           .eq("produto_id", produtoId)
           .limit(2000);
         if (error) throw error;
-        return res.json(data || []);
+        const enriched = await enrichMovementsWithStockBalance(supabase, data || []);
+        return res.json(enriched);
       }
 
       // Case 2: Free-text search (matches product name, barcode_ean, or movement motivo)
@@ -289,13 +294,15 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
           .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
           .slice(0, 2000);
 
-        return res.json(merged);
+        const enriched = await enrichMovementsWithStockBalance(supabase, merged);
+        return res.json(enriched);
       }
 
       // Case 3: Date / Store filter (or all recent movements)
       const { data, error } = await buildBaseMovementsQuery(false).limit(2000);
       if (error) throw error;
-      res.json(data || []);
+      const enriched = await enrichMovementsWithStockBalance(supabase, data || []);
+      res.json(enriched);
     } catch (error: any) {
       console.error("Erro ao buscar movimentações:", error);
       res.status(500).json({ error: error.message });
@@ -336,7 +343,7 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
           produto_id,
           tipo,
           quantidade: qty,
-          motivo,
+          motivo: withStockBalanceTag(motivo, currentStock, newStock),
           user_target_id,
           unidade: unidade || prod.unidade_base,
           user_id: req.user.id
@@ -344,6 +351,7 @@ export function setupStockRoutes({ app, supabase, authenticateToken, upload, upl
       
       if (movErr) throw movErr;
 
+      if (cache) cache.del("admin_produtos");
       res.json({ success: true, newStock });
     } catch (error: any) {
       console.error("Erro na movimentação manual:", error);

@@ -8,17 +8,12 @@ import {
   normalizeFaturaFinanceiroRow,
   isMissingFaturasFinanceiroTable,
   ensureLegacyFinancialRowsMigrated,
+  purgeSpecificDeletedFinancialInvoices,
+  deleteFaturaFinanceiroPermanently,
 } from '../lib/faturasFinanceiro';
+import { withStockBalanceTag } from '../lib/stockMovementBalance';
 
 export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
-  // Sincroniza faturas legadas do financeiro para public.faturas_financeiro assim que a tabela existir (mantendo public.faturas intacta)
-  (async () => {
-    try {
-      await ensureLegacyFinancialRowsMigrated(supabase);
-    } catch (e) {
-      console.warn("[Migration] Aviso ao verificar faturas_financeiro:", e);
-    }
-  })();
 
   // ERP Financeiro - Fornecedores
   app.get("/api/admin/fornecedores", authenticateToken, async (req: any, res) => {
@@ -235,6 +230,17 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     cache.del("admin_dashboard_extended");
     cache.del("admin_produtos");
   };
+
+  // Limpa faturas marcadas para remoção permanente e sincroniza registos legados do financeiro
+  (async () => {
+    try {
+      const purged = await purgeSpecificDeletedFinancialInvoices(supabase);
+      await ensureLegacyFinancialRowsMigrated(supabase);
+      if (purged) clearFinanceCache();
+    } catch (e) {
+      console.warn("[Migration] Aviso ao verificar faturas_financeiro:", e);
+    }
+  })();
 
   app.get("/api/admin/financial/pedidos", authenticateToken, async (req: any, res) => {
     if (req.user.role !== "admin" && req.user.role !== "armazem") return res.sendStatus(403);
@@ -648,20 +654,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
     const faturaId = req.params.id;
     try {
       await ensureLegacyFinancialRowsMigrated(supabase);
-      const { error } = await supabase
-        .from(FATURAS_FINANCEIRO_TABLE)
-        .delete()
-        .eq("id", faturaId);
-
-      if (error) {
-        if (isMissingFaturasFinanceiroTable(error)) {
-          return res.status(503).json({
-            error:
-              "A tabela 'faturas_financeiro' ainda não foi criada no Supabase. Execute o script supabase/faturas_financeiro.sql no SQL Editor do Supabase.",
-          });
-        }
-        throw error;
-      }
+      await deleteFaturaFinanceiroPermanently(supabase, faturaId);
 
       clearFinanceCache();
       res.json({ success: true });
@@ -756,7 +749,9 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
             };
 
             if (qtyBase > 0) {
-              updateProdData.stock_armazem = Math.max(0, (Number(prod.stock_armazem) || 0) + qtyBase);
+              const beforeStock = Number(prod.stock_armazem) || 0;
+              const afterStock = Math.max(0, beforeStock + qtyBase);
+              updateProdData.stock_armazem = afterStock;
 
               await supabase.from("movimentacoes_stock").insert([
                 {
@@ -766,7 +761,11 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
                   display_qty: Number(item.quantidade) || 0,
                   display_unit: item.unidade_entrada || prod.unidade_base || "un",
                   unidade: prod.unidade_base || "un",
-                  motivo: `Fatura #${fat.numero_fatura} aprovada no Check de Faturas [ref:${fat.id}]`,
+                  motivo: withStockBalanceTag(
+                    `Fatura #${fat.numero_fatura} aprovada no Check de Faturas [ref:${fat.id}]`,
+                    beforeStock,
+                    afterStock
+                  ),
                   user_id: req.user.id,
                 },
               ]);
@@ -969,7 +968,9 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
               };
 
               if (qtyToApplyBase !== 0) {
-                updateProdData.stock_armazem = Math.max(0, (Number(prod.stock_armazem) || 0) + qtyToApplyBase);
+                const beforeStock = Number(prod.stock_armazem) || 0;
+                const afterStock = Math.max(0, beforeStock + qtyToApplyBase);
+                updateProdData.stock_armazem = afterStock;
 
                 const displayDiff = stockAlreadyApplied && oldItem
                   ? Math.abs(qtyNum - (Number(oldItem.quantidade) || 0))
@@ -983,9 +984,13 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
                     display_qty: displayDiff,
                     display_unit: unitEntrada || prod.unidade_base || "un",
                     unidade: prod.unidade_base || "un",
-                    motivo: stockAlreadyApplied
-                      ? `AJUSTE CONFERÊNCIA: Fatura #${numero_fatura} corrigida [ref:${faturaId}]`
-                      : `Fatura #${numero_fatura} aprovada no Check de Faturas [ref:${faturaId}]`,
+                    motivo: withStockBalanceTag(
+                      stockAlreadyApplied
+                        ? `AJUSTE CONFERÊNCIA: Fatura #${numero_fatura} corrigida [ref:${faturaId}]`
+                        : `Fatura #${numero_fatura} aprovada no Check de Faturas [ref:${faturaId}]`,
+                      beforeStock,
+                      afterStock
+                    ),
                     user_id: req.user.id,
                   },
                 ]);
@@ -1030,10 +1035,12 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
                 .eq("id", oldItem.produto_id)
                 .single();
               if (prod) {
+                const beforeStock = Number(prod.stock_armazem) || 0;
+                const afterStock = Math.max(0, beforeStock - qtyToRevertBase);
                 await supabase
                   .from("produtos")
                   .update({
-                    stock_armazem: Math.max(0, (Number(prod.stock_armazem) || 0) - qtyToRevertBase),
+                    stock_armazem: afterStock,
                   })
                   .eq("id", oldItem.produto_id);
 
@@ -1045,7 +1052,11 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
                     display_qty: oldItem.quantidade,
                     display_unit: oldItem.unidade_entrada || "un",
                     unidade: prod.unidade_base || "un",
-                    motivo: `REMOÇÃO CONFERÊNCIA: Item removido da Fatura #${numero_fatura} [ref:${faturaId}]`,
+                    motivo: withStockBalanceTag(
+                      `REMOÇÃO CONFERÊNCIA: Item removido da Fatura #${numero_fatura} [ref:${faturaId}]`,
+                      beforeStock,
+                      afterStock
+                    ),
                     user_id: req.user.id,
                   },
                 ]);
@@ -1120,9 +1131,10 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
               ? Number(latestProd.stock_armazem)
               : Number(item.produto?.stock_armazem) || 0;
 
+            const afterStock = Math.max(0, currentStock - qtyBase);
             await supabase
               .from("produtos")
-              .update({ stock_armazem: Math.max(0, currentStock - qtyBase) })
+              .update({ stock_armazem: afterStock })
               .eq("id", prodId);
 
             await supabase.from("movimentacoes_stock").insert([
@@ -1133,7 +1145,11 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
                 display_qty: qtyEntrada,
                 display_unit: item.unidade_entrada || "un",
                 unidade: item.produto?.unidade_base || "un",
-                motivo: `ELIMINAÇÃO: Stock removido após apagar Fatura #${fatura.numero_fatura || faturaId}`,
+                motivo: withStockBalanceTag(
+                  `ELIMINAÇÃO: Stock removido após apagar Fatura #${fatura.numero_fatura || faturaId}`,
+                  currentStock,
+                  afterStock
+                ),
                 user_id: req.user.id,
               },
             ]);
@@ -1144,6 +1160,13 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
       await supabase.from("fatura_itens").delete().eq("fatura_id", faturaId);
       await supabase.from("movimentacoes_stock").delete().ilike("motivo", `%[ref:${faturaId}]%`);
       await supabase.from("movimentos_financeiros").delete().eq("fatura_id", faturaId);
+      const { error: finMirrorErr } = await supabase
+        .from(FATURAS_FINANCEIRO_TABLE)
+        .delete()
+        .eq("id", faturaId);
+      if (finMirrorErr && !isMissingFaturasFinanceiroTable(finMirrorErr)) {
+        console.warn("Aviso ao limpar espelho em faturas_financeiro:", finMirrorErr.message);
+      }
       const { error } = await supabase.from("faturas").delete().eq("id", faturaId);
       if (error) throw error;
       clearFinanceCache();

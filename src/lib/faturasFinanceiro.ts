@@ -1,6 +1,7 @@
 export const FATURAS_FINANCEIRO_TABLE = "faturas_financeiro";
 
 let hasSyncedLegacyFinancialRows = false;
+let hasPurgedSpecificInvoices = false;
 
 export function isMissingFaturasFinanceiroTable(error: any): boolean {
   if (!error) return false;
@@ -135,11 +136,113 @@ export function normalizeFaturaFinanceiroRow(row: any): any {
 }
 
 /**
+ * Remove permanentemente faturas financeiras marcadas para eliminação definitiva
+ * tanto da tabela legada public.faturas (tipo = 'compra_financeiro') como de public.faturas_financeiro,
+ * impedindo que voltem a ser sincronizadas no arranque do servidor.
+ */
+export async function purgeSpecificDeletedFinancialInvoices(supabase: any): Promise<boolean> {
+  if (hasPurgedSpecificInvoices) return false;
+  let purgedAny = false;
+
+  try {
+    // 1. Limpar da tabela legada public.faturas (tipo = 'compra_financeiro')
+    const { data: legacyMatches, error: legFetchErr } = await supabase
+      .from("faturas")
+      .select("id, numero_fatura, data_emissao, valor_total")
+      .eq("tipo", "compra_financeiro")
+      .eq("numero_fatura", "1111111")
+      .eq("data_emissao", "2026-11-18");
+
+    if (!legFetchErr && Array.isArray(legacyMatches) && legacyMatches.length > 0) {
+      const legIds = legacyMatches
+        .filter((r: any) => Math.abs(Number(r?.valor_total ?? 0) - 22) < 0.01)
+        .map((r: any) => r.id)
+        .filter(Boolean);
+
+      if (legIds.length > 0) {
+        await supabase.from("movimentos_financeiros").delete().in("fatura_id", legIds);
+        const { error: delLegErr } = await supabase
+          .from("faturas")
+          .delete()
+          .in("id", legIds)
+          .eq("tipo", "compra_financeiro");
+        if (!delLegErr) {
+          purgedAny = true;
+          console.log(`[Financeiro] Fatura 1111111 (€22,00) removida permanentemente de 'faturas'.`);
+        }
+      }
+    }
+
+    // 2. Limpar da tabela dedicada public.faturas_financeiro (se existir)
+    const { data: finMatches, error: finFetchErr } = await supabase
+      .from(FATURAS_FINANCEIRO_TABLE)
+      .select("id, numero_fatura, data_emissao, valor_total")
+      .eq("numero_fatura", "1111111")
+      .eq("data_emissao", "2026-11-18");
+
+    if (!finFetchErr && Array.isArray(finMatches) && finMatches.length > 0) {
+      const finIds = finMatches
+        .filter((r: any) => Math.abs(Number(r?.valor_total ?? 0) - 22) < 0.01)
+        .map((r: any) => r.id)
+        .filter(Boolean);
+
+      if (finIds.length > 0) {
+        await supabase.from("movimentos_financeiros").delete().in("fatura_id", finIds);
+        const { error: delFinErr } = await supabase
+          .from(FATURAS_FINANCEIRO_TABLE)
+          .delete()
+          .in("id", finIds);
+        if (!delFinErr) {
+          purgedAny = true;
+          console.log(`[Financeiro] Fatura 1111111 (€22,00) removida permanentemente de '${FATURAS_FINANCEIRO_TABLE}'.`);
+        }
+      }
+    }
+
+    hasPurgedSpecificInvoices = true;
+  } catch (err) {
+    console.warn("[Financeiro] Aviso ao limpar faturas eliminadas:", err);
+  }
+
+  return purgedAny;
+}
+
+/**
+ * Elimina definitivamente uma fatura do financeiro em public.faturas_financeiro
+ * e também o respetivo registo legado 'compra_financeiro' em public.faturas (e movimentos_financeiros),
+ * garantindo que nunca volte a reaparecer após reiniciar o servidor.
+ */
+export async function deleteFaturaFinanceiroPermanently(supabase: any, faturaId: string): Promise<void> {
+  await supabase.from("movimentos_financeiros").delete().eq("fatura_id", faturaId);
+
+  const { error: finDelErr } = await supabase
+    .from(FATURAS_FINANCEIRO_TABLE)
+    .delete()
+    .eq("id", faturaId);
+
+  if (finDelErr && !isMissingFaturasFinanceiroTable(finDelErr)) {
+    throw finDelErr;
+  }
+
+  const { error: legDelErr } = await supabase
+    .from("faturas")
+    .delete()
+    .eq("id", faturaId)
+    .eq("tipo", "compra_financeiro");
+
+  if (legDelErr && String(legDelErr.code || "") !== "42P01") {
+    throw legDelErr;
+  }
+}
+
+/**
  * Assim que public.faturas_financeiro existir na base de dados, copia de forma
  * idempotente quaisquer registos 'compra_financeiro' anteriores de public.faturas,
  * sem alterar nem apagar nada na tabela public.faturas.
  */
 export async function ensureLegacyFinancialRowsMigrated(supabase: any): Promise<boolean> {
+  await purgeSpecificDeletedFinancialInvoices(supabase);
+
   if (hasSyncedLegacyFinancialRows) return true;
 
   const probe = await supabase.from(FATURAS_FINANCEIRO_TABLE).select("id").limit(1);

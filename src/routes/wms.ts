@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { saveOrderTareDraft } from '../lib/wmsTareStore';
+import { withStockBalanceTag } from '../lib/stockMovementBalance';
 
 export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
   // --- WMS ENDPOINTS ---
@@ -213,9 +214,10 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
                 ? Number(latestProd.stock_armazem)
                 : Number(prodObj.stock_armazem) || 0;
 
+              const newStock = currentStock - qtyBase;
               await supabase
                 .from("produtos")
-                .update({ stock_armazem: currentStock - qtyBase })
+                .update({ stock_armazem: newStock })
                 .eq("id", prodId);
 
               await supabase.from("movimentacoes_stock").insert([
@@ -227,7 +229,7 @@ export function setupWmsRoutes({ app, supabase, authenticateToken, upload, uploa
                   display_qty: qtyVenda,
                   display_unit: prodObj.unidade_base || "un",
                   unidade: prodObj.unidade_base || "un",
-                  motivo: movementMotivo,
+                  motivo: withStockBalanceTag(movementMotivo, currentStock, newStock),
                   user_id: req.user.id,
                 },
               ]);

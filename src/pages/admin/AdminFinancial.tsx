@@ -480,16 +480,23 @@ export default function AdminFinancial() {
 
     try {
       await api.delete(`/admin/faturas-financeiro/${fatura.id}`);
+      const deletedIdStr = String(fatura.id);
+      setFaturas((prev) => prev.filter((item) => String(item.id) !== deletedIdStr));
+      if (financialCache) {
+        financialCache.faturas = (financialCache.faturas || []).filter(
+          (item: any) => String(item.id) !== deletedIdStr
+        );
+      }
+      setIsDetailsModalOpen(false);
+      setSelectedFatura(null);
       Swal.fire({
         title: "Sucesso!",
-        text: `A fatura ${faturaDesc} foi apagada com sucesso.`,
+        text: `A fatura ${faturaDesc} foi apagada permanentemente.`,
         icon: "success",
         timer: 2000,
         showConfirmButton: false
       });
-      setIsDetailsModalOpen(false);
-      setSelectedFatura(null);
-      fetchDados();
+      await fetchDados();
     } catch (err: any) {
       console.error("Erro ao apagar fatura:", err);
       Swal.fire("Erro", err.response?.data?.error || err.message || "Falha ao apagar fatura", "error");

@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { enrichOrdersWithTare, removeOrderTareDraft } from '../lib/wmsTareStore';
+import { withStockBalanceTag } from '../lib/stockMovementBalance';
 
 export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
   // Orders
@@ -209,7 +210,8 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
             const { data: latestProd } = await supabase.from("produtos").select("stock_armazem").eq("id", prodId).single();
             const currentStock = latestProd ? Number(latestProd.stock_armazem) : (Number(item.produto.stock_armazem) || 0);
             
-            await supabase.from("produtos").update({ stock_armazem: currentStock - qtyBase }).eq("id", prodId);
+            const newStock = currentStock - qtyBase;
+            await supabase.from("produtos").update({ stock_armazem: newStock }).eq("id", prodId);
 
             await supabase.from("movimentacoes_stock").insert([{
                 produto_id: prodId,
@@ -219,7 +221,7 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
                 display_qty: qtyVenda,
                 display_unit: item.unidade || "un",
                 unidade: item.produto.unidade_base || "un",
-                motivo: movementMotivo,
+                motivo: withStockBalanceTag(movementMotivo, currentStock, newStock),
                 user_id: req.user.id
             }]);
 
@@ -257,7 +259,8 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
             
             const { data: latestProd } = await supabase.from("produtos").select("stock_armazem").eq("id", prodId).single();
             const currentStock = latestProd ? Number(latestProd.stock_armazem) : (Number(item.produto.stock_armazem) || 0);
-            await supabase.from("produtos").update({ stock_armazem: currentStock + qtyBase }).eq("id", prodId);
+            const newStock = currentStock + qtyBase;
+            await supabase.from("produtos").update({ stock_armazem: newStock }).eq("id", prodId);
 
             const { data: storeStockExisting } = await supabase.from("stock_loja")
               .select("id, quantidade")
@@ -280,7 +283,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
                 display_qty: qtyVenda,
                 display_unit: item.unidade || "un",
                 unidade: item.produto.unidade_base || "un",
-                motivo: `REVERSÃO: Pedido #${pedidoId} revertido de ${currentOrder.status} para ${status}`,
+                motivo: withStockBalanceTag(
+                  `REVERSÃO: Pedido #${pedidoId} revertido de ${currentOrder.status} para ${status}`,
+                  currentStock,
+                  newStock
+                ),
                 user_id: req.user.id
             }]);
           }
@@ -325,7 +332,8 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
             
             const { data: latestProd } = await supabase.from("produtos").select("stock_armazem").eq("id", prodId).single();
             const currentStock = latestProd ? Number(latestProd.stock_armazem) : (Number(item.produto.stock_armazem) || 0);
-            await supabase.from("produtos").update({ stock_armazem: currentStock + qtyBase }).eq("id", prodId);
+            const newStock = currentStock + qtyBase;
+            await supabase.from("produtos").update({ stock_armazem: newStock }).eq("id", prodId);
 
             const { data: storeStockExisting } = await supabase.from("stock_loja")
               .select("id, quantidade")
@@ -348,7 +356,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
                 display_qty: qtyVenda,
                 display_unit: item.unidade || "un",
                 unidade: item.produto.unidade_base || "un",
-                motivo: `ELIMINAÇÃO: Stock devolvido após apagar Pedido #${pedidoId}`,
+                motivo: withStockBalanceTag(
+                  `ELIMINAÇÃO: Stock devolvido após apagar Pedido #${pedidoId}`,
+                  currentStock,
+                  newStock
+                ),
                 user_id: req.user.id
             }]);
           }
@@ -435,9 +447,10 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
             ? Number(latestProd.stock_armazem)
             : Number(prodObj.stock_armazem) || 0;
 
+          const newStock = currentStock - diffBase;
           await supabase
             .from("produtos")
-            .update({ stock_armazem: currentStock - diffBase })
+            .update({ stock_armazem: newStock })
             .eq("id", prevItem.produto_id);
 
           await supabase.from("movimentacoes_stock").insert([
@@ -449,10 +462,13 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
               display_qty: Math.abs(diffVenda),
               display_unit: prodObj.unidade_base || "un",
               unidade: prodObj.unidade_base || "un",
-              motivo:
+              motivo: withStockBalanceTag(
                 diffBase > 0
                   ? `Entrega de Pedido #${orderId} para ${storeName} (Ajuste + na edição)`
                   : `REVERSÃO PARCIAL: Ajuste - na edição do Pedido #${orderId} (${storeName})`,
+                currentStock,
+                newStock
+              ),
               user_id: req.user.id,
             },
           ]);
@@ -553,9 +569,10 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
             ? Number(latestProd.stock_armazem)
             : Number(prodObj.stock_armazem) || 0;
 
+          const newStock = currentStock + qtyBase;
           await supabase
             .from("produtos")
-            .update({ stock_armazem: currentStock + qtyBase })
+            .update({ stock_armazem: newStock })
             .eq("id", deletedItem.produto_id);
 
           if (order.user_id) {
@@ -586,7 +603,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
               display_qty: qtyVenda,
               display_unit: prodObj.unidade_base || "un",
               unidade: prodObj.unidade_base || "un",
-              motivo: `REVERSÃO: Item removido na edição do Pedido #${orderId} (${storeName})`,
+              motivo: withStockBalanceTag(
+                `REVERSÃO: Item removido na edição do Pedido #${orderId} (${storeName})`,
+                currentStock,
+                newStock
+              ),
               user_id: req.user.id,
             },
           ]);
@@ -661,9 +682,10 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
         const nowIso = new Date().toISOString();
         const storeName = (order as any).user?.name || "Loja";
 
+        const newStock = currentStock - qtyBase;
         await supabase
           .from("produtos")
-          .update({ stock_armazem: currentStock - qtyBase })
+          .update({ stock_armazem: newStock })
           .eq("id", req.body.produto_id);
 
         await supabase.from("movimentacoes_stock").insert([
@@ -675,7 +697,11 @@ export function setupOrdersRoutes({ app, supabase, authenticateToken, upload, up
             display_qty: qtyAdded,
             display_unit: prod.unidade_base || "un",
             unidade: prod.unidade_base || "un",
-            motivo: `Entrega de Pedido #${orderId} para ${storeName} (Item adicionado na edição)`,
+            motivo: withStockBalanceTag(
+              `Entrega de Pedido #${orderId} para ${storeName} (Item adicionado na edição)`,
+              currentStock,
+              newStock
+            ),
             user_id: req.user.id,
           },
         ]);
