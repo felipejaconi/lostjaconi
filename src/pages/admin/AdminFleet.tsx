@@ -8,7 +8,7 @@ import { Modal } from "../../components/ui/Modal";
 import { BrandTitle } from "../../components/BrandTitle";
 
 // New Fleet Components
-import { Veiculo } from "./fleet/types";
+import { Abastecimento, Veiculo } from "./fleet/types";
 import { VehicleCard } from "./fleet/VehicleCard";
 import { VehicleModal } from "./fleet/VehicleModal";
 import { FuelModal } from "./fleet/FuelModal";
@@ -38,6 +38,7 @@ export default function AdminFleet() {
 
   const [isFuelModalOpen, setIsFuelModalOpen] = useState(false);
   const [fuelTargetVehicle, setFuelTargetVehicle] = useState<Veiculo | null>(null);
+  const [editingFuel, setEditingFuel] = useState<Abastecimento | null>(null);
 
   const [isMaintModalOpen, setIsMaintModalOpen] = useState(false);
   const [maintTargetVehicle, setMaintTargetVehicle] = useState<Veiculo | null>(null);
@@ -125,6 +126,7 @@ export default function AdminFleet() {
         const res = await api.put(`/admin/fleet/${editingVehicle.id}`, data);
         const updated = res.data as Veiculo;
         setVehicles((prev) => prev.map((v) => (v.id === editingVehicle.id ? updated : v)));
+        setSelectedVehicle((prev) => (prev && prev.id === editingVehicle.id ? updated : prev));
         Swal.fire({ icon: "success", title: "Viatura atualizada", timer: 1500, showConfirmButton: false, background: "#18181b", color: "#fff" });
       } else {
         const res = await api.post("/admin/fleet", data);
@@ -164,15 +166,26 @@ export default function AdminFleet() {
   const handleSaveFuel = useCallback(async (data: any) => {
     if (!fuelTargetVehicle) return;
     try {
-      const res = await api.post(`/admin/fleet/${fuelTargetVehicle.id}/abastecimento`, data);
+      const res = editingFuel
+        ? await api.put(`/admin/fleet/${fuelTargetVehicle.id}/abastecimento/${editingFuel.id}`, data)
+        : await api.post(`/admin/fleet/${fuelTargetVehicle.id}/abastecimento`, data);
       const updated = res.data as Veiculo;
       setVehicles((prev) => prev.map((v) => (v.id === updated.id ? updated : v)));
-      Swal.fire({ icon: "success", title: "Abastecimento registado", timer: 1500, showConfirmButton: false, background: "#18181b", color: "#fff" });
+      setSelectedVehicle((prev) => (prev && prev.id === updated.id ? updated : prev));
+      Swal.fire({
+        icon: "success",
+        title: editingFuel ? "Abastecimento atualizado" : "Abastecimento registado",
+        timer: 1500,
+        showConfirmButton: false,
+        background: "#18181b",
+        color: "#fff",
+      });
       setIsFuelModalOpen(false);
+      setEditingFuel(null);
     } catch (e: any) {
       Swal.fire({ icon: "error", title: "Erro", text: e.response?.data?.error || "Falha.", background: "#18181b", color: "#fff" });
     }
-  }, [fuelTargetVehicle]);
+  }, [fuelTargetVehicle, editingFuel]);
 
   const handleSaveMaint = useCallback(async (data: any) => {
     if (!maintTargetVehicle) return;
@@ -180,6 +193,7 @@ export default function AdminFleet() {
       const res = await api.post(`/admin/fleet/${maintTargetVehicle.id}/manutencao`, data);
       const updated = res.data as Veiculo;
       setVehicles((prev) => prev.map((v) => (v.id === updated.id ? updated : v)));
+      setSelectedVehicle((prev) => (prev && prev.id === updated.id ? updated : prev));
       Swal.fire({ icon: "success", title: "Manutenção registada", timer: 1500, showConfirmButton: false, background: "#18181b", color: "#fff" });
       setIsMaintModalOpen(false);
     } catch (e: any) {
@@ -194,6 +208,7 @@ export default function AdminFleet() {
       const res = await api.post(`/admin/fleet/${kmTargetVehicle.id}/km`, { km: quickKmInput });
       const updated = res.data as Veiculo;
       setVehicles((prev) => prev.map((v) => (v.id === updated.id ? updated : v)));
+      setSelectedVehicle((prev) => (prev && prev.id === updated.id ? updated : prev));
       Swal.fire({ icon: "success", title: "Quilometragem atualizada", timer: 1500, showConfirmButton: false, background: "#18181b", color: "#fff" });
       setIsKmModalOpen(false);
     } catch (e: any) {
@@ -286,7 +301,7 @@ export default function AdminFleet() {
               vehicle={v}
               onClick={() => { setSelectedVehicle(v); setIsDetailModalOpen(true); }}
               onOpenKmModal={(v) => { setKmTargetVehicle(v); setQuickKmInput(v.km_atual); setIsKmModalOpen(true); }}
-              onOpenFuelModal={(v) => { setFuelTargetVehicle(v); setIsFuelModalOpen(true); }}
+              onOpenFuelModal={(v) => { setEditingFuel(null); setFuelTargetVehicle(v); setIsFuelModalOpen(true); }}
               onOpenMaintModal={(v) => { setMaintTargetVehicle(v); setIsMaintModalOpen(true); }}
               onEdit={(v) => { setEditingVehicle(v); setIsVehicleModalOpen(true); }}
               onDelete={handleDeleteVehicle}
@@ -297,7 +312,13 @@ export default function AdminFleet() {
 
       {/* Modals */}
       <VehicleModal isOpen={isVehicleModalOpen} onClose={() => setIsVehicleModalOpen(false)} onSave={handleSaveVehicle} editingVehicle={editingVehicle} stores={stores} />
-      <FuelModal isOpen={isFuelModalOpen} onClose={() => setIsFuelModalOpen(false)} onSave={handleSaveFuel} vehicle={fuelTargetVehicle} />
+      <FuelModal
+        isOpen={isFuelModalOpen}
+        onClose={() => { setIsFuelModalOpen(false); setEditingFuel(null); }}
+        onSave={handleSaveFuel}
+        vehicle={fuelTargetVehicle}
+        editingFuel={editingFuel}
+      />
       <MaintModal isOpen={isMaintModalOpen} onClose={() => setIsMaintModalOpen(false)} onSave={handleSaveMaint} vehicle={maintTargetVehicle} />
       
       <Modal isOpen={isKmModalOpen} onClose={() => setIsKmModalOpen(false)} title={`Atualizar Km: ${kmTargetVehicle?.matricula}`} maxWidth="sm">
@@ -311,7 +332,8 @@ export default function AdminFleet() {
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         vehicle={selectedVehicle}
-        onOpenFuelModal={(v) => { setFuelTargetVehicle(v); setIsFuelModalOpen(true); }}
+        onOpenFuelModal={(v) => { setEditingFuel(null); setFuelTargetVehicle(v); setIsFuelModalOpen(true); }}
+        onEditFuel={(v, ab) => { setEditingFuel(ab); setFuelTargetVehicle(v); setIsFuelModalOpen(true); }}
         onOpenMaintModal={(v) => { setMaintTargetVehicle(v); setIsMaintModalOpen(true); }}
         onEdit={(v) => { setEditingVehicle(v); setIsVehicleModalOpen(true); }}
       />

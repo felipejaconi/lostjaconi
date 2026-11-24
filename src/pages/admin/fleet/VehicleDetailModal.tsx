@@ -1,22 +1,23 @@
 import React from "react";
 import { 
-  Fuel, Wrench, Store, User, ShieldCheck, Calendar 
+  Fuel, Wrench, Edit2
 } from "lucide-react";
 import { Modal } from "../../../components/ui/Modal";
-import { Veiculo } from "./types";
+import { Abastecimento, Veiculo } from "./types";
 
 interface VehicleDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   vehicle: Veiculo | null;
   onOpenFuelModal: (v: Veiculo) => void;
+  onEditFuel?: (v: Veiculo, ab: Abastecimento) => void;
   onOpenMaintModal: (v: Veiculo) => void;
   onEdit: (v: Veiculo) => void;
 }
 
 export function VehicleDetailModal({ 
   isOpen, onClose, vehicle: selectedVehicle, 
-  onOpenFuelModal, onOpenMaintModal, onEdit 
+  onOpenFuelModal, onEditFuel, onOpenMaintModal, onEdit 
 }: VehicleDetailModalProps) {
   if (!selectedVehicle) return null;
 
@@ -51,14 +52,14 @@ export function VehicleDetailModal({
           <div className="flex items-center gap-2">
             <button
               onClick={() => onOpenFuelModal(selectedVehicle)}
-              className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 font-bold rounded-lg flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 font-bold rounded-lg flex items-center gap-1.5 cursor-pointer"
             >
               <Fuel className="w-3.5 h-3.5" />
               <span>+ Abastecer</span>
             </button>
             <button
               onClick={() => onOpenMaintModal(selectedVehicle)}
-              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-bold rounded-lg flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-bold rounded-lg flex items-center gap-1.5 cursor-pointer"
             >
               <Wrench className="w-3.5 h-3.5" />
               <span>+ Manutenção</span>
@@ -117,12 +118,24 @@ export function VehicleDetailModal({
           ) : (
             <div className="space-y-1.5">
               {selectedVehicle.abastecimentos.map((ab) => (
-                <div key={ab.id} className="p-2 bg-zinc-950/60 rounded border border-zinc-800/80 flex items-center justify-between">
+                <div key={ab.id} className="p-2 bg-zinc-950/60 rounded border border-zinc-800/80 flex items-center justify-between gap-2">
                   <span className="text-zinc-400">{new Date(ab.data).toLocaleDateString("pt-PT")}</span>
-                  <span>{ab.posto}</span>
-                  <span className="font-mono">{ab.km.toLocaleString("pt-PT")} km</span>
+                  <span className="text-zinc-200 font-medium truncate max-w-[180px]">{ab.posto || "Posto não informado"}</span>
+                  <span className="font-mono text-zinc-400">{Number(ab.km || 0).toLocaleString("pt-PT")} km</span>
                   <strong className="text-zinc-200">{ab.litros} L</strong>
-                  <strong className="text-emerald-400">€ {Number(ab.valor_total).toFixed(2)}</strong>
+                  <div className="flex items-center gap-2">
+                    <strong className="text-emerald-400">€ {Number(ab.valor_total).toFixed(2)}</strong>
+                    {onEditFuel && (
+                      <button
+                        type="button"
+                        onClick={() => onEditFuel(selectedVehicle, ab)}
+                        className="p-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
+                        title="Editar Abastecimento"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

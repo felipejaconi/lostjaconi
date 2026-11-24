@@ -575,12 +575,26 @@ async function insertVehicle(supabase: any, vehicle: any): Promise<any> {
 }
 
 async function updateVehicle(supabase: any, id: string, updates: any): Promise<any> {
-  let updated = updates;
+  const {
+    id: _omitId,
+    created_at: _omitCreatedAt,
+    diasParaInspecao: _omit1,
+    inspecaoStatus: _omit2,
+    diasParaSeguro: _omit3,
+    seguroStatus: _omit4,
+    kmRestantesOleo: _omit5,
+    oleoStatus: _omit6,
+    iucStatus: _omit7,
+    temAlerta: _omit8,
+    ...cleanDbUpdates
+  } = updates || {};
+
+  let updated = cleanDbUpdates;
   if (supabase) {
     try {
       const { data, error } = await supabase
         .from("frota_veiculos")
-        .update(updates)
+        .update(cleanDbUpdates)
         .eq("id", id)
         .select()
         .single();
@@ -599,7 +613,7 @@ async function updateVehicle(supabase: any, id: string, updates: any): Promise<a
     fleet[idx] = { ...fleet[idx], ...updated };
     saveFleetData(fleet);
   }
-  return updated;
+  return { id, ...updated };
 }
 
 async function deleteVehicle(supabase: any, id: string): Promise<void> {
@@ -747,14 +761,22 @@ export function setupFleetRoutes({ app, supabase, authenticateToken }: any) {
         return res.status(404).json({ error: "Veículo não encontrado." });
       }
 
+      const normDate = (val: any, fallback: any) =>
+        val !== undefined ? (val ? String(val).trim() : null) : (fallback || null);
+
       const updatedPayload = {
         ...existing,
         ...body,
         matricula: body.matricula ? body.matricula.toUpperCase().trim() : existing.matricula,
+        loja_id: body.loja_id !== undefined ? (body.loja_id || null) : (existing.loja_id || null),
+        data_ultima_inspecao: normDate(body.data_ultima_inspecao, existing.data_ultima_inspecao),
+        data_proxima_inspecao: normDate(body.data_proxima_inspecao, existing.data_proxima_inspecao),
+        data_validade_seguro: normDate(body.data_validade_seguro, existing.data_validade_seguro),
+        data_ultima_troca_oleo: normDate(body.data_ultima_troca_oleo, existing.data_ultima_troca_oleo),
         km_atual: body.km_atual !== undefined ? Number(body.km_atual) : existing.km_atual,
         km_proxima_troca_oleo: body.km_proxima_troca_oleo !== undefined 
           ? Number(body.km_proxima_troca_oleo) 
-          : (existing.km_ultima_troca_oleo + (Number(body.km_intervalo_troca_oleo) || existing.km_intervalo_troca_oleo || 10000))
+          : ((Number(body.km_ultima_troca_oleo ?? existing.km_ultima_troca_oleo) || 0) + (Number(body.km_intervalo_troca_oleo) || existing.km_intervalo_troca_oleo || 10000))
       };
 
       const result = await updateVehicle(supabase, id, updatedPayload);
@@ -851,6 +873,63 @@ export function setupFleetRoutes({ app, supabase, authenticateToken }: any) {
       }
 
       return res.status(201).json(computeVehicleStats(v));
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // PUT edit existing fuel log (abastecimento) in frota_veiculos
+  app.put("/api/admin/fleet/:id/abastecimento/:abId", authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ error: "Acesso restrito ao administrador." });
+    }
+    try {
+      const { id, abId } = req.params;
+      const { data, km, litros, preco_litro, valor_total, posto, condutor, nota } = req.body;
+      const fleet = await loadFleet(supabase);
+      const v = fleet.find(item => item.id === id);
+
+      if (!v) {
+        return res.status(404).json({ error: "Veículo não encontrado." });
+      }
+
+      if (!Array.isArray(v.abastecimentos)) v.abastecimentos = [];
+      const abIdx = v.abastecimentos.findIndex((ab: any) => String(ab.id) === String(abId));
+      if (abIdx === -1) {
+        return res.status(404).json({ error: "Abastecimento não encontrado." });
+      }
+
+      const prevAb = v.abastecimentos[abIdx];
+      const nextLitros = litros !== undefined ? Number(litros) : Number(prevAb.litros || 0);
+      const nextPrecoLitro = preco_litro !== undefined ? Number(preco_litro) : Number(prevAb.preco_litro || 0);
+      const calculatedTotal =
+        valor_total !== undefined && Number(valor_total) > 0
+          ? Number(valor_total)
+          : nextLitros * nextPrecoLitro;
+
+      v.abastecimentos[abIdx] = {
+        ...prevAb,
+        data: data || prevAb.data,
+        km: km !== undefined ? Number(km) : prevAb.km,
+        litros: nextLitros,
+        preco_litro: nextPrecoLitro,
+        valor_total: calculatedTotal,
+        posto: posto !== undefined ? String(posto).trim() || "Posto Combustível" : prevAb.posto,
+        condutor: condutor !== undefined ? String(condutor).trim() : prevAb.condutor,
+        nota: nota !== undefined ? String(nota) : prevAb.nota || "",
+      };
+
+      if (km !== undefined && Number(km) > (v.km_atual || 0)) {
+        v.km_atual = Number(km);
+      }
+
+      const updated = await updateVehicle(supabase, id, {
+        ...v,
+        abastecimentos: v.abastecimentos,
+        km_atual: v.km_atual,
+      });
+
+      return res.json(computeVehicleStats(updated));
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
