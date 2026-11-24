@@ -12,6 +12,7 @@ import {
   deleteFaturaFinanceiroPermanently,
 } from '../lib/faturasFinanceiro';
 import { withStockBalanceTag } from '../lib/stockMovementBalance';
+import { isRemovedCostCenterName } from '../lib/costCenters';
 
 export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, uploadToSupabase, JWT_SECRET, cache }: any) {
 
@@ -1350,14 +1351,27 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
 
     const seen = new Set<string>();
     const unique: string[] = [];
+    const obsoleteIds: any[] = [];
     for (const row of data || []) {
       const clean = String((row as any).nome || "").trim();
       if (!clean) continue;
+      if (tipo === "centro_custo" && isRemovedCostCenterName(clean)) {
+        if ((row as any).id !== undefined && (row as any).id !== null) {
+          obsoleteIds.push((row as any).id);
+        }
+        continue;
+      }
       const key = clean.toLowerCase();
       if (!seen.has(key)) {
         seen.add(key);
         unique.push(clean);
       }
+    }
+    if (obsoleteIds.length > 0) {
+      await supabase
+        .from(FINANCEIRO_CADASTROS_TABLE)
+        .delete()
+        .in("id", obsoleteIds);
     }
     unique.sort((a, b) => a.localeCompare(b, "pt-PT"));
     cache.set(cacheKey, unique, 300);

@@ -4,6 +4,7 @@ import Swal from "sweetalert2";
 import api from "../../lib/api";
 import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
 import Decimal from "decimal.js";
+import { isRemovedCostCenterName } from "../../lib/costCenters";
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -97,13 +98,17 @@ export default function AdminPurchaseEntries({
       setFornecedores(resForn.data || []);
       setStores(
         (resUsers.data || [])
-          .filter((u: any) => u.role === "loja")
+          .filter((u: any) => u.role === "loja" && !isRemovedCostCenterName(u.name))
           .sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""))
       );
       setExistingFaturas(Array.isArray(resFaturas.data) ? resFaturas.data : []);
       setSavedContasAnalise(Array.isArray(resContas.data) ? resContas.data : []);
       setSavedEmpresas(Array.isArray(resEmpresas.data) ? resEmpresas.data : []);
-      setSavedCentrosCusto(Array.isArray(resCentros.data) ? resCentros.data : []);
+      setSavedCentrosCusto(
+        (Array.isArray(resCentros.data) ? resCentros.data : []).filter(
+          (cc: any) => !isRemovedCostCenterName(cc)
+        )
+      );
     } catch (err) {
       console.error(err);
     }
@@ -308,6 +313,7 @@ export default function AdminPurchaseEntries({
       const clean = String(cc || "").trim();
       if (
         clean &&
+        !isRemovedCostCenterName(clean) &&
         !builtInCentros.has(clean.toLowerCase()) &&
         !storeNames.has(clean.toLowerCase())
       ) {
@@ -342,6 +348,7 @@ export default function AdminPurchaseEntries({
         ).trim();
         if (
           ccNome &&
+          !isRemovedCostCenterName(ccNome) &&
           !builtInCentros.has(ccNome.toLowerCase()) &&
           !storeNames.has(ccNome.toLowerCase())
         ) {
@@ -396,9 +403,6 @@ export default function AdminPurchaseEntries({
       }
       if (centroCustoSelecionado === "armazem_central") {
         centroCustoNome = "DISTRIBUIDORA";
-        resolvedLojaId = null;
-      } else if (centroCustoSelecionado === "administracao") {
-        centroCustoNome = "LOST WIND UNIPESSOAL,LDA";
         resolvedLojaId = null;
       } else if (centroCustoSelecionado.startsWith("loja:")) {
         const sId = centroCustoSelecionado.replace("loja:", "");
@@ -771,7 +775,6 @@ export default function AdminPurchaseEntries({
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:border-blue-500/50 outline-none transition-all"
                   >
                     <option value="armazem_central">DISTRIBUIDORA</option>
-                    <option value="administracao">LOST WIND UNIPESSOAL,LDA</option>
                     {stores.length > 0 && (
                       <optgroup label="Lojas">
                         {stores.map((s) => (

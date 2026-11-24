@@ -16,6 +16,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useSearchParams } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
 import Decimal from "decimal.js";
+import { isRemovedCostCenterName } from "../../lib/costCenters";
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -194,6 +195,10 @@ export default function AdminFinancial() {
 
   const [pedidos, setPedidos] = useState<any[]>(() => financialCache?.pedidos || []);
   const [stores, setStores] = useState<any[]>(() => financialCache?.stores || []);
+  const costCenterStores = useMemo(
+    () => stores.filter((s: any) => !isRemovedCostCenterName(s?.name)),
+    [stores]
+  );
 
   const [displayCountFaturas, setDisplayCountFaturas] = useState<number>(30);
   const [displayCountReceber, setDisplayCountReceber] = useState<number>(30);
@@ -892,6 +897,7 @@ export default function AdminFinancial() {
       const clean = String(cc || "").trim();
       if (
         clean &&
+        !isRemovedCostCenterName(clean) &&
         !builtInCentros.has(clean.toLowerCase()) &&
         !storeNames.has(clean.toLowerCase())
       ) {
@@ -914,6 +920,7 @@ export default function AdminFinancial() {
       }
       if (
         meta.centroCusto &&
+        !isRemovedCostCenterName(meta.centroCusto) &&
         !builtInCentros.has(meta.centroCusto.toLowerCase()) &&
         !storeNames.has(meta.centroCusto.toLowerCase())
       ) {
@@ -1326,59 +1333,97 @@ export default function AdminFinancial() {
                   </div>
                </div>
 
-               {/* Cards Distribuidora e Lost Wind Unipessoal */}
+               {/* Lojas Gestão + Distribuidora */}
                <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-sm overflow-hidden flex flex-col">
-                  <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                     {[
-                        {
-                           key: "distribuidora",
-                           label: "Distribuidora",
-                           filterValue: "cc:DISTRIBUIDORA",
-                           total: companyCostTotals.distribuidora,
-                        },
-                        {
-                           key: "lost_wind",
-                           label: "Lost Wind Unipessoal, Lda",
-                           filterValue: "cc:LOST WIND UNIPESSOAL,LDA",
-                           total: companyCostTotals.lostWind,
-                        },
-                     ].map((item) => (
-                        <div
-                           key={item.key}
-                           className="relative group bg-[#0a0a0a] border border-amber-500/30 rounded-xl p-3.5 transition-all duration-200 shadow-[0_0_24px_-8px_rgba(245,158,11,0.1)] flex flex-col justify-between overflow-hidden"
-                        >
-                           <div className="absolute top-0 right-0 p-2.5 opacity-10 pointer-events-none">
-                              <Building2 className="w-11 h-11 text-amber-500 transform rotate-12" />
-                           </div>
+                  <div className="px-4 py-3.5 border-b border-zinc-800">
+                     <h3 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
+                        <Store className="w-4 h-4 text-amber-500" /> Gestão por Loja
+                     </h3>
+                  </div>
+                  <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                     {/* Card Distribuidora */}
+                     <div className="relative group bg-[#0a0a0a] border border-amber-500/30 rounded-xl p-3.5 transition-all duration-200 shadow-[0_0_24px_-8px_rgba(245,158,11,0.1)] flex flex-col justify-between overflow-hidden">
+                        <div className="absolute top-0 right-0 p-2.5 opacity-10 pointer-events-none">
+                           <Building2 className="w-11 h-11 text-amber-500 transform rotate-12" />
+                        </div>
 
+                        <div className="relative z-10 flex-1 mt-0.5 mb-3 flex flex-col items-center justify-center min-w-0">
+                           <h4
+                              className="text-xl text-center text-[#facc15] tracking-wider leading-tight truncate max-w-full px-1"
+                              style={{ fontFamily: "'Yellowtail', cursive", textShadow: "2px 2px 4px rgba(0,0,0,0.5)" }}
+                              title="Distribuidora"
+                           >
+                              Distribuidora
+                           </h4>
+                           <div className="mt-1.5 text-center">
+                              <p className="text-[11px] font-medium text-zinc-400 leading-none">Centro de Custo</p>
+                              <p className="text-lg font-bold font-mono tabular-nums text-zinc-100 mt-1 leading-none">
+                                 € {(companyCostTotals.distribuidora || 0).toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </p>
+                           </div>
+                        </div>
+
+                        <div className="relative z-10">
+                           <button
+                              type="button"
+                              onClick={() => {
+                                 setActiveTab("faturas_compras");
+                                 const nextFilter = { ...DEFAULT_FATURAS_FILTER, centroCusto: "cc:DISTRIBUIDORA" };
+                                 setDraftFilterAPagar(nextFilter);
+                                 setAppliedFilterAPagar(nextFilter);
+                                 setHasSearchedFaturas(true);
+                              }}
+                              className="w-full flex items-center justify-center gap-1.5 py-2 px-2 bg-white/5 hover:bg-rose-500/10 text-zinc-300 hover:text-rose-400 rounded-lg transition-colors border border-white/5 hover:border-rose-500/20 group/btn whitespace-nowrap cursor-pointer"
+                              title="Faturas — Distribuidora"
+                           >
+                              <Receipt size={13} className="shrink-0 group-hover/btn:scale-110 transition-transform" />
+                              <span className="text-[10px] font-bold uppercase tracking-wide">Faturas</span>
+                           </button>
+                        </div>
+                     </div>
+
+                     {costCenterStores.map(store => (
+                        <div key={store.id} className="relative group bg-[#0a0a0a] border border-amber-500/30 rounded-xl p-3.5 transition-all duration-200 shadow-[0_0_24px_-8px_rgba(245,158,11,0.1)] flex flex-col justify-between overflow-hidden">
+                           <div className="absolute top-0 right-0 p-2.5 opacity-10 pointer-events-none">
+                              <Store className="w-11 h-11 text-amber-500 transform rotate-12" />
+                           </div>
+                           
                            <div className="relative z-10 flex-1 mt-0.5 mb-3 flex flex-col items-center justify-center min-w-0">
-                              <h4
-                                 className="text-xl text-center text-[#facc15] tracking-wider leading-tight truncate max-w-full px-1"
-                                 style={{ fontFamily: "'Yellowtail', cursive", textShadow: "2px 2px 4px rgba(0,0,0,0.5)" }}
-                                 title={item.label}
-                              >
-                                 {item.label}
+                              <h4 className="text-xl text-center text-[#facc15] tracking-wider leading-tight truncate max-w-full px-1" style={{ fontFamily: "'Yellowtail', cursive", textShadow: "2px 2px 4px rgba(0,0,0,0.5)" }} title={store.name}>
+                                 {store.name}
                               </h4>
                               <div className="mt-1.5 text-center">
                                  <p className="text-[11px] font-medium text-zinc-400 leading-none">Centro de Custo</p>
                                  <p className="text-lg font-bold font-mono tabular-nums text-zinc-100 mt-1 leading-none">
-                                    € {(item.total || 0).toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    € {(storeCostTotals[String(store.id)] || 0).toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                  </p>
                               </div>
                            </div>
-
-                           <div className="relative z-10">
-                              <button
+                           
+                           <div className="relative z-10 grid grid-cols-2 gap-1.5">
+                              <button 
                                  type="button"
-                                 onClick={() => {
+                                 onClick={() => { 
+                                    setActiveTab("fornecedores");
+                                    setFilterDataAReceber({...filterDataAReceber, loja: String(store.id)});
+                                 }}
+                                 className="flex items-center justify-center gap-1.5 py-2 px-2 bg-white/5 hover:bg-blue-500/10 text-zinc-300 hover:text-blue-400 rounded-lg transition-colors border border-white/5 hover:border-blue-500/20 group/btn whitespace-nowrap cursor-pointer"
+                                 title="Compras"
+                              >
+                                 <ShoppingCart size={13} className="shrink-0 group-hover/btn:scale-110 transition-transform" />
+                                 <span className="text-[10px] font-bold uppercase tracking-wide">Compras</span>
+                              </button>
+                              <button 
+                                 type="button"
+                                 onClick={() => { 
                                     setActiveTab("faturas_compras");
-                                    const nextFilter = { ...DEFAULT_FATURAS_FILTER, centroCusto: item.filterValue };
+                                    const nextFilter = { ...DEFAULT_FATURAS_FILTER, centroCusto: `loja:${store.id}` };
                                     setDraftFilterAPagar(nextFilter);
                                     setAppliedFilterAPagar(nextFilter);
                                     setHasSearchedFaturas(true);
                                  }}
-                                 className="w-full flex items-center justify-center gap-1.5 py-2 px-2 bg-white/5 hover:bg-rose-500/10 text-zinc-300 hover:text-rose-400 rounded-lg transition-colors border border-white/5 hover:border-rose-500/20 group/btn whitespace-nowrap cursor-pointer"
-                                 title={`Faturas — ${item.label}`}
+                                 className="flex items-center justify-center gap-1.5 py-2 px-2 bg-white/5 hover:bg-rose-500/10 text-zinc-300 hover:text-rose-400 rounded-lg transition-colors border border-white/5 hover:border-rose-500/20 group/btn whitespace-nowrap cursor-pointer"
+                                 title="Faturas da Loja"
                               >
                                  <Receipt size={13} className="shrink-0 group-hover/btn:scale-110 transition-transform" />
                                  <span className="text-[10px] font-bold uppercase tracking-wide">Faturas</span>
@@ -1388,71 +1433,6 @@ export default function AdminFinancial() {
                      ))}
                   </div>
                </div>
-
-               {/* Lojas Gestão */}
-               <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-sm overflow-hidden flex flex-col">
-                  <div className="px-4 py-3.5 border-b border-zinc-800">
-                     <h3 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
-                        <Store className="w-4 h-4 text-amber-500" /> Gestão por Loja
-                     </h3>
-                  </div>
-                     <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-                        {stores.map(store => (
-                           <div key={store.id} className="relative group bg-[#0a0a0a] border border-amber-500/30 rounded-xl p-3.5 transition-all duration-200 shadow-[0_0_24px_-8px_rgba(245,158,11,0.1)] flex flex-col justify-between overflow-hidden">
-                              <div className="absolute top-0 right-0 p-2.5 opacity-10 pointer-events-none">
-                                 <Store className="w-11 h-11 text-amber-500 transform rotate-12" />
-                              </div>
-                              
-                              <div className="relative z-10 flex-1 mt-0.5 mb-3 flex flex-col items-center justify-center min-w-0">
-                                 <h4 className="text-xl text-center text-[#facc15] tracking-wider leading-tight truncate max-w-full px-1" style={{ fontFamily: "'Yellowtail', cursive", textShadow: "2px 2px 4px rgba(0,0,0,0.5)" }} title={store.name}>
-                                    {store.name}
-                                 </h4>
-                                 <div className="mt-1.5 text-center">
-                                    <p className="text-[11px] font-medium text-zinc-400 leading-none">Centro de Custo</p>
-                                    <p className="text-lg font-bold font-mono tabular-nums text-zinc-100 mt-1 leading-none">
-                                       € {(storeCostTotals[String(store.id)] || 0).toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </p>
-                                 </div>
-                              </div>
-                              
-                              <div className="relative z-10 grid grid-cols-2 gap-1.5">
-                                 <button 
-                                    type="button"
-                                    onClick={() => { 
-                                       setActiveTab("fornecedores");
-                                       setFilterDataAReceber({...filterDataAReceber, loja: String(store.id)});
-                                    }}
-                                    className="flex items-center justify-center gap-1.5 py-2 px-2 bg-white/5 hover:bg-blue-500/10 text-zinc-300 hover:text-blue-400 rounded-lg transition-colors border border-white/5 hover:border-blue-500/20 group/btn whitespace-nowrap cursor-pointer"
-                                    title="Compras"
-                                 >
-                                    <ShoppingCart size={13} className="shrink-0 group-hover/btn:scale-110 transition-transform" />
-                                    <span className="text-[10px] font-bold uppercase tracking-wide">Compras</span>
-                                 </button>
-                                 <button 
-                                    type="button"
-                                    onClick={() => { 
-                                       setActiveTab("faturas_compras");
-                                       const nextFilter = { ...DEFAULT_FATURAS_FILTER, centroCusto: `loja:${store.id}` };
-                                       setDraftFilterAPagar(nextFilter);
-                                       setAppliedFilterAPagar(nextFilter);
-                                       setHasSearchedFaturas(true);
-                                    }}
-                                    className="flex items-center justify-center gap-1.5 py-2 px-2 bg-white/5 hover:bg-rose-500/10 text-zinc-300 hover:text-rose-400 rounded-lg transition-colors border border-white/5 hover:border-rose-500/20 group/btn whitespace-nowrap cursor-pointer"
-                                    title="Faturas da Loja"
-                                 >
-                                    <Receipt size={13} className="shrink-0 group-hover/btn:scale-110 transition-transform" />
-                                    <span className="text-[10px] font-bold uppercase tracking-wide">Faturas</span>
-                                 </button>
-                              </div>
-                           </div>
-                        ))}
-                        {stores.length === 0 && (
-                           <div className="col-span-full text-center p-6">
-                              <p className="text-sm text-zinc-500">Nenhuma loja encontrada.</p>
-                           </div>
-                        )}
-                     </div>
-                  </div>
             </div>
          )}
 
@@ -1580,10 +1560,9 @@ export default function AdminFinancial() {
                         >
                            <option value="todos">Todos os Centros de Custo</option>
                            <option value="cc:DISTRIBUIDORA">DISTRIBUIDORA</option>
-                           <option value="cc:LOST WIND UNIPESSOAL,LDA">LOST WIND UNIPESSOAL,LDA</option>
-                           {stores.length > 0 && (
+                           {costCenterStores.length > 0 && (
                               <optgroup label="Lojas">
-                                 {stores.map((s: any) => (
+                                 {costCenterStores.map((s: any) => (
                                     <option key={s.id} value={`loja:${s.id}`}>
                                        {s.name}
                                     </option>

@@ -6,6 +6,7 @@ import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
 import { motion, AnimatePresence } from "motion/react";
 import Decimal from "decimal.js";
 import { BrandTitle } from "../../components/BrandTitle";
+import { isRemovedCostCenterName } from "../../lib/costCenters";
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -51,7 +52,11 @@ export default function AdminExpenseEntries({ onSuccess, lojaId, compact = false
         api.get("/admin/users").catch(() => ({ data: [] }))
       ]);
       setFornecedores(resForn.data || []);
-      setStores((resUsers.data || []).filter((u: any) => u.role === 'loja').sort((a: any, b: any) => (a.name || "").localeCompare(b.name || "")));
+      setStores(
+        (resUsers.data || [])
+          .filter((u: any) => u.role === "loja" && !isRemovedCostCenterName(u.name))
+          .sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""))
+      );
     } catch (err) {
       console.error(err);
     }

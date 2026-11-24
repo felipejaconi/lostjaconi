@@ -29,6 +29,7 @@ import { cn } from "../../lib/utils";
 import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
 import { BrandTitle } from "../../components/BrandTitle";
 import { sortCategories, sortGroupedCategories } from "../../lib/categoryUtils";
+import { isRemovedCostCenterName } from "../../lib/costCenters";
 
 type ReportType =
   | "receber"
@@ -41,10 +42,13 @@ type ReportType =
   | "fechos"
   | "estoque";
 
+type InvoiceDateMode = "todos" | "emissao" | "vencimento";
+
 interface AppliedSearchFilters {
   reportType: ReportType;
   startDate: string;
   endDate: string;
+  invoiceDateMode: InvoiceDateMode;
   status: string;
   entity: string;
   empresa: string;
@@ -118,6 +122,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [invoiceDateMode, setInvoiceDateMode] = useState<InvoiceDateMode>("todos");
   const [status, setStatus] = useState("todos");
   const [entity, setEntity] = useState("todos");
   const [empresa, setEmpresa] = useState("todos");
@@ -212,7 +217,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       appliedSearch.status !== status ||
       appliedSearch.entity !== normalizedEntity ||
       (["pagar", "faturas_pagas"].includes(reportType) &&
-        appliedSearch.empresa !== normalizedEmpresa) ||
+        (appliedSearch.empresa !== normalizedEmpresa ||
+          appliedSearch.invoiceDateMode !== invoiceDateMode)) ||
       (["pagar", "faturas_pagas", "iva_credito"].includes(reportType) &&
         (appliedSearch.centroCusto !== normalizedCentroCusto ||
           appliedSearch.contaAnalise !== normalizedContaAnalise))
@@ -222,6 +228,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     reportType,
     startDate,
     endDate,
+    invoiceDateMode,
     status,
     normalizedEntity,
     normalizedEmpresa,
@@ -233,8 +240,11 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
   const parseRecordDate = (dateString: string): Date | null => {
     if (!dateString) return null;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-      const [y, m, d] = dateString.split("-").map(Number);
+    const isoPrefix = String(dateString).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoPrefix) {
+      const y = Number(isoPrefix[1]);
+      const m = Number(isoPrefix[2]);
+      const d = Number(isoPrefix[3]);
       return new Date(y, m - 1, d, 12, 0, 0, 0);
     }
     const dt = new Date(dateString);
@@ -257,6 +267,29 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       if (dt > edt) return false;
     }
     return true;
+  };
+
+  const matchInvoiceDateRange = (
+    f: any,
+    mode: InvoiceDateMode,
+    customStart: string,
+    customEnd: string
+  ) => {
+    if (!customStart && !customEnd) {
+      if (mode === "emissao") return Boolean(parseRecordDate(f?.data_emissao));
+      if (mode === "vencimento") return Boolean(parseRecordDate(f?.data_vencimento));
+      return true;
+    }
+    if (mode === "emissao") {
+      return filterByDateRange(f?.data_emissao, customStart, customEnd);
+    }
+    if (mode === "vencimento") {
+      return filterByDateRange(f?.data_vencimento, customStart, customEnd);
+    }
+    return (
+      filterByDateRange(f?.data_emissao, customStart, customEnd) ||
+      filterByDateRange(f?.data_vencimento, customStart, customEnd)
+    );
   };
 
   const formatIsoInputDate = (isoDate: string) => {
@@ -626,6 +659,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       reportType,
       startDate,
       endDate,
+      invoiceDateMode,
       status,
       entity: normalizedEntity,
       empresa: normalizedEmpresa,
@@ -678,6 +712,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       reportType: rType,
       startDate: sDate,
       endDate: eDate,
+      invoiceDateMode: invDateMode = "todos",
       status: stFilter,
       entity: entFilter,
       empresa: empFilter = "todos",
@@ -693,10 +728,28 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     let summaryLabel = "Total";
     let numericColumns: number[] = [];
 
+    const sortInvoicesForMode = (list: any[], mode: InvoiceDateMode) => {
+      if (mode === "vencimento") {
+        return [...list].sort((a, b) => {
+          const ta = parseRecordDate(a?.data_vencimento)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+          const tb = parseRecordDate(b?.data_vencimento)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+          return ta - tb;
+        });
+      }
+      if (mode === "emissao") {
+        return [...list].sort((a, b) => {
+          const ta = parseRecordDate(a?.data_emissao)?.getTime() ?? 0;
+          const tb = parseRecordDate(b?.data_emissao)?.getTime() ?? 0;
+          return tb - ta;
+        });
+      }
+      return list;
+    };
+
     if (rType === "pagar") {
-      const filtered = faturasInput.filter((f) => {
+      const filteredRaw = faturasInput.filter((f) => {
         if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return false;
-        const periodMatch = filterByDateRange(f.data_emissao, sDate, eDate);
+        const periodMatch = matchInvoiceDateRange(f, invDateMode, sDate, eDate);
 
         let statusMatch = true;
         if (stFilter === "pago") {
@@ -744,6 +797,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
         return periodMatch && statusMatch && fornecedorMatch && empresaMatch && centroCustoMatch && contaAnaliseMatch;
       });
+      const filtered = sortInvoicesForMode(filteredRaw, invDateMode);
 
       headers = [
         "Data Emissão",
@@ -758,7 +812,12 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         "Estado"
       ];
       numericColumns = [7, 8];
-      title = "Relatório de Faturas a Pagar";
+      title =
+        invDateMode === "emissao"
+          ? "Relatório de Faturas a Pagar (Por Emissão)"
+          : invDateMode === "vencimento"
+          ? "Relatório de Faturas a Pagar (Por Vencimento)"
+          : "Relatório de Faturas a Pagar";
 
       let totalValor = 0;
       let totalPendente = 0;
@@ -806,9 +865,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       }
       totalRow = ["", "", "", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""];
     } else if (rType === "faturas_pagas") {
-      const filtered = faturasInput.filter((f) => {
+      const filteredRaw = faturasInput.filter((f) => {
         if (f.tipo !== "compra_financeiro" || f.status_pagamento !== "pago") return false;
-        const periodMatch = filterByDateRange(f.data_emissao, sDate, eDate);
+        const periodMatch = matchInvoiceDateRange(f, invDateMode, sDate, eDate);
 
         const fornecedorMatch =
           entFilter === "todos" ||
@@ -849,6 +908,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
         return periodMatch && fornecedorMatch && empresaMatch && centroCustoMatch && contaAnaliseMatch;
       });
+      const filtered = sortInvoicesForMode(filteredRaw, invDateMode);
 
       headers = [
         "Data Emissão",
@@ -862,7 +922,12 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         "Estado"
       ];
       numericColumns = [7];
-      title = "Relatório de Faturas Pagas";
+      title =
+        invDateMode === "emissao"
+          ? "Relatório de Faturas Pagas (Por Emissão)"
+          : invDateMode === "vencimento"
+          ? "Relatório de Faturas Pagas (Por Vencimento)"
+          : "Relatório de Faturas Pagas";
 
       let totalValor = 0;
       rows = filtered.map((f) => {
@@ -1336,7 +1401,28 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
           }
           if (rType === "faturas_pagas" && (f.tipo !== "compra_financeiro" || f.status_pagamento !== "pago")) return;
           if (rType === "iva_credito" && (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia" || getFaturaIva(f) <= 0)) return;
-          registerDate(f.data_emissao);
+          if (["pagar", "faturas_pagas"].includes(rType)) {
+            const dMode = appliedSearch.invoiceDateMode || "todos";
+            if (dMode === "vencimento") {
+              registerDate(f.data_vencimento);
+            } else if (dMode === "emissao") {
+              registerDate(f.data_emissao);
+            } else {
+              const dtEm = parseRecordDate(f.data_emissao);
+              const dtVc = parseRecordDate(f.data_vencimento);
+              if (dtEm) registerDate(f.data_emissao);
+              if (
+                dtVc &&
+                (!dtEm ||
+                  dtVc.getFullYear() !== dtEm.getFullYear() ||
+                  dtVc.getMonth() !== dtEm.getMonth())
+              ) {
+                registerDate(f.data_vencimento);
+              }
+            }
+          } else {
+            registerDate(f.data_emissao);
+          }
         });
       } else if (["receber", "debito_iva", "consumo_lojas"].includes(rType)) {
         searchedPedidos.forEach((p) => {
@@ -1373,7 +1459,10 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       if (["pagar", "faturas_pagas", "iva_credito", "fornecedores"].includes(rType)) {
         const map = new Map<string, { nome: string; count: number; val: number; entityVal: string }>();
         searchedFaturas.forEach((f) => {
-          if (!f.fornecedor_id || !filterByDateRange(f.data_emissao, sDate, eDate)) return;
+          const inPeriod = ["pagar", "faturas_pagas"].includes(rType)
+            ? matchInvoiceDateRange(f, appliedSearch.invoiceDateMode || "todos", sDate, eDate)
+            : filterByDateRange(f.data_emissao, sDate, eDate);
+          if (!f.fornecedor_id || !inPeriod) return;
           if (rType === "pagar") {
             if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return;
             if (stFilter === "pago" && f.status_pagamento !== "pago") return;
@@ -1455,7 +1544,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       if (rType === "pagar") {
         const base = searchedFaturas.filter((f) => {
           if (f.tipo !== "compra_financeiro" || f.status_pagamento === "em_conferencia") return false;
-          if (!filterByDateRange(f.data_emissao, sDate, eDate)) return false;
+          if (!matchInvoiceDateRange(f, appliedSearch.invoiceDateMode || "todos", sDate, eDate)) return false;
           return entFilter === "todos" || String(f.fornecedor_id) === entFilter.replace("fornecedor_", "");
         });
         const unpaid = base.filter((f) => f.status_pagamento !== "pago").length;
@@ -1529,6 +1618,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         reportType,
         startDate,
         endDate,
+        invoiceDateMode,
         status,
         entity: normalizedEntity,
         empresa: normalizedEmpresa,
@@ -1708,6 +1798,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       const meta = extractFaturaMeta(f, lojas);
       if (
         meta.centroCusto &&
+        !isRemovedCostCenterName(meta.centroCusto) &&
         !builtIn.has(meta.centroCusto.toLowerCase()) &&
         !storeNames.has(meta.centroCusto.toLowerCase())
       ) {
@@ -1718,8 +1809,9 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     return [
       { id: "todos", nome: "Todos os Centros de Custo" },
       { id: "cc:DISTRIBUIDORA", nome: "DISTRIBUIDORA" },
-      { id: "cc:LOST WIND UNIPESSOAL,LDA", nome: "LOST WIND UNIPESSOAL,LDA" },
-      ...lojas.map((l: any) => ({ id: `loja:${l.id}`, nome: l.name || l.nome })),
+      ...lojas
+        .filter((l: any) => !isRemovedCostCenterName(l.name || l.nome))
+        .map((l: any) => ({ id: `loja:${l.id}`, nome: l.name || l.nome })),
       ...Array.from(customCentros)
         .sort((a, b) => a.localeCompare(b, "pt-PT"))
         .map((cc) => ({ id: `custom:${cc}`, nome: cc }))
@@ -1840,6 +1932,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
   const handleResetFilters = () => {
     setStartDate("");
     setEndDate("");
+    setInvoiceDateMode("todos");
     setStatus("todos");
     setEntity("todos");
     setEmpresa("todos");
@@ -1936,6 +2029,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                       type="button"
                       onClick={() => {
                         setReportType(opt.id as ReportType);
+                        setInvoiceDateMode("todos");
                         setEntity("todos");
                         setStatus("todos");
                         setEmpresa("todos");
@@ -2066,9 +2160,51 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
               </>
             ) : (
               <>
+                {["pagar", "faturas_pagas"].includes(reportType) && (
+                  <div>
+                    <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-2.5">
+                      <Filter size={14} /> Data da Fatura
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(
+                        [
+                          { id: "todos", label: "Todos" },
+                          { id: "emissao", label: "Emissão" },
+                          { id: "vencimento", label: "Vencimento" }
+                        ] as { id: InvoiceDateMode; label: string }[]
+                      ).map((opt) => {
+                        const isActive = invoiceDateMode === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => setInvoiceDateMode(opt.id)}
+                            className={cn(
+                              "px-3 py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                              isActive
+                                ? "bg-blue-500/15 border-blue-500 text-blue-400"
+                                : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200"
+                            )}
+                          >
+                            {isActive && <Check size={13} />}
+                            <span>{opt.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 <div>
                   <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-3">
-                    <Calendar size={14} /> Período do Relatório
+                    <Calendar size={14} />{" "}
+                    {["pagar", "faturas_pagas"].includes(reportType)
+                      ? invoiceDateMode === "emissao"
+                        ? "Período do Relatório (Emissão)"
+                        : invoiceDateMode === "vencimento"
+                        ? "Período do Relatório (Vencimento)"
+                        : "Período do Relatório (Emissão ou Vencimento)"
+                      : "Período do Relatório"}
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
@@ -2274,6 +2410,15 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
                   </span>
                   {["pagar", "faturas_pagas"].includes(appliedSearch.reportType) && (
                     <>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        Data da Fatura:{" "}
+                        {appliedSearch.invoiceDateMode === "emissao"
+                          ? "Emissão"
+                          : appliedSearch.invoiceDateMode === "vencimento"
+                          ? "Vencimento"
+                          : "Todos"}
+                      </span>
                       <span aria-hidden="true">·</span>
                       <span>Empresa: {appliedEmpresaLabel}</span>
                     </>
