@@ -1,8 +1,19 @@
-
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { fetchFaturasFinanceiro } from "../lib/faturasFinanceiro";
 
 const configPath = path.join(process.cwd(), "armazem_config.json");
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function normalizeCompareText(val: any): string {
+  return String(val || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
 
 export function setupConfigRoutes({ app, supabase, authenticateToken }: any) {
   app.get("/api/admin/config/armazem", authenticateToken, (req: any, res: any) => {
@@ -103,51 +114,223 @@ export function setupConfigRoutes({ app, supabase, authenticateToken }: any) {
   
   // --- DRE MENSAL LOJAS ---
   app.get("/api/loja/dre", authenticateToken, async (req: any, res: any) => {
+    if (req.user?.role !== "admin" && req.user?.role !== "loja") {
+      return res.sendStatus(403);
+    }
+
     try {
-      const storeId = req.query.store_id || req.user.id;
-      const month = parseInt(req.query.month);
-      const year = parseInt(req.query.year);
-      
-      const { data, error } = await supabase
-        .from('dre_lojas')
-        .select('dados')
-        .eq('store_id', storeId)
-        .eq('mes', month)
-        .eq('ano', year)
-        .single();
-        
-      if (error && error.code !== 'PGRST116') { // PGRST116 is 'not found'
-        throw error;
+      const requestedStoreId = String(req.query.store_id || "").trim();
+      const storeId =
+        req.user.role === "admin" && UUID_REGEX.test(requestedStoreId)
+          ? requestedStoreId
+          : String(req.user.id);
+
+      const month = parseInt(String(req.query.month), 10);
+      const year = parseInt(String(req.query.year), 10);
+
+      if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) || year < 2000 || year > 2100) {
+        return res.status(400).json({ error: "Período inválido." });
       }
-      
-      return res.json(data?.dados || {});
+
+      const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+      const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+      const endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+      const [storeUserRes, dreRes, finRes, legDespesasRes] = await Promise.all([
+        supabase.from("users").select("id, name").eq("id", storeId).maybeSingle(),
+        supabase
+          .from("dre_lojas")
+          .select("dados")
+          .eq("store_id", storeId)
+          .eq("mes", month)
+          .eq("ano", year)
+          .maybeSingle(),
+        fetchFaturasFinanceiro(supabase, {
+          startDate,
+          endDate,
+          includeRelations: true,
+        }),
+        supabase
+          .from("faturas")
+          .select("id, valor_total, tipo, data_emissao, descrição, fornecedor:fornecedores(nome)")
+          .like("tipo", "despesa_%")
+          .gte("data_emissao", startDate)
+          .lte("data_emissao", endDate),
+      ]);
+
+      if (dreRes.error && dreRes.error.code !== "PGRST116" && dreRes.error.code !== "42P01") {
+        throw dreRes.error;
+      }
+
+      const storeName = String(
+        storeUserRes.data?.name || (req.user.id === storeId ? req.user.name : "") || ""
+      ).trim();
+      const storeNameNorm = normalizeCompareText(storeName);
+
+      const contasMap = new Map<
+        string,
+        { conta_analise: string; valor: number; quantidade_faturas: number }
+      >();
+      const seenInvoiceIds = new Set<string>();
+
+      for (const f of finRes.rows || []) {
+        if (!f) continue;
+        if (
+          f.status_pagamento === "em_conferencia" ||
+          f.tipo === "entrada_stock" ||
+          f.tipo === "compra"
+        ) {
+          continue;
+        }
+
+        const fLojaId = f.loja_id ? String(f.loja_id).trim() : "";
+        const fCentroCusto = f.centro_custo ? String(f.centro_custo).trim() : "";
+
+        const matchesStore =
+          (fLojaId && fLojaId === storeId) ||
+          Boolean(storeNameNorm && fCentroCusto && normalizeCompareText(fCentroCusto) === storeNameNorm);
+
+        if (!matchesStore) continue;
+
+        const val = Number(f.valor_total || 0);
+        if (val <= 0) continue;
+
+        if (f.id) seenInvoiceIds.add(String(f.id));
+
+        const rawConta = f.conta_analise ? String(f.conta_analise).trim() : "";
+        const fallbackFornecedor = f.fornecedor?.nome ? String(f.fornecedor.nome).trim() : "";
+        const contaLabel = (
+          rawConta ||
+          fallbackFornecedor ||
+          "OUTRAS DESPESAS (FINANCEIRO)"
+        ).toUpperCase();
+        const mapKey = normalizeCompareText(contaLabel) || "outras_despesas_financeiro";
+
+        const existing = contasMap.get(mapKey);
+        if (existing) {
+          existing.valor = Math.round((existing.valor + val) * 100) / 100;
+          existing.quantidade_faturas += 1;
+        } else {
+          contasMap.set(mapKey, {
+            conta_analise: contaLabel,
+            valor: Math.round(val * 100) / 100,
+            quantidade_faturas: 1,
+          });
+        }
+      }
+
+      if (!legDespesasRes.error && Array.isArray(legDespesasRes.data)) {
+        for (const lf of legDespesasRes.data) {
+          if (!lf || (lf.id && seenInvoiceIds.has(String(lf.id)))) continue;
+          let lfLojaId = "";
+          if (lf.descrição) {
+            try {
+              const parsed =
+                typeof lf.descrição === "string" ? JSON.parse(lf.descrição) : lf.descrição;
+              if (parsed?.loja_id) lfLojaId = String(parsed.loja_id).trim();
+            } catch {}
+          }
+          if (lfLojaId !== storeId) continue;
+
+          const val = Number(lf.valor_total || 0);
+          if (val <= 0) continue;
+
+          const rawCat = String(lf.tipo || "")
+            .replace(/^despesa_/i, "")
+            .replace(/_/g, " ")
+            .trim();
+          const contaLabel = (rawCat || "OUTRAS DESPESAS (FINANCEIRO)").toUpperCase();
+          const mapKey = normalizeCompareText(contaLabel) || "outras_despesas_financeiro";
+
+          const existing = contasMap.get(mapKey);
+          if (existing) {
+            existing.valor = Math.round((existing.valor + val) * 100) / 100;
+            existing.quantidade_faturas += 1;
+          } else {
+            contasMap.set(mapKey, {
+              conta_analise: contaLabel,
+              valor: Math.round(val * 100) / 100,
+              quantidade_faturas: 1,
+            });
+          }
+        }
+      }
+
+      const despesasFinanceiro = Array.from(contasMap.values()).sort((a, b) => {
+        if (b.valor !== a.valor) return b.valor - a.valor;
+        return a.conta_analise.localeCompare(b.conta_analise, "pt");
+      });
+
+      const rawDados = dreRes.data?.dados;
+      const rawManuais = Array.isArray(rawDados?.gastos_manuais) ? rawDados.gastos_manuais : [];
+      const gastosManuais = rawManuais
+        .map((item: any) => ({
+          id: item?.id ? String(item.id) : crypto.randomUUID(),
+          descricao: String(item?.descricao || "").trim(),
+          valor: Math.max(0, Math.round((Number(item?.valor) || 0) * 100) / 100),
+        }))
+        .filter((item: any) => item.descricao.length > 0);
+
+      return res.json({
+        centro_custo: storeName || "LOJA",
+        despesas_financeiro: despesasFinanceiro,
+        gastos_manuais: gastosManuais,
+      });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
   });
 
   app.put("/api/loja/dre", authenticateToken, async (req: any, res: any) => {
+    if (req.user?.role !== "admin" && req.user?.role !== "loja") {
+      return res.sendStatus(403);
+    }
+
     try {
-      const storeId = req.body.store_id || req.user.id;
-      const month = parseInt(req.body.month);
-      const year = parseInt(req.body.year);
-      const values = req.body.values;
-      
-      const { error } = await supabase
-        .from('dre_lojas')
-        .upsert({
-           store_id: storeId,
-           mes: month,
-           ano: year,
-           dados: values,
-           updated_at: new Date().toISOString()
-        }, {
-           onConflict: 'store_id, mes, ano'
-        });
-        
+      const requestedStoreId = String(req.body?.store_id || "").trim();
+      const storeId =
+        req.user.role === "admin" && UUID_REGEX.test(requestedStoreId)
+          ? requestedStoreId
+          : String(req.user.id);
+
+      const month = parseInt(String(req.body?.month), 10);
+      const year = parseInt(String(req.body?.year), 10);
+
+      if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) || year < 2000 || year > 2100) {
+        return res.status(400).json({ error: "Período inválido." });
+      }
+
+      const rawList = Array.isArray(req.body?.gastos_manuais) ? req.body.gastos_manuais : [];
+      const sanitizedManuais = rawList
+        .slice(0, 100)
+        .map((item: any) => {
+          const descricao = String(item?.descricao || "").trim().slice(0, 120);
+          const parsedVal = Number(item?.valor);
+          const valor = Number.isFinite(parsedVal) && parsedVal >= 0 ? Math.round(parsedVal * 100) / 100 : 0;
+          return {
+            id: item?.id ? String(item.id).slice(0, 64) : crypto.randomUUID(),
+            descricao,
+            valor,
+          };
+        })
+        .filter((item: any) => item.descricao.length > 0);
+
+      const { error } = await supabase.from("dre_lojas").upsert(
+        {
+          store_id: storeId,
+          mes: month,
+          ano: year,
+          dados: { gastos_manuais: sanitizedManuais },
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "store_id, mes, ano",
+        }
+      );
+
       if (error) throw error;
-      
-      return res.json({ success: true });
+
+      return res.json({ success: true, gastos_manuais: sanitizedManuais });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
