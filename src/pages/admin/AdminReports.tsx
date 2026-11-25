@@ -24,7 +24,7 @@ import Swal from "sweetalert2";
 import { motion } from "motion/react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { printGenericDocument } from "../../lib/printGenericDocument";
+import { printFinancialReport } from "../../lib/printFinancialReport";
 import { cn } from "../../lib/utils";
 import { SearchableCombobox } from "../../components/ui/SearchableCombobox";
 import { BrandTitle } from "../../components/BrandTitle";
@@ -1787,7 +1787,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         const exportRows = computed.totalRow ? [...computed.rows, computed.totalRow] : computed.rows;
 
         if (format === "pdf") {
-          printGenericDocument({
+          printFinancialReport({
             title: computed.title,
             headers: computed.headers,
             data: exportRows,
