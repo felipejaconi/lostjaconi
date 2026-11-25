@@ -698,7 +698,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
     pedidosInput: any[],
     fechosInput: any[],
     estoqueInput: any[] = [],
-    searchFilter = ""
+    searchFilter = "",
+    forExport = false
   ): {
     title: string;
     headers: string[];
@@ -797,21 +798,80 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
         return periodMatch && statusMatch && fornecedorMatch && empresaMatch && centroCustoMatch && contaAnaliseMatch;
       });
-      const filtered = sortInvoicesForMode(filteredRaw, invDateMode);
+      const sortedFiltered = sortInvoicesForMode(filteredRaw, invDateMode);
+      const searchTerm = searchFilter.trim().toLowerCase();
 
-      headers = [
-        "Data Emissão",
-        "Vencimento",
-        "Empresa",
-        "Fornecedor",
-        "Centro de Custo",
-        "Conta de Análise",
-        "Nº Fatura",
-        "Total (€)",
-        "Pendente (€)",
-        "Estado"
-      ];
-      numericColumns = [7, 8];
+      const matchedItems = sortedFiltered
+        .map((f) => {
+          const calcTotal = Number(f.valor_total || 0);
+          const calcPendente =
+            f.status_pagamento === "pago"
+              ? 0
+              : Number(
+                  f.valor_pendente !== undefined && f.valor_pendente !== null
+                    ? f.valor_pendente
+                    : calcTotal
+                );
+          const meta = extractFaturaMeta(f, lojas);
+          const fornObj =
+            f.fornecedor ||
+            fornecedores.find((fn) => String(fn.id) === String(f.fornecedor_id));
+          const fornecedorNome = fornObj?.nome || "N/A";
+          const fornecedorIban = fornObj?.iban ? String(fornObj.iban).trim() : "";
+          const observacoesTexto = f.observacoes ? String(f.observacoes).trim() : "";
+          const estadoLabel =
+            f.status_pagamento === "pago"
+              ? "PAGO"
+              : f.status_pagamento === "parcial"
+              ? "PARCIAL"
+              : "PENDENTE";
+          const emissaoStr = f.data_emissao
+            ? new Date(f.data_emissao).toLocaleDateString("pt-PT")
+            : "N/A";
+          const vencimentoStr = f.data_vencimento
+            ? new Date(f.data_vencimento).toLocaleDateString("pt-PT")
+            : "N/A";
+          const numFaturaStr = f.numero_fatura || "N/A";
+
+          const previewRow = [
+            emissaoStr,
+            vencimentoStr,
+            meta.empresa || "---",
+            fornecedorNome,
+            meta.centroCusto || "DISTRIBUIDORA",
+            meta.contaAnalise || "---",
+            numFaturaStr,
+            calcTotal.toFixed(2),
+            calcPendente.toFixed(2),
+            estadoLabel
+          ];
+
+          const exportRow = [
+            emissaoStr,
+            vencimentoStr,
+            fornecedorNome,
+            fornecedorIban,
+            numFaturaStr,
+            calcTotal.toFixed(2),
+            calcPendente.toFixed(2),
+            observacoesTexto,
+            ""
+          ];
+
+          return {
+            calcTotal,
+            calcPendente,
+            previewRow,
+            exportRow,
+            searchable: [...previewRow, fornecedorIban, observacoesTexto]
+          };
+        })
+        .filter((item) =>
+          !searchTerm
+            ? true
+            : item.searchable.some((cell) => String(cell).toLowerCase().includes(searchTerm))
+        );
+
       title =
         invDateMode === "emissao"
           ? "Relatório de Faturas a Pagar (Por Emissão)"
@@ -821,37 +881,64 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
 
       let totalValor = 0;
       let totalPendente = 0;
-      rows = filtered.map((f) => {
-        const calcTotal = Number(f.valor_total || 0);
-        const calcPendente =
-          f.status_pagamento === "pago"
-            ? 0
-            : Number(f.valor_pendente !== undefined && f.valor_pendente !== null ? f.valor_pendente : calcTotal);
-        const meta = extractFaturaMeta(f, lojas);
-
-        totalValor += calcTotal;
-        totalPendente += calcPendente;
-
-        const estadoLabel =
-          f.status_pagamento === "pago"
-            ? "PAGO"
-            : f.status_pagamento === "parcial"
-            ? "PARCIAL"
-            : "PENDENTE";
-
-        return [
-          f.data_emissao ? new Date(f.data_emissao).toLocaleDateString("pt-PT") : "N/A",
-          f.data_vencimento ? new Date(f.data_vencimento).toLocaleDateString("pt-PT") : "N/A",
-          meta.empresa || "---",
-          f.fornecedor?.nome || "N/A",
-          meta.centroCusto || "DISTRIBUIDORA",
-          meta.contaAnalise || "---",
-          f.numero_fatura || "N/A",
-          calcTotal.toFixed(2),
-          calcPendente.toFixed(2),
-          estadoLabel
-        ];
+      matchedItems.forEach((it) => {
+        totalValor += it.calcTotal;
+        totalPendente += it.calcPendente;
       });
+
+      if (forExport) {
+        headers = [
+          "Data Emissão",
+          "Vencimento",
+          "Fornecedor",
+          "IBAN",
+          "Nº Fatura",
+          "Total (€)",
+          "Pendente (€)",
+          "Observações",
+          "Estado"
+        ];
+        numericColumns = [5, 6];
+        rows = matchedItems.map((it) => it.exportRow);
+        totalRow = [
+          "",
+          "",
+          "",
+          "",
+          "TOTAL CALCULADO",
+          totalValor.toFixed(2),
+          totalPendente.toFixed(2),
+          "",
+          ""
+        ];
+      } else {
+        headers = [
+          "Data Emissão",
+          "Vencimento",
+          "Empresa",
+          "Fornecedor",
+          "Centro de Custo",
+          "Conta de Análise",
+          "Nº Fatura",
+          "Total (€)",
+          "Pendente (€)",
+          "Estado"
+        ];
+        numericColumns = [7, 8];
+        rows = matchedItems.map((it) => it.previewRow);
+        totalRow = [
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "TOTAL CALCULADO",
+          totalValor.toFixed(2),
+          totalPendente.toFixed(2),
+          ""
+        ];
+      }
 
       if (stFilter === "pago") {
         summaryTotal = totalValor;
@@ -863,7 +950,6 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
         summaryTotal = totalValor;
         summaryLabel = "Valor Total";
       }
-      totalRow = ["", "", "", "", "", "", "TOTAL CALCULADO", totalValor.toFixed(2), totalPendente.toFixed(2), ""];
     } else if (rType === "faturas_pagas") {
       const filteredRaw = faturasInput.filter((f) => {
         if (f.tipo !== "compra_financeiro" || f.status_pagamento !== "pago") return false;
@@ -1312,7 +1398,7 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
       totalRow = null;
     }
 
-    if (searchFilter.trim() !== "") {
+    if (searchFilter.trim() !== "" && rType !== "pagar") {
       const term = searchFilter.trim().toLowerCase();
       rows = rows.filter((r) => r.some((cell) => String(cell).toLowerCase().includes(term)));
       if (rType === "estoque") {
@@ -1695,7 +1781,8 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
           pedidosData,
           fechosData,
           estoqueData,
-          activeQuickSearch
+          activeQuickSearch,
+          true
         );
         const exportRows = computed.totalRow ? [...computed.rows, computed.totalRow] : computed.rows;
 
@@ -1704,6 +1791,13 @@ export default function AdminReports({ embedded = false }: { embedded?: boolean 
             title: computed.title,
             headers: computed.headers,
             data: exportRows,
+            numericColumns: computed.numericColumns,
+            handwriteColumns: reportType === "pagar" ? [8] : undefined,
+            orientation: reportType === "pagar" ? "landscape" : "portrait",
+            columnWidths:
+              reportType === "pagar"
+                ? ["7.5%", "7.5%", "19%", "19.5%", "10.5%", "8%", "8.5%", "11.5%", "8%"]
+                : undefined,
             docNumber: `FIN-${new Date().getFullYear()}-${reportType.toUpperCase()}`,
             footerNotes: "Relatório Financeiro gerado pelo sistema ERP Lost Wind."
           });

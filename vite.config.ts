@@ -22,9 +22,23 @@ export default defineConfig(({ mode }) => {
     },
     optimizeDeps: {
       entries: ["index.html"],
+      holdUntilCrawlEnd: false,
+      include: [
+        "react",
+        "react-dom",
+        "react-dom/client",
+        "react-router-dom",
+        "axios",
+        "clsx",
+        "tailwind-merge",
+        "decimal.js",
+        "lucide-react",
+        "sweetalert2",
+      ],
     },
     server: {
       hmr: false,
+      ws: false,
     },
   };
 });
