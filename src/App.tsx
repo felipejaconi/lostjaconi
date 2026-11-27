@@ -21,11 +21,24 @@ const LoadingFallback = () => (
 
 const InactivityReloader = () => {
   useEffect(() => {
+    // Never auto-reload in development mode or inside preview iframes (prevents waking unhydrated containers)
+    let isEmbedded = false;
+    try {
+      isEmbedded = window.self !== window.top;
+    } catch {
+      isEmbedded = true;
+    }
+    if (import.meta.env.DEV || isEmbedded) {
+      return;
+    }
+
     let lastActiveTime = Date.now();
     const TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
     const checkInactivity = () => {
+      if (document.visibilityState !== "visible") return;
       if (Date.now() - lastActiveTime > TIMEOUT) {
+        lastActiveTime = Date.now();
         window.location.reload();
       }
     };
@@ -53,7 +66,7 @@ const InactivityReloader = () => {
     window.addEventListener("scroll", updateActivity);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
-    // Also check periodically
+    // Also check periodically when visible
     const interval = setInterval(checkInactivity, 60000);
 
     return () => {

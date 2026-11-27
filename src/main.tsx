@@ -71,9 +71,22 @@ async function performCleanReload(): Promise<void> {
  * Se um Service Worker antigo estiver controlando ativamente a página e
  * interceptando requisições, remove e força um reload para conexão direta.
  */
+function isPreviewIframeOrDev(): boolean {
+  if (import.meta.env.DEV) return true;
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
 function handleActiveServiceWorkerController() {
   if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
     console.warn('[Cache] Service Worker antigo detectado controlando requisições. Removendo...');
+    if (isPreviewIframeOrDev() || document.visibilityState !== 'visible') {
+      purgeAllCaches();
+      return;
+    }
     const lastReloadKey = 'sw_controller_unreg_reload';
     const lastReload = sessionStorage.getItem(lastReloadKey);
     const now = Date.now();
@@ -98,6 +111,9 @@ function isDynamicChunkErrorMessage(raw: string): boolean {
 }
 
 function triggerChunkRecoveryReload(storageKey: string) {
+  if (isPreviewIframeOrDev() || document.visibilityState !== 'visible') {
+    return;
+  }
   const lastReload = sessionStorage.getItem(storageKey);
   const now = Date.now();
   if (!lastReload || now - parseInt(lastReload, 10) > 15000) {

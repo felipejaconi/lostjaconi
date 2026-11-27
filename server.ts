@@ -35,8 +35,16 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+let isViteFrontendReady =
+  process.env.NODE_ENV === "production" || process.env.IS_BUNDLED_SERVER === "true";
+
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
+});
+
+app.get("/api/vite-status", (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.json({ ready: isViteFrontendReady });
 });
 
 let cachedBuildVersion: {
@@ -352,6 +360,7 @@ export async function startServer() {
             appType: "spa",
           });
           activeFrontendHandler = vite.middlewares as any;
+          isViteFrontendReady = true;
         } catch {
           console.warn("Vite not found, falling back to static dist...");
           const fallbackRouter = express.Router();
@@ -376,6 +385,7 @@ export async function startServer() {
             });
           });
           activeFrontendHandler = fallbackRouter;
+          isViteFrontendReady = true;
         }
       })();
     }
@@ -387,6 +397,8 @@ export async function startServer() {
       if (activeFrontendHandler) {
         return activeFrontendHandler(req, res, next);
       }
+
+      ensureViteReady().catch((err) => console.error("Erro ao iniciar Vite:", err));
 
       // Respond immediately to control-plane / container readiness probes while Vite warms up
       const ua = String(req.headers["user-agent"] || "");
@@ -400,7 +412,52 @@ export async function startServer() {
         (!accept.includes("text/html") && (req.path === "/" || req.path === ""));
 
       if (isReadinessProbe) {
-        return res.status(200).type("text/html").send("<!doctype html><html><body>OK</body></html>");
+        setNoCacheHtmlHeaders(res);
+        return res.status(200).type("text/html").send("<!doctype html><html><head></head><body>OK</body></html>");
+      }
+
+      // Serve an instant 200 OK shell for browser HTML navigations so Nginx exits warmup.html immediately
+      const isHtmlNav =
+        req.method === "GET" &&
+        accept.includes("text/html") &&
+        !req.path.startsWith("/src/") &&
+        !req.path.startsWith("/@") &&
+        !req.path.startsWith("/node_modules/");
+
+      if (isHtmlNav) {
+        setNoCacheHtmlHeaders(res);
+        return res.status(200).type("text/html").send(`<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LOST WIND LDA</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #09090b; color: #f4f4f5; font-family: system-ui, -apple-system, sans-serif; }
+    .box { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+    .spin { width: 28px; height: 28px; border: 3px solid #27272a; border-top-color: #f59e0b; border-radius: 50%; animation: s 0.8s linear infinite; }
+    .lbl { font-size: 13px; color: #a1a1aa; letter-spacing: 0.04em; }
+    @keyframes s { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="spin"></div>
+    <div class="lbl">A iniciar sistema...</div>
+  </div>
+  <script>
+    setTimeout(function poll() {
+      fetch("/api/vite-status", { cache: "no-store" })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d && d.ready) { window.location.reload(); }
+          else { setTimeout(poll, 400); }
+        })
+        .catch(function() { setTimeout(poll, 500); });
+    }, 800);
+  </script>
+</body>
+</html>`);
       }
 
       ensureViteReady()

@@ -839,7 +839,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
 
             if (qtyBase > 0) {
               const beforeStock = Number(prod.stock_armazem) || 0;
-              const afterStock = Math.max(0, beforeStock + qtyBase);
+              const afterStock = Math.round((beforeStock + qtyBase) * 1000) / 1000;
               updateProdData.stock_armazem = afterStock;
 
               await supabase.from("movimentacoes_stock").insert([
@@ -1058,7 +1058,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
 
               if (qtyToApplyBase !== 0) {
                 const beforeStock = Number(prod.stock_armazem) || 0;
-                const afterStock = Math.max(0, beforeStock + qtyToApplyBase);
+                const afterStock = Math.round((beforeStock + qtyToApplyBase) * 1000) / 1000;
                 updateProdData.stock_armazem = afterStock;
 
                 const displayDiff = stockAlreadyApplied && oldItem
@@ -1125,7 +1125,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
                 .single();
               if (prod) {
                 const beforeStock = Number(prod.stock_armazem) || 0;
-                const afterStock = Math.max(0, beforeStock - qtyToRevertBase);
+                const afterStock = Math.round((beforeStock - qtyToRevertBase) * 1000) / 1000;
                 await supabase
                   .from("produtos")
                   .update({
@@ -1220,7 +1220,7 @@ export function setupFinanceRoutes({ app, supabase, authenticateToken, upload, u
               ? Number(latestProd.stock_armazem)
               : Number(item.produto?.stock_armazem) || 0;
 
-            const afterStock = Math.max(0, currentStock - qtyBase);
+            const afterStock = Math.round((currentStock - qtyBase) * 1000) / 1000;
             await supabase
               .from("produtos")
               .update({ stock_armazem: afterStock })
